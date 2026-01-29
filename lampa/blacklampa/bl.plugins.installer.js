@@ -601,7 +601,7 @@
         bl_jsqp_origin_mode: 'remove',
         bl_jsqp_origin_value: '',
         bl_jsqp_logged_mode: 'remove',
-        bl_jsqp_logged_value: '0',
+        bl_jsqp_logged_value: 'false',
         bl_jsqp_reset_mode: 'remove',
         bl_jsqp_reset_value: '0',
         bl_jsqp_match: '\\\\.js(\\\\?|$)',
@@ -705,8 +705,8 @@
       try {
         Lampa.SettingsApi.addParam({
           component: STATE.componentId,
-          param: { name: 'bl_jsqp_origin_mode', type: 'select', values: { remove: 'remove', set: 'set' }, default: DEF.bl_jsqp_origin_mode },
-          field: { name: 'Origin mode', description: 'remove => удалить | set => задать значение.' }
+          param: { name: 'bl_jsqp_origin_mode', type: 'select', values: { remove: 'remove', set: 'set', set_b64: 'set (base64)' }, default: DEF.bl_jsqp_origin_mode },
+          field: { name: 'Origin mode', description: 'remove => удалить | set => задать значение | set (base64) => btoa(utf8).' }
         });
       } catch (_) { }
 
@@ -732,7 +732,7 @@
       try {
         Lampa.SettingsApi.addParam({
           component: STATE.componentId,
-          param: { name: 'bl_jsqp_logged_value', type: 'input', values: '', default: DEF.bl_jsqp_logged_value, placeholder: '0 / false' },
+          param: { name: 'bl_jsqp_logged_value', type: 'input', values: '', default: DEF.bl_jsqp_logged_value, placeholder: 'false' },
           field: { name: 'Logged value', description: 'Если logged_mode=set (строка, например 0/false).' }
         });
       } catch (_) { }

@@ -104,7 +104,7 @@
     jsqpSetIfMissing(LS_JSQP_ORIGIN_MODE, 'remove');
     jsqpSetIfMissing(LS_JSQP_ORIGIN_VALUE, '');
     jsqpSetIfMissing(LS_JSQP_LOGGED_MODE, 'remove');
-    jsqpSetIfMissing(LS_JSQP_LOGGED_VALUE, '0');
+    jsqpSetIfMissing(LS_JSQP_LOGGED_VALUE, 'false');
     jsqpSetIfMissing(LS_JSQP_RESET_MODE, 'remove');
     jsqpSetIfMissing(LS_JSQP_RESET_VALUE, '0');
     jsqpSetIfMissing(LS_JSQP_MATCH, '\\\\.js(\\\\?|$)');
@@ -177,6 +177,15 @@
     return __jsqpCache.paramsSet;
   }
 
+  function b64utf8(s) {
+    try {
+      if (typeof btoa !== 'function') return String(s || '');
+      try { return btoa(unescape(encodeURIComponent(String(s || '')))); } catch (e) { return btoa(String(s || '')); }
+    } catch (_) {
+      return String(s || '');
+    }
+  }
+
   BL.Net.rewriteJsQuery = BL.Net.rewriteJsQuery || function (url) {
     var orig = String(url || '');
     try { jsqpEnsureDefaultsOnce(); } catch (_) { }
@@ -236,6 +245,14 @@
         try { curO = u.searchParams.get('origin'); } catch (_) { curO = null; }
         try { u.searchParams.set('origin', String(ov)); } catch (_) { }
         if (String(curO) !== String(ov)) changed = true;
+      } else if (om === 'set_b64') {
+        var ovb = jsqpGetStr(LS_JSQP_ORIGIN_VALUE, '');
+        var enc = '';
+        try { enc = b64utf8(ovb); } catch (_) { enc = String(ovb); }
+        var curOb = null;
+        try { curOb = u.searchParams.get('origin'); } catch (_) { curOb = null; }
+        try { u.searchParams.set('origin', String(enc)); } catch (_) { }
+        if (String(curOb) !== String(enc)) changed = true;
       } else if (om === 'remove') {
         var hadO = false;
         try { hadO = u.searchParams.has('origin'); } catch (_) { hadO = false; }
@@ -248,7 +265,7 @@
     if (managed.logged) {
       var lm = jsqpGetStr(LS_JSQP_LOGGED_MODE, 'remove');
       if (lm === 'set') {
-        var lv = jsqpGetStr(LS_JSQP_LOGGED_VALUE, '0');
+        var lv = jsqpGetStr(LS_JSQP_LOGGED_VALUE, 'false');
         var curL = null;
         try { curL = u.searchParams.get('logged'); } catch (_) { curL = null; }
         try { u.searchParams.set('logged', String(lv)); } catch (_) { }
