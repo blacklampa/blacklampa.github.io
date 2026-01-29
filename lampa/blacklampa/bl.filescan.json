@@ -3,6 +3,22 @@
   "generatedFrom": "lampa/blacklampa/raw_filelist.log",
   "items": [
     {
+      "url": "https://bwa.to/cloud.js",
+      "tag": "onlineplayer"
+    },
+    {
+      "url": "https://rc.bwa.to/sisi.js",
+      "tag": "sisi"
+    },
+    {
+      "url": "https://bylampa.github.io/source.js",
+      "tag": "etc"
+    },
+    {
+      "url": "https://nb557.github.io/plugins/online_mod.js",
+      "tag": "etc"
+    },
+    {
       "url": "file:///etc/apache2/apache2.conf",
       "tag": "etc"
     },
