@@ -59,6 +59,245 @@
 
   function lsSetBool(key, on) { lsSet(key, on ? '1' : '0'); }
 
+  // ============================================================================
+  // JS query params rewrite (localStorage / Lampa.Storage)
+  //
+  // - only for *.js (by pathname or regex)
+  // - rewrite/remove: origin/logged/reset
+  // ============================================================================
+  var LS_JSQP_ENABLED = 'bl_jsqp_enabled';
+  var LS_JSQP_FORCE = 'bl_jsqp_force';
+  var LS_JSQP_ORIGIN_MODE = 'bl_jsqp_origin_mode';
+  var LS_JSQP_ORIGIN_VALUE = 'bl_jsqp_origin_value';
+  var LS_JSQP_LOGGED_MODE = 'bl_jsqp_logged_mode';
+  var LS_JSQP_LOGGED_VALUE = 'bl_jsqp_logged_value';
+  var LS_JSQP_RESET_MODE = 'bl_jsqp_reset_mode';
+  var LS_JSQP_RESET_VALUE = 'bl_jsqp_reset_value';
+  var LS_JSQP_MATCH = 'bl_jsqp_match';
+  var LS_JSQP_PARAMS = 'bl_jsqp_params';
+
+  var __jsqpDefaultsEnsured = false;
+  var __jsqpCache = { matchRaw: null, matchRe: null, paramsRaw: null, paramsSet: null };
+
+  function jsqpStorageGet(key) {
+    try { if (window.Lampa && Lampa.Storage && Lampa.Storage.get) return Lampa.Storage.get(String(key)); } catch (_) { }
+    return lsGet(key);
+  }
+
+  function jsqpStorageSet(key, val) {
+    try { if (window.Lampa && Lampa.Storage && Lampa.Storage.set) return Lampa.Storage.set(String(key), String(val)); } catch (_) { }
+    lsSet(key, val);
+  }
+
+  function jsqpSetIfMissing(key, def) {
+    try {
+      var v = jsqpStorageGet(key);
+      if (v === undefined || v === null) jsqpStorageSet(key, def);
+    } catch (_) { }
+  }
+
+  function jsqpEnsureDefaultsOnce() {
+    if (__jsqpDefaultsEnsured) return;
+    __jsqpDefaultsEnsured = true;
+    jsqpSetIfMissing(LS_JSQP_ENABLED, '1');
+    jsqpSetIfMissing(LS_JSQP_FORCE, '0');
+    jsqpSetIfMissing(LS_JSQP_ORIGIN_MODE, 'remove');
+    jsqpSetIfMissing(LS_JSQP_ORIGIN_VALUE, '');
+    jsqpSetIfMissing(LS_JSQP_LOGGED_MODE, 'remove');
+    jsqpSetIfMissing(LS_JSQP_LOGGED_VALUE, '0');
+    jsqpSetIfMissing(LS_JSQP_RESET_MODE, 'remove');
+    jsqpSetIfMissing(LS_JSQP_RESET_VALUE, '0');
+    jsqpSetIfMissing(LS_JSQP_MATCH, '\\\\.js(\\\\?|$)');
+    jsqpSetIfMissing(LS_JSQP_PARAMS, 'origin,logged,reset');
+  }
+
+  function jsqpGetBool(key, def) {
+    try {
+      var v = jsqpStorageGet(key);
+      if (v == null || v === '') return !!def;
+      var s = String(v).toLowerCase();
+      if (s === '0' || s === 'false' || s === 'off' || s === 'no') return false;
+      return true;
+    } catch (_) {
+      return !!def;
+    }
+  }
+
+  function jsqpGetStr(key, def) {
+    try {
+      var v = jsqpStorageGet(key);
+      if (v === undefined || v === null) return String(def || '');
+      return String(v);
+    } catch (_) {
+      return String(def || '');
+    }
+  }
+
+  function jsqpCompileMatchRe(raw) {
+    raw = String(raw || '');
+    if (__jsqpCache.matchRaw === raw && __jsqpCache.matchRe) return __jsqpCache.matchRe;
+    __jsqpCache.matchRaw = raw;
+    __jsqpCache.matchRe = null;
+    if (!raw) return null;
+
+    // Support /pattern/flags input (optional)
+    try {
+      if (raw[0] === '/' && raw.length > 2) {
+        var lastSlash = raw.lastIndexOf('/');
+        if (lastSlash > 0) {
+          var pat = raw.slice(1, lastSlash);
+          var flags = raw.slice(lastSlash + 1);
+          if (pat) {
+            __jsqpCache.matchRe = new RegExp(pat, flags);
+            return __jsqpCache.matchRe;
+          }
+        }
+      }
+    } catch (_) { __jsqpCache.matchRe = null; }
+
+    try { __jsqpCache.matchRe = new RegExp(raw); } catch (_) { __jsqpCache.matchRe = null; }
+    return __jsqpCache.matchRe;
+  }
+
+  function jsqpParseParams(raw) {
+    raw = String(raw || '');
+    if (__jsqpCache.paramsRaw === raw && __jsqpCache.paramsSet) return __jsqpCache.paramsSet;
+    __jsqpCache.paramsRaw = raw;
+    __jsqpCache.paramsSet = { origin: false, logged: false, reset: false };
+
+    try {
+      var parts = raw.split(',');
+      for (var i = 0; i < parts.length; i++) {
+        var n = String(parts[i] || '').trim().toLowerCase();
+        if (!n) continue;
+        if (n === 'origin' || n === 'logged' || n === 'reset') __jsqpCache.paramsSet[n] = true;
+      }
+    } catch (_) { }
+
+    return __jsqpCache.paramsSet;
+  }
+
+  BL.Net.rewriteJsQuery = BL.Net.rewriteJsQuery || function (url) {
+    var orig = String(url || '');
+    try { jsqpEnsureDefaultsOnce(); } catch (_) { }
+
+    // Enabled gate (fast)
+    if (!jsqpGetBool(LS_JSQP_ENABLED, true)) return orig;
+
+    var u = null;
+    try { u = new URL(orig, location.href); } catch (_) { return orig; }
+
+    // Is JS?
+    var isJs = false;
+    try {
+      var p = String(u.pathname || '');
+      isJs = p.slice(-3).toLowerCase() === '.js';
+    } catch (_) { isJs = false; }
+
+    if (!isJs) {
+      var re = null;
+      try { re = jsqpCompileMatchRe(jsqpGetStr(LS_JSQP_MATCH, '\\\\.js(\\\\?|$)')); } catch (_) { re = null; }
+      if (re) {
+        try { re.lastIndex = 0; } catch (_) { }
+        try {
+          var s1 = String(u.pathname || '') + String(u.search || '');
+          isJs = re.test(s1);
+          if (!isJs) {
+            try { re.lastIndex = 0; } catch (_) { }
+            isJs = re.test(String(u.href || ''));
+          }
+        } catch (_) { isJs = false; }
+      }
+    }
+
+    if (!isJs) return orig;
+
+    var managed = jsqpParseParams(jsqpGetStr(LS_JSQP_PARAMS, 'origin,logged,reset'));
+    var force = jsqpGetBool(LS_JSQP_FORCE, false);
+
+    if (!force) {
+      var hasAny = false;
+      try { if (managed.origin && u.searchParams.has('origin')) hasAny = true; } catch (_) { }
+      try { if (!hasAny && managed.logged && u.searchParams.has('logged')) hasAny = true; } catch (_) { }
+      try { if (!hasAny && managed.reset && u.searchParams.has('reset')) hasAny = true; } catch (_) { }
+      if (!hasAny) return orig;
+    }
+
+    var changed = false;
+    var beforeAbs = '';
+    try { beforeAbs = u.toString(); } catch (_) { beforeAbs = ''; }
+
+    // origin
+    if (managed.origin) {
+      var om = jsqpGetStr(LS_JSQP_ORIGIN_MODE, 'remove');
+      if (om === 'set') {
+        var ov = jsqpGetStr(LS_JSQP_ORIGIN_VALUE, '');
+        var curO = null;
+        try { curO = u.searchParams.get('origin'); } catch (_) { curO = null; }
+        try { u.searchParams.set('origin', String(ov)); } catch (_) { }
+        if (String(curO) !== String(ov)) changed = true;
+      } else if (om === 'remove') {
+        var hadO = false;
+        try { hadO = u.searchParams.has('origin'); } catch (_) { hadO = false; }
+        try { u.searchParams.delete('origin'); } catch (_) { }
+        if (hadO) changed = true;
+      }
+    }
+
+    // logged
+    if (managed.logged) {
+      var lm = jsqpGetStr(LS_JSQP_LOGGED_MODE, 'remove');
+      if (lm === 'set') {
+        var lv = jsqpGetStr(LS_JSQP_LOGGED_VALUE, '0');
+        var curL = null;
+        try { curL = u.searchParams.get('logged'); } catch (_) { curL = null; }
+        try { u.searchParams.set('logged', String(lv)); } catch (_) { }
+        if (String(curL) !== String(lv)) changed = true;
+      } else if (lm === 'remove') {
+        var hadL = false;
+        try { hadL = u.searchParams.has('logged'); } catch (_) { hadL = false; }
+        try { u.searchParams.delete('logged'); } catch (_) { }
+        if (hadL) changed = true;
+      }
+    }
+
+    // reset
+    if (managed.reset) {
+      var rm = jsqpGetStr(LS_JSQP_RESET_MODE, 'remove');
+      if (rm === 'random') {
+        var rnd = String(Math.random());
+        try { u.searchParams.set('reset', rnd); } catch (_) { }
+        changed = true;
+      } else if (rm === 'set') {
+        var rv = jsqpGetStr(LS_JSQP_RESET_VALUE, '0');
+        var curR = null;
+        try { curR = u.searchParams.get('reset'); } catch (_) { curR = null; }
+        try { u.searchParams.set('reset', String(rv)); } catch (_) { }
+        if (String(curR) !== String(rv)) changed = true;
+      } else if (rm === 'remove') {
+        var hadR = false;
+        try { hadR = u.searchParams.has('reset'); } catch (_) { hadR = false; }
+        try { u.searchParams.delete('reset'); } catch (_) { }
+        if (hadR) changed = true;
+      }
+    }
+
+    if (!changed) return orig;
+
+    var afterAbs = '';
+    try { afterAbs = u.toString(); } catch (_) { afterAbs = beforeAbs; }
+
+    // Optional debug log (OFF by default)
+    try {
+      if (BL.cfg && BL.cfg.PERF_DEBUG && afterAbs && afterAbs !== beforeAbs) {
+        if (BL.Console && BL.Console.info) BL.Console.info('[JSQP] ' + orig + ' -> ' + afterAbs);
+        else if (window.console && console.log) console.log('[JSQP] ' + orig + ' -> ' + afterAbs);
+      }
+    } catch (_) { }
+
+    return afterAbs || orig;
+  };
+
   var BUILTIN_RULES = [
     { id: 'yandex', title: 'Yandex', reason: 'Yandex', lsKey: LS_BUILTIN_YANDEX, description: 'Блокировка доменов Yandex/ya.ru/yastatic.' },
     { id: 'google', title: 'Google/YouTube', reason: 'Google/YouTube', lsKey: LS_BUILTIN_GOOGLE, description: 'Блокировка Google/YouTube/Analytics/Ads.' },
@@ -775,11 +1014,37 @@
     var PERF_DEBUG = false;
     try { PERF_DEBUG = !!cfg0.PERF_DEBUG; } catch (_) { PERF_DEBUG = false; }
 
+    // Ensure JSQP defaults exist (localStorage/Lampa.Storage)
+    try { jsqpEnsureDefaultsOnce(); } catch (_) { }
+
 	    if (window.fetch) {
 	      var origFetch = window.fetch.bind(window);
 	      window.fetch = function (input, init) {
 	        if (PERF_DEBUG) __perfNetReq++;
 	        var u = (typeof input === 'string') ? input : (input && input.url) ? input.url : '';
+
+          // JS query params rewrite (only for *.js)
+          try {
+            if (u && BL.Net && typeof BL.Net.rewriteJsQuery === 'function') {
+              var nu = BL.Net.rewriteJsQuery(u);
+              if (nu && nu !== u) {
+                var applied = false;
+                try {
+                  if (typeof input === 'string') {
+                    input = nu;
+                    applied = true;
+                  } else if (typeof URL !== 'undefined' && input instanceof URL) {
+                    input = nu;
+                    applied = true;
+                  } else if (typeof Request !== 'undefined' && input instanceof Request) {
+                    input = new Request(nu, input);
+                    applied = true;
+                  }
+                } catch (_) { applied = false; }
+                if (applied) u = nu;
+              }
+            }
+          } catch (_) { }
 
 		        if (isCubBlacklistUrl(u)) {
 		          if (isLogEnabledFast()) logCall(log, 'showOk', 'CUB', 'blacklist overridden', 'fetch | ' + String(u));
@@ -805,9 +1070,15 @@
 
       XHR.prototype.open = function (method, url) {
         if (PERF_DEBUG) __perfNetReq++;
-        this.__ap_url = url;
-        this.__ap_mock_cub_blacklist = isCubBlacklistUrl(url);
-        this.__ap_block_ctx = getBlockContext(url);
+        var u = url;
+
+        // JS query params rewrite (only for *.js)
+        try { if (u && BL.Net && typeof BL.Net.rewriteJsQuery === 'function') u = BL.Net.rewriteJsQuery(u); } catch (_) { u = url; }
+
+        this.__ap_url = u;
+        this.__ap_mock_cub_blacklist = isCubBlacklistUrl(u);
+        this.__ap_block_ctx = getBlockContext(u);
+        try { arguments[1] = u; } catch (_) { }
         return origOpen.apply(this, arguments);
       };
 
@@ -846,6 +1117,44 @@
 	        return origSend.apply(this, arguments);
 	      };
 	    }
+
+      // Script src hook (covers <script src="..."> dynamic loads)
+      try {
+        if (window.HTMLScriptElement && HTMLScriptElement.prototype && !BL.PolicyNetwork.__jsqpScriptHooked) {
+          BL.PolicyNetwork.__jsqpScriptHooked = true;
+
+          // setAttribute('src', ...)
+          try {
+            var _setAttr = HTMLScriptElement.prototype.setAttribute;
+            if (typeof _setAttr === 'function') {
+              HTMLScriptElement.prototype.setAttribute = function (name, value) {
+                try {
+                  if (String(name || '').toLowerCase() === 'src' && BL.Net && typeof BL.Net.rewriteJsQuery === 'function') {
+                    value = BL.Net.rewriteJsQuery(value);
+                  }
+                } catch (_) { }
+                return _setAttr.call(this, name, value);
+              };
+            }
+          } catch (_) { }
+
+          // src = ...
+          try {
+            var d = Object.getOwnPropertyDescriptor(HTMLScriptElement.prototype, 'src');
+            if (d && d.set && d.configurable) {
+              Object.defineProperty(HTMLScriptElement.prototype, 'src', {
+                configurable: true,
+                enumerable: d.enumerable,
+                get: d.get,
+                set: function (v) {
+                  try { if (BL.Net && typeof BL.Net.rewriteJsQuery === 'function') v = BL.Net.rewriteJsQuery(v); } catch (_) { }
+                  return d.set.call(this, v);
+                }
+              });
+            }
+          } catch (_) { }
+        }
+      } catch (_) { }
 
 	    if (navigator.sendBeacon) {
 	      var origBeacon = navigator.sendBeacon.bind(navigator);

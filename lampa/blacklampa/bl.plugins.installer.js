@@ -445,17 +445,27 @@
         }
       });
 
-      // 3) Danger
+      // 3) JS query params
+      Lampa.SettingsApi.addParam({
+        component: STATE.componentId,
+        param: { name: 'bl_pi_root_jsqp', type: 'static', default: true },
+        field: { name: 'JS query params', description: 'Подмена/удаление GET параметров (origin/logged/reset) в запросах на *.js' },
+        onRender: function (item) {
+          try { if (item && item.on) item.on('hover:enter', function () { push('jsqp', null, 0, 3); }); } catch (_) { }
+        }
+      });
+
+      // 4) Danger
       Lampa.SettingsApi.addParam({
         component: STATE.componentId,
         param: { name: 'bl_pi_root_danger', type: 'static', default: true },
         field: { name: 'Danger zone', description: 'Сброс/очистка/опасные операции.' },
         onRender: function (item) {
-          try { if (item && item.on) item.on('hover:enter', function () { push('danger', null, 0, 3); }); } catch (_) { }
+          try { if (item && item.on) item.on('hover:enter', function () { push('danger', null, 0, 4); }); } catch (_) { }
         }
       });
 
-	      // 4) Log viewer (kept from legacy AutoPlugin UI)
+	      // 5) Log viewer (kept from legacy AutoPlugin UI)
 	      Lampa.SettingsApi.addParam({
 	        component: STATE.componentId,
 	        param: { name: 'bl_pi_root_log_viewer', type: 'static', default: true },
@@ -476,27 +486,27 @@
         }
 	      });
 
-	      // 5) Logging
+	      // 6) Logging
 	      Lampa.SettingsApi.addParam({
 	        component: STATE.componentId,
 	        param: { name: 'bl_pi_root_logging', type: 'static', default: true },
 	        field: { name: 'Logging', description: 'Режим popup-логов (silent / auto popup).' },
 	        onRender: function (item) {
-	          try { if (item && item.on) item.on('hover:enter', function () { push('logging', null, 0, 5); }); } catch (_) { }
+	          try { if (item && item.on) item.on('hover:enter', function () { push('logging', null, 0, 6); }); } catch (_) { }
 	        }
 	      });
 
-	      // 6) Backup / Transfer
+	      // 7) Backup / Transfer
 	      Lampa.SettingsApi.addParam({
 	        component: STATE.componentId,
 	        param: { name: 'bl_pi_root_backup', type: 'static', default: true },
 	        field: { name: 'Backup / Transfer', description: 'Экспорт/импорт настроек BlackLampa (localStorage) + шифрование + history.' },
 	        onRender: function (item) {
-	          try { if (item && item.on) item.on('hover:enter', function () { push('backup', null, 0, 6); }); } catch (_) { }
+	          try { if (item && item.on) item.on('hover:enter', function () { push('backup', null, 0, 7); }); } catch (_) { }
 	        }
 	      });
 
-	      // 7) Filesystem scan (popup)
+	      // 8) Filesystem scan (popup)
 	      Lampa.SettingsApi.addParam({
 	        component: STATE.componentId,
 	        param: { name: 'bl_pi_root_filesystem_scan', type: 'static', default: true },
@@ -582,6 +592,235 @@
 	      });
 	    } catch (_) { }
 	  }
+
+  function buildJsqpScreen() {
+    try {
+      var DEF = {
+        bl_jsqp_enabled: '1',
+        bl_jsqp_force: '0',
+        bl_jsqp_origin_mode: 'remove',
+        bl_jsqp_origin_value: '',
+        bl_jsqp_logged_mode: 'remove',
+        bl_jsqp_logged_value: '0',
+        bl_jsqp_reset_mode: 'remove',
+        bl_jsqp_reset_value: '0',
+        bl_jsqp_match: '\\\\.js(\\\\?|$)',
+        bl_jsqp_params: 'origin,logged,reset'
+      };
+
+      function sGet(k, fallback) {
+        var v = null;
+        try { if (window.Lampa && Lampa.Storage && Lampa.Storage.get) v = Lampa.Storage.get(String(k)); } catch (_) { v = null; }
+        if (v === undefined || v === null) {
+          try { if (window.localStorage) v = localStorage.getItem(String(k)); } catch (_) { v = null; }
+        }
+        if (v === undefined || v === null) return fallback;
+        return v;
+      }
+
+      function sSet(k, v) {
+        try { if (window.Lampa && Lampa.Storage && Lampa.Storage.set) return Lampa.Storage.set(String(k), String(v)); } catch (_) { }
+        try { if (window.localStorage) localStorage.setItem(String(k), String(v)); } catch (_) { }
+      }
+
+      function sEnsure(k, def) {
+        try {
+          var v = sGet(k, null);
+          if (v === undefined || v === null) sSet(k, def);
+        } catch (_) { }
+      }
+
+      // Seed defaults
+      try {
+        sEnsure('bl_jsqp_enabled', DEF.bl_jsqp_enabled);
+        sEnsure('bl_jsqp_force', DEF.bl_jsqp_force);
+        sEnsure('bl_jsqp_origin_mode', DEF.bl_jsqp_origin_mode);
+        sEnsure('bl_jsqp_origin_value', DEF.bl_jsqp_origin_value);
+        sEnsure('bl_jsqp_logged_mode', DEF.bl_jsqp_logged_mode);
+        sEnsure('bl_jsqp_logged_value', DEF.bl_jsqp_logged_value);
+        sEnsure('bl_jsqp_reset_mode', DEF.bl_jsqp_reset_mode);
+        sEnsure('bl_jsqp_reset_value', DEF.bl_jsqp_reset_value);
+        sEnsure('bl_jsqp_match', DEF.bl_jsqp_match);
+        sEnsure('bl_jsqp_params', DEF.bl_jsqp_params);
+      } catch (_) { }
+
+      var resetMode = String(sGet('bl_jsqp_reset_mode', DEF.bl_jsqp_reset_mode) || DEF.bl_jsqp_reset_mode);
+      resetMode = resetMode.toLowerCase();
+      if (resetMode !== 'remove' && resetMode !== 'set' && resetMode !== 'random') resetMode = DEF.bl_jsqp_reset_mode;
+
+      function shortStr(s, max) {
+        s = String(s || '');
+        max = Number(max || 220);
+        if (s.length <= max) return s;
+        return s.slice(0, max - 1) + '…';
+      }
+
+      // Info
+      try {
+        var info = 'Подмена/удаление GET параметров (origin/logged/reset) в запросах на *.js';
+        Lampa.SettingsApi.addParam({
+          component: STATE.componentId,
+          param: { name: 'bl_jsqp_info', type: 'static', values: info, default: info },
+          field: { name: 'JS query params', description: info }
+        });
+      } catch (_) { }
+
+      // Enabled
+      try {
+        Lampa.SettingsApi.addParam({
+          component: STATE.componentId,
+          param: { name: 'bl_jsqp_enabled', type: 'select', values: { 0: 'OFF', 1: 'ON' }, default: 1 },
+          field: { name: 'Enabled', description: 'Включить переписывание URL для *.js.' }
+        });
+      } catch (_) { }
+
+      // Force apply
+      try {
+        Lampa.SettingsApi.addParam({
+          component: STATE.componentId,
+          param: { name: 'bl_jsqp_force', type: 'select', values: { 0: 'OFF', 1: 'ON' }, default: 0 },
+          field: { name: 'Force apply', description: 'Переписывать даже если params отсутствуют в URL.' }
+        });
+      } catch (_) { }
+
+      // Match regex
+      try {
+        Lampa.SettingsApi.addParam({
+          component: STATE.componentId,
+          param: { name: 'bl_jsqp_match', type: 'input', values: '', default: DEF.bl_jsqp_match, placeholder: DEF.bl_jsqp_match },
+          field: { name: 'Match regex', description: 'RegExp (string) для матчинга URL. По умолчанию: \\\\.js(\\\\?|$)' }
+        });
+      } catch (_) { }
+
+      // Params list
+      try {
+        Lampa.SettingsApi.addParam({
+          component: STATE.componentId,
+          param: { name: 'bl_jsqp_params', type: 'input', values: '', default: DEF.bl_jsqp_params, placeholder: DEF.bl_jsqp_params },
+          field: { name: 'Params list (csv)', description: 'Список управляемых параметров (origin,logged,reset).' }
+        });
+      } catch (_) { }
+
+      // Origin mode
+      try {
+        Lampa.SettingsApi.addParam({
+          component: STATE.componentId,
+          param: { name: 'bl_jsqp_origin_mode', type: 'select', values: { remove: 'remove', set: 'set' }, default: DEF.bl_jsqp_origin_mode },
+          field: { name: 'Origin mode', description: 'remove => удалить | set => задать значение.' }
+        });
+      } catch (_) { }
+
+      // Origin value
+      try {
+        Lampa.SettingsApi.addParam({
+          component: STATE.componentId,
+          param: { name: 'bl_jsqp_origin_value', type: 'input', values: '', default: DEF.bl_jsqp_origin_value, placeholder: 'example.com' },
+          field: { name: 'Origin value', description: 'Если origin_mode=set: ставим как есть (без base64).' }
+        });
+      } catch (_) { }
+
+      // Logged mode
+      try {
+        Lampa.SettingsApi.addParam({
+          component: STATE.componentId,
+          param: { name: 'bl_jsqp_logged_mode', type: 'select', values: { remove: 'remove', set: 'set' }, default: DEF.bl_jsqp_logged_mode },
+          field: { name: 'Logged mode', description: 'remove => удалить | set => задать значение.' }
+        });
+      } catch (_) { }
+
+      // Logged value
+      try {
+        Lampa.SettingsApi.addParam({
+          component: STATE.componentId,
+          param: { name: 'bl_jsqp_logged_value', type: 'input', values: '', default: DEF.bl_jsqp_logged_value, placeholder: '0 / false' },
+          field: { name: 'Logged value', description: 'Если logged_mode=set (строка, например 0/false).' }
+        });
+      } catch (_) { }
+
+      // Reset mode
+      try {
+        Lampa.SettingsApi.addParam({
+          component: STATE.componentId,
+          param: { name: 'bl_jsqp_reset_mode', type: 'select', values: { remove: 'remove', set: 'set', random: 'random' }, default: DEF.bl_jsqp_reset_mode },
+          field: { name: 'Reset mode', description: 'remove => удалить | set => value | random => Math.random().' },
+          onChange: function () {
+            go('jsqp', null, getSettingsFocusIndexSafe());
+          }
+        });
+      } catch (_) { }
+
+      // Reset value (hidden when random)
+      if (resetMode !== 'random') {
+        try {
+          Lampa.SettingsApi.addParam({
+            component: STATE.componentId,
+            param: { name: 'bl_jsqp_reset_value', type: 'input', values: '', default: DEF.bl_jsqp_reset_value, placeholder: '0' },
+            field: { name: 'Reset value', description: 'Если reset_mode=set.' }
+          });
+        } catch (_) { }
+      }
+
+      // Test URL (optional)
+      try {
+        var ex = '/x.js?logged=false&reset=0.123&origin=YmxhY2tsYW1wYS5naXRodWIuaW8%3D';
+        Lampa.SettingsApi.addParam({
+          component: STATE.componentId,
+          param: { name: 'bl_jsqp_test_url', type: 'input', values: '', default: ex, placeholder: ex },
+          field: { name: 'Test URL', description: 'URL для теста (опционально).' }
+        });
+      } catch (_) { }
+
+      // Test rewrite
+      try {
+        Lampa.SettingsApi.addParam({
+          component: STATE.componentId,
+          param: { name: 'bl_jsqp_test', type: 'button' },
+          field: { name: 'Test rewrite', description: 'Показывает результат BL.Net.rewriteJsQuery().' },
+          onChange: function () {
+            try {
+              var sample = '';
+              try { sample = String(sGet('bl_jsqp_test_url', '') || ''); } catch (_) { sample = ''; }
+              sample = String(sample || '').trim();
+              if (!sample) sample = String(location.href || '');
+
+              var after = sample;
+              try {
+                if (window.BL && BL.Net && typeof BL.Net.rewriteJsQuery === 'function') after = BL.Net.rewriteJsQuery(sample);
+              } catch (_) { after = sample; }
+
+              if (String(after) === String(sample)) showNoty('[[BlackLampa]] JSQP: no change');
+              else showNoty('[[BlackLampa]] JSQP: ' + shortStr(after, 240));
+            } catch (_) { }
+          }
+        });
+      } catch (_) { }
+
+      // Reset to defaults
+      try {
+        Lampa.SettingsApi.addParam({
+          component: STATE.componentId,
+          param: { name: 'bl_jsqp_reset_defaults', type: 'button' },
+          field: { name: 'Reset to defaults', description: 'Сбрасывает настройки JSQP.' },
+          onChange: function () {
+            try {
+              sSet('bl_jsqp_enabled', DEF.bl_jsqp_enabled);
+              sSet('bl_jsqp_force', DEF.bl_jsqp_force);
+              sSet('bl_jsqp_origin_mode', DEF.bl_jsqp_origin_mode);
+              sSet('bl_jsqp_origin_value', DEF.bl_jsqp_origin_value);
+              sSet('bl_jsqp_logged_mode', DEF.bl_jsqp_logged_mode);
+              sSet('bl_jsqp_logged_value', DEF.bl_jsqp_logged_value);
+              sSet('bl_jsqp_reset_mode', DEF.bl_jsqp_reset_mode);
+              sSet('bl_jsqp_reset_value', DEF.bl_jsqp_reset_value);
+              sSet('bl_jsqp_match', DEF.bl_jsqp_match);
+              sSet('bl_jsqp_params', DEF.bl_jsqp_params);
+            } catch (_) { }
+            showNoty('[[BlackLampa]] JSQP: defaults restored');
+            go('jsqp', null, getSettingsFocusIndexSafe());
+          }
+        });
+      } catch (_) { }
+    } catch (_) { }
+  }
 
   function buildBackupScreen() {
     try {
@@ -1669,6 +1908,7 @@
 	    if (route === 'plugin_detail') return buildPluginDetailScreen(payload);
 	    if (route === 'danger') return buildDangerScreen();
 	    if (route === 'logging') return buildLoggingScreen();
+	    if (route === 'jsqp') return buildJsqpScreen();
 	    if (route === 'backup') return buildBackupScreen();
 	    if (route === 'blocklist') return buildBlocklistScreen();
 	    if (route === 'blocklist_builtin') return buildBlocklistBuiltinScreen();
@@ -1699,7 +1939,7 @@
 
 	      route = String(route || 'root');
 	      if (route !== 'root' && route !== 'managed' && route !== 'extras' && route !== 'plugin_detail' && route !== 'danger' &&
-	        route !== 'logging' && route !== 'backup' && route !== 'blocklist' && route !== 'blocklist_builtin' && route !== 'blocklist_user' && route !== 'blocklist_user_detail' && route !== 'blocklist_add') {
+	        route !== 'logging' && route !== 'jsqp' && route !== 'backup' && route !== 'blocklist' && route !== 'blocklist_builtin' && route !== 'blocklist_user' && route !== 'blocklist_user_detail' && route !== 'blocklist_add') {
 	        route = 'root';
 	      }
 
