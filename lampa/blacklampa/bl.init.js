@@ -153,6 +153,7 @@
       loadSeq([
         'bl.preload.js',
         'bl.ui.filescanner.js',
+        'bl.backup.js',
         'bl.plugins.installer.js',
         'bl.autoplugin.js'
       ], function () {

@@ -486,7 +486,17 @@
 	        }
 	      });
 
-	      // 6) Filesystem scan (popup)
+	      // 6) Backup / Transfer
+	      Lampa.SettingsApi.addParam({
+	        component: STATE.componentId,
+	        param: { name: 'bl_pi_root_backup', type: 'static', default: true },
+	        field: { name: 'Backup / Transfer', description: 'Экспорт/импорт настроек BlackLampa (localStorage) + шифрование + history.' },
+	        onRender: function (item) {
+	          try { if (item && item.on) item.on('hover:enter', function () { push('backup', null, 0, 6); }); } catch (_) { }
+	        }
+	      });
+
+	      // 7) Filesystem scan (popup)
 	      Lampa.SettingsApi.addParam({
 	        component: STATE.componentId,
 	        param: { name: 'bl_pi_root_filesystem_scan', type: 'static', default: true },
@@ -572,6 +582,378 @@
 	      });
 	    } catch (_) { }
 	  }
+
+  function buildBackupScreen() {
+    try {
+      if (!window.BL || !BL.Backup) {
+        var na = 'BL.Backup missing (bl.backup.js not loaded).';
+        Lampa.SettingsApi.addParam({
+          component: STATE.componentId,
+          param: { name: 'bl_backup_na', type: 'static', values: na, default: na },
+          field: { name: 'Backup / Transfer', description: na }
+        });
+        return;
+      }
+
+      var CFG_KEY = 'bl_backup_cfg_v1';
+
+      function normPrefixes(arr) {
+        var out = [];
+        try {
+          if (!Array.isArray(arr)) arr = [];
+          for (var i = 0; i < arr.length; i++) {
+            var p = String(arr[i] || '').trim();
+            if (p) out.push(p);
+          }
+        } catch (_) { }
+        if (!out.length) out = ['bl_'];
+        return out;
+      }
+
+      function parsePrefixesString(str) {
+        var out = [];
+        try {
+          var parts = String(str || '').split(',');
+          for (var i = 0; i < parts.length; i++) {
+            var p = String(parts[i] || '').trim();
+            if (p) out.push(p);
+          }
+        } catch (_) { }
+        if (!out.length) out = ['bl_'];
+        return out;
+      }
+
+      function loadCfgSafe() {
+        var def = { prefixes: ['bl_'], provider: 'paste_rs', keyHint: '', unsafe_store_key: 0 };
+        var raw = safe(function () { return window.localStorage ? localStorage.getItem(CFG_KEY) : ''; }, '');
+        if (!raw) return def;
+        var obj = safe(function () { return JSON.parse(String(raw || '')); }, null);
+        if (!isPlainObject(obj)) return def;
+        def.prefixes = normPrefixes(obj.prefixes);
+        def.provider = String(obj.provider || def.provider) || def.provider;
+        def.keyHint = String(obj.keyHint || '');
+        def.unsafe_store_key = (String(obj.unsafe_store_key || '0') === '1') ? 1 : 0;
+        return def;
+      }
+
+      function saveCfgSafe(cfg) {
+        try {
+          if (!window.localStorage) return;
+          localStorage.setItem(CFG_KEY, JSON.stringify(cfg || {}));
+        } catch (_) { }
+      }
+
+      function sGet(k, fallback) {
+        var v = fallback;
+        try { if (window.Lampa && Lampa.Storage && Lampa.Storage.get) v = Lampa.Storage.get(String(k)); } catch (_) { v = fallback; }
+        if (typeof v === 'undefined' || v === null) return fallback;
+        return v;
+      }
+
+      function pad2(n) { n = Number(n || 0); return (n < 10 ? '0' : '') + String(n); }
+
+      function fmtTs(ms) {
+        try {
+          var d = new Date(Number(ms) || 0);
+          return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+        } catch (_) { return ''; }
+      }
+
+      function shortId(idOrUrl) {
+        var s = String(idOrUrl || '');
+        try {
+          if (s.indexOf('://') > 0) {
+            var u = new URL(s, location.href);
+            var p = String(u.pathname || '');
+            var segs = p.split('/');
+            var last = segs[segs.length - 1] || '';
+            var prev = segs.length > 1 ? (segs[segs.length - 2] || '') : '';
+            var id = last || prev || '';
+            return id || s;
+          }
+        } catch (_) { }
+        return s;
+      }
+
+      function syncCfgFromUi(currentCfg) {
+        var provider = String(sGet('bl_backup_provider_v1', currentCfg.provider) || currentCfg.provider);
+        var keyHint = String(sGet('bl_backup_key_hint_v1', currentCfg.keyHint) || '');
+        var unsafe = String(sGet('bl_backup_unsafe_store_key_v1', currentCfg.unsafe_store_key ? '1' : '0') || '0');
+        var prefixesStr = String(sGet('bl_backup_prefixes_v1', (currentCfg.prefixes || ['bl_']).join(',')) || '');
+        var prefixes = parsePrefixesString(prefixesStr);
+        var cfg = { prefixes: prefixes, provider: provider, keyHint: keyHint, unsafe_store_key: (unsafe === '1') ? 1 : 0 };
+        saveCfgSafe(cfg);
+        return cfg;
+      }
+
+      var cfg = loadCfgSafe();
+      saveCfgSafe(cfg);
+
+      var hist = [];
+      try { hist = (BL.Backup.history && BL.Backup.history.list) ? (BL.Backup.history.list() || []) : []; } catch (_) { hist = []; }
+      if (!Array.isArray(hist)) hist = [];
+
+      // Status
+      try {
+        var st = 'history: ' + String(hist.length) + ' | prefixes: ' + String((cfg.prefixes || ['bl_']).join(','));
+        Lampa.SettingsApi.addParam({
+          component: STATE.componentId,
+          param: { name: 'bl_backup_status', type: 'static', values: st, default: st },
+          field: { name: 'Backup / Transfer', description: 'Экспорт/импорт настроек BlackLampa (localStorage) + шифрование + history.' }
+        });
+      } catch (_) { }
+
+      // Encryption key (input)
+      try {
+        Lampa.SettingsApi.addParam({
+          component: STATE.componentId,
+          param: { name: 'bl_backup_key_input_v1', type: 'input', values: '', default: '', placeholder: 'Enter key / PIN' },
+          field: { name: 'Encryption key', description: 'Используется для AES-GCM. Не хранится в history по умолчанию.' }
+        });
+      } catch (_) { }
+
+      // Key label / hint (input)
+      try {
+        Lampa.SettingsApi.addParam({
+          component: STATE.componentId,
+          param: { name: 'bl_backup_key_hint_v1', type: 'input', values: '', default: String(cfg.keyHint || ''), placeholder: 'home-tv / phone / test' },
+          field: { name: 'Key label / hint', description: '' },
+          onChange: function () { cfg = syncCfgFromUi(cfg); }
+        });
+      } catch (_) { }
+
+      // Prefixes (input)
+      try {
+        Lampa.SettingsApi.addParam({
+          component: STATE.componentId,
+          param: { name: 'bl_backup_prefixes_v1', type: 'input', values: '', default: String((cfg.prefixes || ['bl_']).join(',')), placeholder: 'bl_' },
+          field: { name: 'Prefixes', description: 'Какие ключи localStorage экспортировать (prefix list, через ,).' },
+          onChange: function () { cfg = syncCfgFromUi(cfg); }
+        });
+      } catch (_) { }
+
+      // Provider (select)
+      try {
+        Lampa.SettingsApi.addParam({
+          component: STATE.componentId,
+          param: { name: 'bl_backup_provider_v1', type: 'select', values: { paste_rs: 'paste.rs', dpaste_org: 'dpaste.org' }, default: String(cfg.provider || 'paste_rs') },
+          field: { name: 'Provider', description: '' },
+          onChange: function () { cfg = syncCfgFromUi(cfg); }
+        });
+      } catch (_) { }
+
+      // Unsafe: store key in history (select)
+      try {
+        Lampa.SettingsApi.addParam({
+          component: STATE.componentId,
+          param: { name: 'bl_backup_unsafe_store_key_v1', type: 'select', values: { 0: 'OFF (safe)', 1: 'ON (unsafe)' }, default: (cfg.unsafe_store_key ? 1 : 0) },
+          field: { name: 'Unsafe: store key in history', description: 'Если ON — ключ сохранится вместе с paste ID в history.' },
+          onChange: function () { cfg = syncCfgFromUi(cfg); }
+        });
+      } catch (_) { }
+
+      function keyHash(pass) {
+        try {
+          if (window.BL && BL.Backup && typeof BL.Backup.__keyHash === 'function') return BL.Backup.__keyHash(String(pass || ''));
+        } catch (_) { }
+        return Promise.resolve('');
+      }
+
+      function runAsync(label, fn) {
+        if (STATE.busy) {
+          showNoty('[[BlackLampa]] Операция уже выполняется...');
+          return;
+        }
+        STATE.busy = true;
+        if (label) showNoty('[[BlackLampa]] ' + String(label));
+        setTimeout(function () {
+          Promise.resolve().then(fn).then(function () {
+            STATE.busy = false;
+            API.refresh();
+          }, function () {
+            STATE.busy = false;
+            API.refresh();
+          });
+        }, 0);
+      }
+
+      // Export button
+      try {
+        Lampa.SettingsApi.addParam({
+          component: STATE.componentId,
+          param: { name: 'bl_backup_export_btn', type: 'button' },
+          field: { name: 'Export', description: 'Шифрует конфиг и загружает в выбранный provider. Запись добавляется в history.' },
+          onChange: function () {
+            var pass = String(sGet('bl_backup_key_input_v1', '') || '').trim();
+            if (!pass) {
+              showNoty('[[BlackLampa]] Set encryption key');
+              return;
+            }
+            runAsync('Exporting...', function () {
+              cfg = syncCfgFromUi(cfg);
+
+              var cfgObj = null;
+              try { cfgObj = BL.Backup.collectConfig(); } catch (_) { cfgObj = { meta: {}, data: {} }; }
+
+              var provider = String(cfg.provider || 'paste_rs');
+              var hint = String(cfg.keyHint || '');
+              var unsafe = !!cfg.unsafe_store_key;
+
+              return BL.Backup.encrypt(cfgObj, pass).then(function (payloadStr) {
+                return BL.Backup.upload(provider, payloadStr).then(function (up) {
+                  var storedId = '';
+                  try { storedId = (up && up.url) ? String(up.url || '') : String(up && up.id ? up.id : ''); } catch (_) { storedId = ''; }
+                  if (!storedId) storedId = String(up && up.id ? up.id : '');
+
+                  return keyHash(pass).then(function (kh) {
+                    try {
+                      var item = {
+                        ts: Date.now(),
+                        provider: provider,
+                        id: storedId,
+                        bytes: payloadStr.length,
+                        schema: 1,
+                        keyHint: hint,
+                        keyHash: String(kh || ''),
+                        note: ''
+                      };
+                      if (unsafe) item.unsafeKey = pass;
+                      if (BL.Backup.history && BL.Backup.history.add) BL.Backup.history.add(item);
+                    } catch (_) { }
+                    showNoty('[[BlackLampa]] Exported: ' + shortId(storedId));
+                  });
+                });
+              }).catch(function (e) {
+                if (e && e.code === 'CORS') showNoty('[[BlackLampa]] Provider blocked by CORS on this device');
+                else showNoty('[[BlackLampa]] Export failed: ' + String((e && e.message) ? e.message : e));
+                throw e;
+              });
+            });
+          }
+        });
+      } catch (_) { }
+
+      // Import mode
+      try {
+        Lampa.SettingsApi.addParam({
+          component: STATE.componentId,
+          param: { name: 'bl_backup_import_mode_v1', type: 'select', values: { merge: 'Merge (default)', replace: 'Replace' }, default: 'merge' },
+          field: { name: 'Import mode', description: 'Merge — обновляет/добавляет ключи. Replace — очищает BL-prefix ключи и импортирует.' }
+        });
+      } catch (_) { }
+
+      function doImport(provider, idOrUrl, pass, mode) {
+        provider = String(provider || '');
+        idOrUrl = String(idOrUrl || '').trim();
+        pass = String(pass || '').trim();
+        mode = (mode === 'replace') ? 'replace' : 'merge';
+
+        if (!idOrUrl) {
+          showNoty('[[BlackLampa]] Set paste id/url');
+          return Promise.reject(new Error('no id'));
+        }
+        if (!pass) {
+          showNoty('[[BlackLampa]] Set encryption key');
+          return Promise.reject(new Error('no key'));
+        }
+
+        return BL.Backup.download(provider, idOrUrl).then(function (payloadStr) {
+          return BL.Backup.decrypt(payloadStr, pass);
+        }).then(function (cfgObj) {
+          BL.Backup.applyConfig(cfgObj, mode);
+          showNoty('[[BlackLampa]] Imported, reloading…');
+          setTimeout(function () { try { location.reload(); } catch (_) { } }, 0);
+        }).catch(function (e) {
+          if (e && e.code === 'CORS') showNoty('[[BlackLampa]] Provider blocked by CORS on this device');
+          else showNoty('[[BlackLampa]] Import failed: ' + String((e && e.message) ? e.message : e));
+          throw e;
+        });
+      }
+
+      // Import from history (last N)
+      try {
+        var max = 15;
+        if (!hist.length) {
+          Lampa.SettingsApi.addParam({
+            component: STATE.componentId,
+            param: { name: 'bl_backup_hist_empty', type: 'static', default: true },
+            field: { name: 'No exports yet', description: '' }
+          });
+        } else {
+          for (var hi = 0; hi < hist.length && hi < max; hi++) {
+            (function (it, idx) {
+              var label = fmtTs(it.ts) + ' | ' + String(it.provider || '') + ' | ' + shortId(it.id) + (it.keyHint ? (' | ' + String(it.keyHint || '')) : '');
+              Lampa.SettingsApi.addParam({
+                component: STATE.componentId,
+                param: { name: 'bl_backup_hist_' + String(idx) + '_' + String(it.ts || idx), type: 'static', default: true },
+                field: { name: label, description: 'OK — import (uses key input; unsafeKey if saved).' },
+                onRender: function (item) {
+                  try {
+                    if (!item || !item.on) return;
+                    item.on('hover:enter', function () {
+                      var mode = String(sGet('bl_backup_import_mode_v1', 'merge') || 'merge');
+                      var pass = String(sGet('bl_backup_key_input_v1', '') || '').trim();
+                      if (!pass && it.unsafeKey) pass = String(it.unsafeKey || '').trim();
+                      runAsync('Importing...', function () { return doImport(String(it.provider || cfg.provider || 'paste_rs'), String(it.id || ''), pass, mode); });
+                    });
+                  } catch (_) { }
+                }
+              });
+            })(hist[hi] || {}, hi);
+          }
+        }
+      } catch (_) { }
+
+      // Import manual (id/url)
+      try {
+        Lampa.SettingsApi.addParam({
+          component: STATE.componentId,
+          param: { name: 'bl_backup_import_id_v1', type: 'input', values: '', default: '', placeholder: 'id-or-url' },
+          field: { name: 'Import: paste id/url', description: '' }
+        });
+      } catch (_) { }
+
+      // Import button
+      try {
+        Lampa.SettingsApi.addParam({
+          component: STATE.componentId,
+          param: { name: 'bl_backup_import_btn', type: 'button' },
+          field: { name: 'Import', description: 'Скачивает → расшифровывает → применяет → reload.' },
+          onChange: function () {
+            var provider = String(sGet('bl_backup_provider_v1', cfg.provider || 'paste_rs') || cfg.provider || 'paste_rs');
+            var id = String(sGet('bl_backup_import_id_v1', '') || '').trim();
+            var pass = String(sGet('bl_backup_key_input_v1', '') || '').trim();
+            var mode = String(sGet('bl_backup_import_mode_v1', 'merge') || 'merge');
+
+            if (!id) {
+              showNoty('[[BlackLampa]] Set paste id/url');
+              return;
+            }
+            if (!pass) {
+              showNoty('[[BlackLampa]] Set encryption key');
+              return;
+            }
+
+            runAsync('Importing...', function () { return doImport(provider, id, pass, mode); });
+          }
+        });
+      } catch (_) { }
+
+      // Clear history
+      try {
+        Lampa.SettingsApi.addParam({
+          component: STATE.componentId,
+          param: { name: 'bl_backup_history_clear_btn', type: 'button' },
+          field: { name: 'Clear history', description: 'Удаляет только history экспортов. Настройки BlackLampa не трогает.' },
+          onChange: function () {
+            try { if (BL.Backup.history && BL.Backup.history.clear) BL.Backup.history.clear(); } catch (_) { }
+            showNoty('[[BlackLampa]] History cleared');
+            API.refresh();
+          }
+        });
+      } catch (_) { }
+    } catch (_) { }
+  }
 
   function buildManagedScreen() {
     var list = [];
@@ -1287,6 +1669,7 @@
 	    if (route === 'plugin_detail') return buildPluginDetailScreen(payload);
 	    if (route === 'danger') return buildDangerScreen();
 	    if (route === 'logging') return buildLoggingScreen();
+	    if (route === 'backup') return buildBackupScreen();
 	    if (route === 'blocklist') return buildBlocklistScreen();
 	    if (route === 'blocklist_builtin') return buildBlocklistBuiltinScreen();
 	    if (route === 'blocklist_user') return buildBlocklistUserRulesScreen();
@@ -1316,7 +1699,7 @@
 
 	      route = String(route || 'root');
 	      if (route !== 'root' && route !== 'managed' && route !== 'extras' && route !== 'plugin_detail' && route !== 'danger' &&
-	        route !== 'logging' && route !== 'blocklist' && route !== 'blocklist_builtin' && route !== 'blocklist_user' && route !== 'blocklist_user_detail' && route !== 'blocklist_add') {
+	        route !== 'logging' && route !== 'backup' && route !== 'blocklist' && route !== 'blocklist_builtin' && route !== 'blocklist_user' && route !== 'blocklist_user_detail' && route !== 'blocklist_add') {
 	        route = 'root';
 	      }
 
