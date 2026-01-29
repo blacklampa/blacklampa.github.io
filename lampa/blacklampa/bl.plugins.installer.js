@@ -455,17 +455,27 @@
         }
       });
 
-      // 4) Danger
+      // 4) User-Agent
       Lampa.SettingsApi.addParam({
         component: STATE.componentId,
-        param: { name: 'bl_pi_root_danger', type: 'static', default: true },
-        field: { name: 'Danger zone', description: 'Сброс/очистка/опасные операции.' },
+        param: { name: 'bl_pi_root_ua', type: 'static', default: true },
+        field: { name: 'User-Agent', description: 'Подмена navigator.* (userAgent/appVersion/platform/vendor) + (опц.) X-BL-UA.' },
         onRender: function (item) {
-          try { if (item && item.on) item.on('hover:enter', function () { push('danger', null, 0, 4); }); } catch (_) { }
+          try { if (item && item.on) item.on('hover:enter', function () { push('ua', null, 0, 4); }); } catch (_) { }
         }
       });
 
-	      // 5) Log viewer (kept from legacy AutoPlugin UI)
+	      // 5) Logging
+	      Lampa.SettingsApi.addParam({
+	        component: STATE.componentId,
+	        param: { name: 'bl_pi_root_logging', type: 'static', default: true },
+	        field: { name: 'Logging', description: 'Режим popup-логов (silent / auto popup).' },
+	        onRender: function (item) {
+	          try { if (item && item.on) item.on('hover:enter', function () { push('logging', null, 0, 5); }); } catch (_) { }
+	        }
+	      });
+
+	      // 6) Log viewer (kept from legacy AutoPlugin UI)
 	      Lampa.SettingsApi.addParam({
 	        component: STATE.componentId,
 	        param: { name: 'bl_pi_root_log_viewer', type: 'static', default: true },
@@ -484,16 +494,6 @@
             });
           } catch (_) { }
         }
-	      });
-
-	      // 6) Logging
-	      Lampa.SettingsApi.addParam({
-	        component: STATE.componentId,
-	        param: { name: 'bl_pi_root_logging', type: 'static', default: true },
-	        field: { name: 'Logging', description: 'Режим popup-логов (silent / auto popup).' },
-	        onRender: function (item) {
-	          try { if (item && item.on) item.on('hover:enter', function () { push('logging', null, 0, 6); }); } catch (_) { }
-	        }
 	      });
 
 	      // 7) Backup / Transfer
@@ -522,6 +522,16 @@
 	          } catch (_) { }
 	        }
 	      });
+
+      // 9) Danger
+      Lampa.SettingsApi.addParam({
+        component: STATE.componentId,
+        param: { name: 'bl_pi_root_danger', type: 'static', default: true },
+        field: { name: 'Danger zone', description: 'Сброс/очистка/опасные операции.' },
+        onRender: function (item) {
+          try { if (item && item.on) item.on('hover:enter', function () { push('danger', null, 0, 9); }); } catch (_) { }
+        }
+      });
 
 	      // X) Status (last)
 	      Lampa.SettingsApi.addParam({
@@ -816,6 +826,192 @@
             } catch (_) { }
             showNoty('[[BlackLampa]] JSQP: defaults restored');
             go('jsqp', null, getSettingsFocusIndexSafe());
+          }
+        });
+      } catch (_) { }
+    } catch (_) { }
+  }
+
+  function buildUaScreen() {
+    try {
+      var DEF = {
+        bl_ua_enabled: '0',
+        bl_ua_mode: 'preset',
+        bl_ua_preset: 'chrome_win_latest',
+        bl_ua_custom: '',
+        bl_ua_apply_scope: 'all',
+        bl_ua_reload_on_change: '1',
+        bl_ua_add_header: '0'
+      };
+
+      function sGet(k, fallback) {
+        var v = null;
+        try { if (window.Lampa && Lampa.Storage && Lampa.Storage.get) v = Lampa.Storage.get(String(k)); } catch (_) { v = null; }
+        if (v === undefined || v === null) {
+          try { if (window.localStorage) v = localStorage.getItem(String(k)); } catch (_) { v = null; }
+        }
+        if (v === undefined || v === null) return fallback;
+        return v;
+      }
+
+      function sSet(k, v) {
+        try { if (window.Lampa && Lampa.Storage && Lampa.Storage.set) return Lampa.Storage.set(String(k), String(v)); } catch (_) { }
+        try { if (window.localStorage) localStorage.setItem(String(k), String(v)); } catch (_) { }
+      }
+
+      function sEnsure(k, def) {
+        try {
+          var v = sGet(k, null);
+          if (v === undefined || v === null) sSet(k, def);
+        } catch (_) { }
+      }
+
+      // Seed defaults
+      try {
+        sEnsure('bl_ua_enabled', DEF.bl_ua_enabled);
+        sEnsure('bl_ua_mode', DEF.bl_ua_mode);
+        sEnsure('bl_ua_preset', DEF.bl_ua_preset);
+        sEnsure('bl_ua_custom', DEF.bl_ua_custom);
+        sEnsure('bl_ua_apply_scope', DEF.bl_ua_apply_scope);
+        sEnsure('bl_ua_reload_on_change', DEF.bl_ua_reload_on_change);
+        sEnsure('bl_ua_add_header', DEF.bl_ua_add_header);
+      } catch (_) { }
+
+      function shortStr(s, max) {
+        s = String(s || '');
+        max = Number(max || 80);
+        if (s.length <= max) return s;
+        return s.slice(0, max - 1) + '…';
+      }
+
+      function reloadNow() {
+        showNoty('[[BlackLampa]] UA applied, reloading…');
+        setTimeout(function () { try { location.reload(); } catch (_) { } }, 200);
+      }
+
+      function reloadOnChangeAllowed() {
+        var roc = String(sGet('bl_ua_reload_on_change', DEF.bl_ua_reload_on_change) || DEF.bl_ua_reload_on_change);
+        if (roc === '1') { reloadNow(); return true; }
+        showNoty('[[BlackLampa]] UA: reload required');
+        return false;
+      }
+
+      function enabledNow() {
+        try { return String(sGet('bl_ua_enabled', DEF.bl_ua_enabled) || DEF.bl_ua_enabled) === '1'; } catch (_) { return false; }
+      }
+
+      function reloadIfEnabled() {
+        if (!enabledNow()) return false;
+        return reloadOnChangeAllowed();
+      }
+
+      var cur = '';
+      try { cur = String(navigator && navigator.userAgent ? navigator.userAgent : '') || ''; } catch (_) { cur = ''; }
+      var st = 'Current UA: ' + shortStr(cur, 80);
+
+      // Status
+      try {
+        Lampa.SettingsApi.addParam({
+          component: STATE.componentId,
+          param: { name: 'bl_ua_status', type: 'static', values: st, default: st },
+          field: { name: 'User-Agent', description: st }
+        });
+      } catch (_) { }
+
+      // Enabled
+      try {
+        Lampa.SettingsApi.addParam({
+          component: STATE.componentId,
+          param: { name: 'bl_ua_enabled', type: 'select', values: { 0: 'OFF', 1: 'ON' }, default: 0 },
+          field: { name: 'Enabled', description: 'Подменять navigator.* (JS runtime). HTTP User-Agent не меняется.' },
+          onChange: function () {
+            reloadOnChangeAllowed();
+          }
+        });
+      } catch (_) { }
+
+      // Mode
+      var mode = String(sGet('bl_ua_mode', DEF.bl_ua_mode) || DEF.bl_ua_mode);
+      mode = mode.toLowerCase();
+      if (mode !== 'preset' && mode !== 'custom') mode = DEF.bl_ua_mode;
+
+      try {
+        Lampa.SettingsApi.addParam({
+          component: STATE.componentId,
+          param: { name: 'bl_ua_mode', type: 'select', values: { preset: 'preset', custom: 'custom' }, default: DEF.bl_ua_mode },
+          field: { name: 'Mode', description: '' },
+          onChange: function () {
+            go('ua', null, 2);
+            reloadIfEnabled();
+          }
+        });
+      } catch (_) { }
+
+      // Preset / Custom UA
+      if (mode === 'preset') {
+        try {
+          Lampa.SettingsApi.addParam({
+            component: STATE.componentId,
+            param: {
+              name: 'bl_ua_preset',
+              type: 'select',
+              values: {
+                chrome_win_latest: 'chrome_win_latest',
+                edge_win_latest: 'edge_win_latest',
+                firefox_win_latest: 'firefox_win_latest',
+                chrome_android_latest: 'chrome_android_latest',
+                safari_ios_latest: 'safari_ios_latest'
+              },
+              default: DEF.bl_ua_preset
+            },
+            field: { name: 'Preset', description: '' },
+            onChange: function () {
+              reloadIfEnabled();
+            }
+          });
+        } catch (_) { }
+      } else {
+        try {
+          Lampa.SettingsApi.addParam({
+            component: STATE.componentId,
+            param: { name: 'bl_ua_custom', type: 'input', values: '', default: DEF.bl_ua_custom, placeholder: 'Mozilla/5.0 ...' },
+            field: { name: 'Custom UA', description: '' },
+            onChange: function () {
+              reloadIfEnabled();
+            }
+          });
+        } catch (_) { }
+      }
+
+      // Add X-BL-UA header (optional)
+      try {
+        Lampa.SettingsApi.addParam({
+          component: STATE.componentId,
+          param: { name: 'bl_ua_add_header', type: 'select', values: { 0: 'OFF', 1: 'ON' }, default: 0 },
+          field: { name: 'Add X-BL-UA header', description: 'Опционально добавляет X-BL-UA в fetch/XHR (может вызвать CORS preflight).' },
+          onChange: function () {
+            reloadIfEnabled();
+          }
+        });
+      } catch (_) { }
+
+      // Reload on change
+      try {
+        Lampa.SettingsApi.addParam({
+          component: STATE.componentId,
+          param: { name: 'bl_ua_reload_on_change', type: 'select', values: { 0: 'OFF', 1: 'ON' }, default: 1 },
+          field: { name: 'Reload on change', description: 'При изменении настроек (и enabled=1) выполняет reload.' }
+        });
+      } catch (_) { }
+
+      // Apply (always reload)
+      try {
+        Lampa.SettingsApi.addParam({
+          component: STATE.componentId,
+          param: { name: 'bl_ua_apply', type: 'button' },
+          field: { name: 'Apply', description: 'Применить и перезагрузить.' },
+          onChange: function () {
+            reloadNow();
           }
         });
       } catch (_) { }
@@ -1909,6 +2105,7 @@
 	    if (route === 'danger') return buildDangerScreen();
 	    if (route === 'logging') return buildLoggingScreen();
 	    if (route === 'jsqp') return buildJsqpScreen();
+	    if (route === 'ua') return buildUaScreen();
 	    if (route === 'backup') return buildBackupScreen();
 	    if (route === 'blocklist') return buildBlocklistScreen();
 	    if (route === 'blocklist_builtin') return buildBlocklistBuiltinScreen();
@@ -1939,7 +2136,7 @@
 
 	      route = String(route || 'root');
 	      if (route !== 'root' && route !== 'managed' && route !== 'extras' && route !== 'plugin_detail' && route !== 'danger' &&
-	        route !== 'logging' && route !== 'jsqp' && route !== 'backup' && route !== 'blocklist' && route !== 'blocklist_builtin' && route !== 'blocklist_user' && route !== 'blocklist_user_detail' && route !== 'blocklist_add') {
+	        route !== 'logging' && route !== 'jsqp' && route !== 'ua' && route !== 'backup' && route !== 'blocklist' && route !== 'blocklist_builtin' && route !== 'blocklist_user' && route !== 'blocklist_user_detail' && route !== 'blocklist_add') {
 	        route = 'root';
 	      }
 

@@ -1034,6 +1034,12 @@
     // Ensure JSQP defaults exist (localStorage/Lampa.Storage)
     try { jsqpEnsureDefaultsOnce(); } catch (_) { }
 
+    // Optional diagnostic header (never try to set real HTTP User-Agent)
+    var UA_ADD_HEADER = false;
+    var UA_HEADER_VALUE = '';
+    try { UA_ADD_HEADER = lsGetBool('bl_ua_add_header', false) && lsGetBool('bl_ua_enabled', false); } catch (_) { UA_ADD_HEADER = false; }
+    try { if (window.BL && BL.UA && BL.UA.uaString) UA_HEADER_VALUE = String(BL.UA.uaString || ''); } catch (_) { UA_HEADER_VALUE = ''; }
+
 	    if (window.fetch) {
 	      var origFetch = window.fetch.bind(window);
 	      window.fetch = function (input, init) {
@@ -1059,6 +1065,44 @@
                   }
                 } catch (_) { applied = false; }
                 if (applied) u = nu;
+              }
+            }
+          } catch (_) { }
+
+          // Optional diagnostic header X-BL-UA (best-effort only).
+          // IMPORTANT: browsers forbid setting real 'User-Agent' header.
+          try {
+            if (UA_ADD_HEADER && UA_HEADER_VALUE) {
+              if (typeof input === 'string') {
+                init = init || {};
+                if (typeof Headers !== 'undefined') {
+                  var h0 = null;
+                  try { h0 = init.headers ? new Headers(init.headers) : new Headers(); } catch (_) { h0 = null; }
+                  if (h0) {
+                    try { h0.set('X-BL-UA', UA_HEADER_VALUE); } catch (_) { }
+                    init.headers = h0;
+                  }
+                } else if (init && init.headers && typeof init.headers === 'object') {
+                  try { init.headers['X-BL-UA'] = UA_HEADER_VALUE; } catch (_) { }
+                } else if (init) {
+                  try { init.headers = { 'X-BL-UA': UA_HEADER_VALUE }; } catch (_) { }
+                }
+              } else if (typeof Request !== 'undefined' && input instanceof Request) {
+                if (typeof Headers !== 'undefined') {
+                  try {
+                    var h1 = new Headers(input.headers);
+                    try { h1.set('X-BL-UA', UA_HEADER_VALUE); } catch (_) { }
+                    input = new Request(input, { headers: h1 });
+                    try { u = input && input.url ? input.url : u; } catch (_) { }
+                  } catch (_) { }
+                } else {
+                  init = init || {};
+                  if (init && init.headers && typeof init.headers === 'object') {
+                    try { init.headers['X-BL-UA'] = UA_HEADER_VALUE; } catch (_) { }
+                  } else if (init) {
+                    try { init.headers = { 'X-BL-UA': UA_HEADER_VALUE }; } catch (_) { }
+                  }
+                }
               }
             }
           } catch (_) { }
@@ -1131,6 +1175,14 @@
 	          }, 0);
 	          return;
 	        }
+
+          // Optional diagnostic header X-BL-UA (best-effort only).
+          try {
+            if (UA_ADD_HEADER && UA_HEADER_VALUE && this && this.setRequestHeader) {
+              this.setRequestHeader('X-BL-UA', UA_HEADER_VALUE);
+            }
+          } catch (_) { }
+
 	        return origSend.apply(this, arguments);
 	      };
 	    }
