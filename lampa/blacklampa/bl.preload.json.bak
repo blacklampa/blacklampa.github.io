@@ -1,0 +1,173 @@
+{
+  "meta": {
+    "name": "BlackLampa preload",
+    "format": 1,
+    "source": "modification-preload.json",
+    "generatedAt": 0
+  },
+  "storage": {
+    "mods_rating": "false",
+    "online_mod_proxy_zetflix": "false",
+    "online_mod_proxy_lumex": "false",
+    "online_mod_proxy_filmix": "true",
+    "timetable": [],
+    "content_rows_shots_main": "false",
+    "native": "false",
+    "logined_pub": "false",
+    "online_mod_proxy_fancdn2": "false",
+    "menu_sort": [
+      "Главная",
+      "Фильмы",
+      "Мультфильмы",
+      "Сериалы",
+      "Каталог",
+      "Фильтр",
+      "Релизы",
+      "Аниме",
+      "Избранное",
+      "История",
+      "Торренты",
+      "YouTube",
+      "RuTube",
+      "Twitch",
+      "Подборки",
+      "Для детей",
+      "Спорт",
+      "Shots"
+    ],
+    "tmdb_lang": "ru",
+    "NoTrailerMainPage": "true",
+    "background": "false",
+    "online_mod_proxy_fanserials": "false",
+    "platform": "",
+    "online_but_first": "false",
+    "mods_serial_info": "true",
+    "filmix_status": {},
+    "online_mod_proxy_collaps": "false",
+    "online_mod_proxy_kinobase": "false",
+    "online_mod_proxy_reset": "7",
+    "online_mod_proxy_hdvb": "false",
+    "colored_elements": "true",
+    "filmix_log": "false",
+    "pub_access_token": "",
+    "online_mod_proxy_fancdn": "false",
+    "online_mod_proxy_videoseed": "true",
+    "priority_balanser": "lumex",
+    "forktv_id": "8c4171e1b46e",
+    "head_filter_show_broadcast": "false",
+    "pro_pub": "false",
+    "head_filter_show_profile": "false",
+    "online_mod_proxy_redheadsound": "true",
+    "online_mod_proxy_kinopub": "true",
+    "act_forktv_id": "864627",
+    "head_filter_show_premium": "false",
+    "online_mod_proxy_rezka2": "false",
+    "plugins": [],
+    "player_torrent": "inner",
+    "shots_in_player": "false",
+    "online_mod_proxy_fanserials_cdn": "false",
+    "showModssVip": "true",
+    "online_mod_proxy_videodb": "false",
+    "online_mod_proxy_alloha": "false",
+    "lampa_uid": "4zQHUbf7",
+    "online_mod_proxy_kp": "false",
+    "interface_size": "small",
+    "head_filter_show_feed": "false",
+    "screensaver_type": "chrome",
+    "button_hidden": [
+      "button--book_Избранное",
+      "button--subscribe_Подписаться",
+      "view--trailer_Трейлеры",
+      "view--torrent_Торренты"
+    ],
+    "menu_hide": [
+      "Мультфильмы",
+      "Релизы",
+      "Аниме",
+      "Торренты",
+      "YouTube",
+      "RuTube"
+    ],
+    "shots_viewed": [
+      821
+    ],
+    "recomends_scan": [],
+    "lampac_unic_id": "jsbaoizf",
+    "parser_torrent_type": "jackett",
+    "online_mod_proxy_vibix": "true",
+    "shots_in_card": "false",
+    "metric_adview": "0",
+    "head_filter_show_notice": "false",
+    "metric_date": "2024-01-23",
+    "online_dash": "true",
+    "tmdb_img_mirror": "imagetmdb.com/",
+    "metric_uid": "WSqJ1HIZ",
+    "button_custom_order": [
+      "modss_online_button",
+      "view--online_Онлайн_BwaRC_v1.6.6",
+      "view--online_mod_Онлайн_online_mod_28.12.2025",
+      "view--torrent_Торренты",
+      "view--trailer_Трейлеры",
+      "button--subscribe_Подписаться",
+      "button--book_Избранное"
+    ],
+    "online_mod_proxy_animelib": "false",
+    "ANIME_fix": "true",
+    "online_mod_proxy_cdnmovies": "false",
+    "surs_settings": {
+      "default": {
+        "interface_size_initialized": true,
+        "custom_button_surs_kids": false,
+        "custom_button_surs_select": false,
+        "custom_button_surs_main": false,
+        "custom_button_surs_history": false,
+        "custom_button_surs_bookmarks": false,
+        "custom_button_surs_settings": false,
+        "genre_16": false,
+        "genre_10762": false
+      }
+    },
+    "full_btn_priority": "",
+    "head_filter_show_blackfriday": "false",
+    "plugins_blacklist": [
+      "lampa.line.pm",
+      "tvigl.info/plugins/shots.js"
+    ],
+    "online_mod_prefer_http": "false",
+    "activity": {
+      "title": "Главная - ",
+      "component": "main",
+      "page": 1
+    },
+    "language": "ru",
+    "buttons_viewmode": "always",
+    "account_user": "localhost",
+    "kp_rating": {
+      "253391": {
+        "kp": null,
+        "imdb": 6.5,
+        "timestamp": 1769147481328
+      },
+      "284736": {
+        "kp": null,
+        "imdb": 6.2,
+        "timestamp": 1769147517119
+      },
+      "1043197": {
+        "kp": 6.9,
+        "imdb": 7,
+        "timestamp": 1769147322979
+      },
+      "1306368": {
+        "kp": null,
+        "imdb": null,
+        "timestamp": 1769146754113
+      }
+    },
+    "msx_fake_auth_ok_v2": "1"
+  },
+  "disabled": [],
+  "stash": {
+    "notes": []
+  }
+}

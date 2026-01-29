@@ -1,0 +1,53 @@
+{
+  "name": "StartMSX",
+  "headline": "Загрузчик приложений",
+  "extension": "MSX portal",
+  "version": "1.0.0",
+  "parameter": "content:https://blacklampa.github.io/msx/start.json",
+  "action": "[settings:validate_links:0|home]",
+  "pages": [
+    {
+      "items": [
+        {
+          "id": "description",
+          "type": "space",
+          "layout": "5,0,5,5",
+          "text": ""
+        },
+
+        {
+          "type": "control",
+          "layout": "0,0,5,1",
+          "image": "https://blacklampa.github.io/msx/msx-logo.png",
+          "label": "BlackLampa",
+          "action": "link:https://blacklampa.github.io/lampa/",
+          "selection": {
+            "important": true,
+            "action": "update:content:description",
+            "data": {
+              "text": [
+                "{txt:msx-white: BlackLampa} — режим popup-логов переключается в меню {txt:msx-white: BlackLampa Installer} → Logging."
+              ]
+            }
+          }
+        },
+        {
+          "type": "control",
+          "layout": "0,1,5,1",
+          "image": "https://blacklampa.github.io/msx/v4.msxplayer.ru.png",
+          "label": "Yumata",
+          "action": "link:https://yumata.github.io/lampa",
+          "selection": {
+            "important": true,
+            "action": "update:content:description",
+            "data": {
+              "text": [
+                "{txt:msx-white: Yumata} — оригинальная страница Lampa."
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
