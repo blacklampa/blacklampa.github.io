@@ -15,7 +15,7 @@
     "bl_jsqp_logged_mode": "set",
     "online_mod_proxy_fanserials": "false",
     "bl_jsqp_origin_mode": "set_b64",
-    "platform": "",
+    "platform": "Android",
     "device_name": "BlackLampa",
     "ClockInPlayer": "true",
     "bl_ua_preset_id_v1": "win_firefox",
