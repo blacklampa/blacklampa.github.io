@@ -316,24 +316,6 @@
 
     try { BL.UA.headerOverrideSupported = ok; } catch (_) { }
     try { uaLsSet(LS_UA_HDR_SUPPORTED, ok ? '1' : '0'); } catch (_) { }
-
-    // Log capability detection once (only when key was absent).
-    try {
-      var ev = {
-        ts: Date.now(),
-        type: 'ua',
-        action: 'override',
-        channel: 'xhr',
-        from: 'User-Agent header',
-        to: ok ? 'supported' : 'unsupported',
-        rule: LS_UA_HDR_SUPPORTED,
-        dedupMs: 0
-      };
-
-      if (BL.Log && typeof BL.Log.push === 'function') BL.Log.push(ev);
-      else BL.UA.__pendingHdrSupportLog = ev;
-    } catch (_) { }
-
     return ok;
   }
 
@@ -397,37 +379,6 @@
     try { BL.UA.uadPlatform = String(eff.uadPlatform || ''); } catch (_) { }
     try { BL.UA.mobile = eff.mobile; } catch (_) { }
     try { BL.UA.effective = eff; } catch (_) { }
-
-    // Log navigator override once per session (only when UA string is actually changed).
-    try {
-      var oUa = '';
-      try { oUa = String(UA_ORIG.userAgent || ''); } catch (_) { oUa = ''; }
-      var eUa = '';
-      try { eUa = String(eff && eff.ua ? eff.ua : ''); } catch (_) { eUa = ''; }
-
-      if (oUa && eUa && eUa !== oUa) {
-        if (!BL.UA.__navOverrideLogged) {
-          BL.UA.__pendingNavOverrideLog = {
-            ts: Date.now(),
-            type: 'ua',
-            action: 'override',
-            channel: 'other',
-            from: oUa,
-            to: eUa,
-            rule: (eff && eff.id) ? String(eff.id) : null,
-            dedupMs: 0
-          };
-        }
-
-        if (!BL.UA.__navOverrideLogged && BL.Log && typeof BL.Log.push === 'function' && BL.UA.__pendingNavOverrideLog) {
-          BL.Log.push(BL.UA.__pendingNavOverrideLog);
-          BL.UA.__navOverrideLogged = true;
-          BL.UA.__pendingNavOverrideLog = null;
-        }
-      } else if (!BL.UA.__navOverrideLogged) {
-        BL.UA.__pendingNavOverrideLog = null;
-      }
-    } catch (_) { }
 
     try {
       defineNavigatorGetter('userAgent', function () {
@@ -624,27 +575,14 @@
 	        'bl.core.js',
 	        'bl.ui.log.js',
 	        'bl.policy.network.js'
-			      ], function () {
-			        // Logger init (idempotent).
-			        try {
-			          if (BL.Log && BL.Log.init) BL.Log.init();
-			        } catch (_) { }
-
-		        // Flush pending UA override log (if override happened before logger was available).
+		      ], function () {
+		        // Logger init (idempotent).
 		        try {
-		          if (BL.UA && BL.UA.__pendingHdrSupportLog && BL.Log && typeof BL.Log.push === 'function') {
-		            BL.Log.push(BL.UA.__pendingHdrSupportLog);
-		            BL.UA.__pendingHdrSupportLog = null;
-		          }
-		          if (BL.UA && !BL.UA.__navOverrideLogged && BL.UA.__pendingNavOverrideLog && BL.Log && typeof BL.Log.push === 'function') {
-		            BL.Log.push(BL.UA.__pendingNavOverrideLog);
-		            BL.UA.__navOverrideLogged = true;
-		            BL.UA.__pendingNavOverrideLog = null;
-		          }
+		          if (BL.Log && BL.Log.init) BL.Log.init();
 		        } catch (_) { }
 
-	        // Install NETWORK policy immediately after it is loaded (must be early).
-	        try { if (BL.PolicyNetwork && BL.PolicyNetwork.install) BL.PolicyNetwork.install(BL.Log); } catch (e1) { log('ERR', 'Policy', 'install failed', e1 && e1.message ? e1.message : e1); }
+        // Install NETWORK policy immediately after it is loaded (must be early).
+        try { if (BL.PolicyNetwork && BL.PolicyNetwork.install) BL.PolicyNetwork.install(BL.Log); } catch (e1) { log('ERR', 'Policy', 'install failed', e1 && e1.message ? e1.message : e1); }
 
         // Guards can load/install after the policy (still PHASE 0).
         loadSeq(['bl.storage.guards.js'], function () {

@@ -549,44 +549,9 @@
 		try { el.scrollTop = el.scrollHeight; } catch (_) { }
 	}
 
-	function makeRow(line, tag, ts) {
+	function makeRow(line, tag) {
 		var row = document.createElement('div');
-		var t = ts;
-		try {
-			// When appending a live line, ts is usually not passed.
-			// Reuse the last ring entry timestamp if available (display-only).
-			if (t === undefined || t === null) {
-				var idx = ringPos - 1;
-				if (idx < 0) idx = RING_MAX - 1;
-				var last = ring[idx];
-				if (last && typeof last.t === 'number') t = last.t;
-				else if (last && typeof last.ts === 'number') t = last.ts;
-			}
-		} catch (_) { }
-
-		function pad2(n) {
-			n = n | 0;
-			return (n < 10) ? ('0' + String(n)) : String(n);
-		}
-
-		function pad3(n) {
-			n = n | 0;
-			if (n < 10) return '00' + String(n);
-			if (n < 100) return '0' + String(n);
-			return String(n);
-		}
-
-		var stamp = '';
-		try {
-			var d = new Date((typeof t === 'number' && isFinite(t) && t > 0) ? t : Date.now());
-			stamp = pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());
-			// Optional milliseconds (kept short and always available).
-			stamp += '.' + pad3(d.getMilliseconds());
-		} catch (_) {
-			stamp = '';
-		}
-
-		row.textContent = (stamp ? ('[' + stamp + '] ') : '') + String(line);
+		row.textContent = String(line);
 		row.style.cssText = [
 			'font:' + POPUP_FONT,
 			'font-weight:500',
@@ -766,7 +731,7 @@
 				for (var i = 0; i < snap.length; i++) {
 					var it = snap[i];
 					if (!it) continue;
-					frag.appendChild(makeRow(it.line, it.tag, it.t));
+					frag.appendChild(makeRow(it.line, it.tag));
 				}
 				popupBodyEl.appendChild(frag);
 				scrollToBottom(popupScrollEl);
@@ -998,77 +963,18 @@
 		BL.Log.showInfo = function (source, message, extra) { showLine('INF', source, message, extra); };
 		BL.Log.showDbg = function (source, message, extra) { showLine('DBG', source, message, extra); };
 
-		// Raw log line output:
-			// Used by low-level hooks (e.g. network policy) that must preserve an exact pre-formatted line.
-			// Popup output respects LOG_MODE, but console output can be forced (mandatory warnings).
-			BL.Log.raw = function (tag, line, force) {
-				try {
-					ringPush(tag, line);
-					consoleMirror(tag, line, Boolean(force));
-					pushPopupLine(line, tag);
-				} catch (_) { }
-			};
+	// Raw log line output:
+		// Used by low-level hooks (e.g. network policy) that must preserve an exact pre-formatted line.
+		// Popup output respects LOG_MODE, but console output can be forced (mandatory warnings).
+		BL.Log.raw = function (tag, line, force) {
+			try {
+				ringPush(tag, line);
+				consoleMirror(tag, line, Boolean(force));
+				pushPopupLine(line, tag);
+			} catch (_) { }
+		};
 
-			// Structured event log (cheap, always recorded in ring buffer).
-			// Expected payload shape (minimal contract):
-			// { ts, type, action, channel, from, to, rule }
-			(function installEventPush() {
-				var lastKey = '';
-				var lastTs = 0;
-
-				function upper(s) { try { return String(s || '').toUpperCase(); } catch (_) { return ''; } }
-				function oneLine(v) {
-					try { v = (v === undefined || v === null) ? '' : String(v); } catch (_) { v = ''; }
-					if (!v) return '';
-					if (v.indexOf('\n') !== -1) v = v.split('\n').join(' ');
-					if (v.indexOf('\r') !== -1) v = v.split('\r').join(' ');
-					return v;
-				}
-
-				function dedupAllow(key, ms) {
-					try {
-						var now = Date.now();
-						var win = (typeof ms === 'number' && ms >= 0) ? ms : 1200;
-						if (key && lastKey === key && lastTs && (now - lastTs) < win) return false;
-						lastKey = key || '';
-						lastTs = now;
-					} catch (_) { }
-					return true;
-				}
-
-				BL.Log.push = function (evt) {
-					try {
-						if (!evt || typeof evt !== 'object') return;
-
-						var type = oneLine(evt.type || '');
-						var action = oneLine(evt.action || '');
-						var channel = oneLine(evt.channel || 'other') || 'other';
-						var from = oneLine(evt.from);
-						var to = (evt.to === undefined || evt.to === null) ? '' : oneLine(evt.to);
-						var rule = (evt.rule === undefined || evt.rule === null) ? '' : oneLine(evt.rule);
-
-						if (!type || !action) return;
-
-						// Cheap dedup to avoid spam loops (e.g., same URL rewritten/blocked repeatedly).
-						var key = type + '|' + action + '|' + channel + '|' + from;
-						if (!dedupAllow(key, evt.dedupMs)) return;
-
-						var tag = 'INF';
-						if (action === 'block' || action === 'sanitize') tag = 'WRN';
-						else if (action === 'override') tag = 'INF';
-						else if (action === 'rewrite') tag = 'INF';
-
-						var line = '[BlackLampa][EVT][' + upper(type) + '][' + upper(action) + '][' + channel + ']';
-						if (from) line += ' ' + from;
-						if (to) line += ' -> ' + to;
-						if (rule) line += ' | ' + rule;
-
-						if (BL.Log && typeof BL.Log.raw === 'function') BL.Log.raw(tag, line);
-					} catch (_) { }
-				};
-			})();
-
-			BL.Log.isEnabled = function () { return true; };
+		BL.Log.isEnabled = function () { return true; };
 
 		// Lightweight perf snapshot (must not create DOM/timers).
 		BL.Log.perf = function () {

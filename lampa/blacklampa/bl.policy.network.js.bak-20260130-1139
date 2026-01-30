@@ -289,9 +289,6 @@
     }
 
     var changed = false;
-    var changedOrigin = false;
-    var changedLogged = false;
-    var changedReset = false;
     var beforeAbs = '';
     try { beforeAbs = u.toString(); } catch (_) { beforeAbs = ''; }
 
@@ -303,7 +300,7 @@
         var curO = null;
         try { curO = u.searchParams.get('origin'); } catch (_) { curO = null; }
         try { u.searchParams.set('origin', String(ov)); } catch (_) { }
-        if (String(curO) !== String(ov)) { changed = true; changedOrigin = true; }
+        if (String(curO) !== String(ov)) changed = true;
       } else if (om === 'set_b64') {
         var ovb = jsqpGetStr(LS_JSQP_ORIGIN_VALUE, '');
         var enc = '';
@@ -311,12 +308,12 @@
         var curOb = null;
         try { curOb = u.searchParams.get('origin'); } catch (_) { curOb = null; }
         try { u.searchParams.set('origin', String(enc)); } catch (_) { }
-        if (String(curOb) !== String(enc)) { changed = true; changedOrigin = true; }
+        if (String(curOb) !== String(enc)) changed = true;
       } else if (om === 'remove') {
         var hadO = false;
         try { hadO = u.searchParams.has('origin'); } catch (_) { hadO = false; }
         try { u.searchParams.delete('origin'); } catch (_) { }
-        if (hadO) { changed = true; changedOrigin = true; }
+        if (hadO) changed = true;
       }
     }
 
@@ -328,12 +325,12 @@
         var curL = null;
         try { curL = u.searchParams.get('logged'); } catch (_) { curL = null; }
         try { u.searchParams.set('logged', String(lv)); } catch (_) { }
-        if (String(curL) !== String(lv)) { changed = true; changedLogged = true; }
+        if (String(curL) !== String(lv)) changed = true;
       } else if (lm === 'remove') {
         var hadL = false;
         try { hadL = u.searchParams.has('logged'); } catch (_) { hadL = false; }
         try { u.searchParams.delete('logged'); } catch (_) { }
-        if (hadL) { changed = true; changedLogged = true; }
+        if (hadL) changed = true;
       }
     }
 
@@ -344,18 +341,17 @@
         var rnd = String(Math.random());
         try { u.searchParams.set('reset', rnd); } catch (_) { }
         changed = true;
-        changedReset = true;
       } else if (rm === 'set') {
         var rv = jsqpGetStr(LS_JSQP_RESET_VALUE, '0');
         var curR = null;
         try { curR = u.searchParams.get('reset'); } catch (_) { curR = null; }
         try { u.searchParams.set('reset', String(rv)); } catch (_) { }
-        if (String(curR) !== String(rv)) { changed = true; changedReset = true; }
+        if (String(curR) !== String(rv)) changed = true;
       } else if (rm === 'remove') {
         var hadR = false;
         try { hadR = u.searchParams.has('reset'); } catch (_) { hadR = false; }
         try { u.searchParams.delete('reset'); } catch (_) { }
-        if (hadR) { changed = true; changedReset = true; }
+        if (hadR) changed = true;
       }
     }
 
@@ -363,27 +359,6 @@
 
     var afterAbs = '';
     try { afterAbs = u.toString(); } catch (_) { afterAbs = beforeAbs; }
-
-    // Log only real rewrites (no pass-through). Cheap + deduped.
-    try {
-      if (afterAbs && afterAbs !== beforeAbs && BL.Log && typeof BL.Log.push === 'function') {
-        var rule = '';
-        if (changedOrigin) rule = rule ? (rule + ',origin') : 'origin';
-        if (changedLogged) rule = rule ? (rule + ',logged') : 'logged';
-        if (changedReset) rule = rule ? (rule + ',reset') : 'reset';
-
-        BL.Log.push({
-          ts: Date.now(),
-          type: 'jsqp',
-          action: 'rewrite',
-          channel: 'jsqp',
-          from: beforeAbs || orig,
-          to: afterAbs || orig,
-          rule: rule || null,
-          dedupMs: 5000
-        });
-      }
-    } catch (_) { }
 
     // Optional debug log (OFF by default)
     try {
@@ -998,65 +973,22 @@
 
 		  BL.Net.noteBlocked = BL.Net.noteBlocked || noteBlocked;
 
-			  BL.Net.logBlocked = BL.Net.logBlocked || function (context) {
-			    try {
-			      try { if (BL.cfg && BL.cfg.PERF_DEBUG) __perfNetBlocked++; } catch (_) { }
-			      try { noteBlocked(context); } catch (_) { }
-			      if (!netLogAllow()) return;
+		  BL.Net.logBlocked = BL.Net.logBlocked || function (context) {
+		    try {
+		      try { if (BL.cfg && BL.cfg.PERF_DEBUG) __perfNetBlocked++; } catch (_) { }
+		      try { noteBlocked(context); } catch (_) { }
+		      if (!netLogAllow()) return;
 
-		      context = context || {};
-		      var u = normalizeUrlString(context.url);
-		      var t = String(context.type || '');
-		      var r = String(context.reason || '');
-		      var ruleId = '';
-		      var ruleLabel = '';
-		      try { ruleId = String(context.ruleId || ''); } catch (_) { ruleId = ''; }
-		      try { ruleLabel = String(context.ruleLabel || ''); } catch (_) { ruleLabel = ''; }
+	      context = context || {};
+	      var u = normalizeUrlString(context.url);
+	      var t = String(context.type || '');
+	      var r = String(context.reason || '');
+	      var line = '[BlackLampa][NET][BLOCK][' + t + '] ' + r + ' ' + u;
 
-		      // Unified event format (preferred).
-		      try {
-		        if (BL.Log && typeof BL.Log.push === 'function') {
-		          var channel = 'other';
-		          if (t === 'fetch') channel = 'fetch';
-		          else if (t === 'xhr') channel = 'xhr';
-		          else if (t === 'ws') channel = 'ws';
-		          else if (t === 'script') channel = 'script';
-		          else if (t === 'iframe') channel = 'iframe';
-
-		          var type = 'block';
-		          if (t === 'script') type = 'script';
-		          else if (t === 'iframe') type = 'iframe';
-
-		          var action = 'block';
-		          if (t === 'script' || t === 'iframe' || t === 'img' || t === 'link') action = 'sanitize';
-
-		          var rule = '';
-		          if (ruleId && ruleLabel) rule = ruleId + ':' + ruleLabel;
-		          else if (ruleId) rule = ruleId;
-		          else if (ruleLabel) rule = ruleLabel;
-		          else rule = r;
-		          if (channel === 'other' && t) rule = String(t) + ':' + String(rule || '');
-
-		          BL.Log.push({
-		            ts: Date.now(),
-		            type: type,
-		            action: action,
-		            channel: channel,
-		            from: u,
-		            to: (context && context.to !== undefined) ? context.to : null,
-		            rule: rule || null,
-		            dedupMs: 3000
-		          });
-		          return;
-		        }
-		      } catch (_) { }
-
-		      var line = '[BlackLampa][NET][BLOCK][' + t + '] ' + r + ' ' + u;
-
-		      // Prefer popup logger (and its console mirror) when available.
-		      try {
-			        if (BL.Log && typeof BL.Log.raw === 'function') {
-			          BL.Log.raw('WRN', line);
+	      // Prefer popup logger (and its console mirror) when available.
+	      try {
+		        if (BL.Log && typeof BL.Log.raw === 'function') {
+		          BL.Log.raw('WRN', line);
 		          return;
 	        }
 	      } catch (_) { }
@@ -1291,25 +1223,10 @@
             }
           } catch (_) { }
 
-			        if (isCubBlacklistUrl(u)) {
-			          try {
-			            if (log && typeof log.push === 'function') {
-			              log.push({
-			                ts: Date.now(),
-			                type: 'network',
-			                action: 'sanitize',
-			                channel: 'fetch',
-			                from: String(u),
-			                to: '[]',
-			                rule: 'CUB:blacklist',
-			                dedupMs: 10000
-			              });
-			            } else if (isLogEnabledFast()) {
-			              logCall(log, 'showOk', 'CUB', 'blacklist overridden', 'fetch | ' + String(u));
-			            }
-			          } catch (_) { }
-			          return Promise.resolve(BL.Net.makeFakeOkResponse({ url: u, type: 'fetch', reason: 'CUB:blacklist' }));
-			        }
+		        if (isCubBlacklistUrl(u)) {
+		          if (isLogEnabledFast()) logCall(log, 'showOk', 'CUB', 'blacklist overridden', 'fetch | ' + String(u));
+		          return Promise.resolve(BL.Net.makeFakeOkResponse({ url: u, type: 'fetch', reason: 'CUB:blacklist' }));
+		        }
 
 	        var ctx = getBlockContext(u);
 	        if (ctx && ctx.reason) {
@@ -1348,30 +1265,15 @@
 	          var xhr0 = this;
 	          var u0 = this.__ap_url;
 
-			          setTimeout(function () {
-			            try {
-			              try {
-			                if (log && typeof log.push === 'function') {
-			                  log.push({
-			                    ts: Date.now(),
-			                    type: 'network',
-			                    action: 'sanitize',
-			                    channel: 'xhr',
-			                    from: String(u0),
-			                    to: '[]',
-			                    rule: 'CUB:blacklist',
-			                    dedupMs: 10000
-			                  });
-			                } else if (isLogEnabledFast()) {
-			                  logCall(log, 'showOk', 'CUB', 'blacklist overridden', 'XHR | ' + String(u0));
-			                }
-			              } catch (_) { }
-			              var fake = BL.Net.makeFakeOkResponse({ url: u0, type: 'xhr', reason: 'CUB:blacklist' });
-			              if (fake && fake.applyToXhr) fake.applyToXhr(xhr0);
-			            } catch (_) { }
-			          }, 0);
-		          return;
-		        }
+		          setTimeout(function () {
+		            try {
+		              if (isLogEnabledFast()) logCall(log, 'showOk', 'CUB', 'blacklist overridden', 'XHR | ' + String(u0));
+		              var fake = BL.Net.makeFakeOkResponse({ url: u0, type: 'xhr', reason: 'CUB:blacklist' });
+		              if (fake && fake.applyToXhr) fake.applyToXhr(xhr0);
+		            } catch (_) { }
+		          }, 0);
+	          return;
+	        }
 
 	        if (this.__ap_block_ctx && this.__ap_block_ctx.reason) {
 	          var u = this.__ap_url;
@@ -1570,14 +1472,14 @@
 
                 // Remove attribute ASAP to stop/abort the load.
                 try { el.removeAttribute(attr); } catch (_) { }
-	                // For iframes: force about:blank to avoid reload loops in some webviews.
-	                if (tag === 'iframe') {
-	                  try { el.setAttribute('src', 'about:blank'); } catch (_) { }
-	                }
+                // For iframes: force about:blank to avoid reload loops in some webviews.
+                if (tag === 'iframe') {
+                  try { el.setAttribute('src', 'about:blank'); } catch (_) { }
+                }
 
-	                try { BL.Net.logBlocked({ url: ctx.url || v, type: channel, to: (tag === 'iframe') ? 'about:blank' : null, reason: ctx.reason, ruleId: ctx.ruleId || '', ruleLabel: ctx.ruleLabel || '' }); } catch (_) { }
-	              } catch (_) { }
-	            }
+                try { BL.Net.logBlocked({ url: ctx.url || v, type: channel, reason: ctx.reason, ruleId: ctx.ruleId || '', ruleLabel: ctx.ruleLabel || '' }); } catch (_) { }
+              } catch (_) { }
+            }
 
             function sanitizeNode(node) {
               try {
@@ -1653,14 +1555,12 @@
 	          window.WebSocket = function (url, protocols) {
 	            if (PERF_DEBUG) __perfNetReq++;
 	            var ctx = getBlockContext(url);
-		            if (ctx && ctx.reason) {
-		              var c = { url: ctx.url || url, type: 'ws', reason: ctx.reason, ruleId: ctx.ruleId || '', ruleLabel: ctx.ruleLabel || '' };
-		              try {
-		                if (BL.Net && typeof BL.Net.logBlocked === 'function') BL.Net.logBlocked(c);
-		                else if (BL.Net && typeof BL.Net.noteBlocked === 'function') BL.Net.noteBlocked(c);
-		              } catch (_) { }
-		              return BL.Net.makeFakeOkResponse(c);
-		            }
+	            if (ctx && ctx.reason) {
+	              var c = { url: ctx.url || url, type: 'ws', reason: ctx.reason, ruleId: ctx.ruleId || '', ruleLabel: ctx.ruleLabel || '' };
+	              // WebSocket: do not spam logs; only update lastBlocked.
+	              try { if (BL.Net && typeof BL.Net.noteBlocked === 'function') BL.Net.noteBlocked(c); } catch (_) { }
+	              return BL.Net.makeFakeOkResponse(c);
+	            }
 	            return (protocols !== undefined) ? new OrigWS(url, protocols) : new OrigWS(url);
 	          };
 	          window.WebSocket.prototype = OrigWS.prototype;
