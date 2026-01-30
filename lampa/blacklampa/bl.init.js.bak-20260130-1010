@@ -34,7 +34,6 @@
   var LS_UA_ORIGINAL = 'bl_ua_original_v1';
   var LS_UA_PRESET_ID = 'bl_ua_preset_id_v1';
   var LS_UA_CUSTOM = 'bl_ua_custom_v1';
-  var LS_UA_HDR_SUPPORTED = 'bl_ua_header_override_supported_v1';
 
   function uaLsGet(k) { try { return localStorage.getItem(String(k)); } catch (_) { return null; } }
   function uaLsSet(k, v) { try { localStorage.setItem(String(k), String(v)); } catch (_) { } }
@@ -277,34 +276,9 @@
     try {
       if (typeof BL.UA.headerOverrideSupported === 'boolean') return !!BL.UA.headerOverrideSupported;
     } catch (_) { }
-
-    // Persisted capability flag
-    try {
-      var stored = uaLsGet(LS_UA_HDR_SUPPORTED);
-      if (stored === '0' || stored === '1') {
-        try { BL.UA.headerOverrideSupported = (stored === '1'); } catch (_) { }
-        return stored === '1';
-      }
-    } catch (_) { }
-
     var ok = false;
-
-    // Prefer a non-spammy probe: Request headers (guard=request) should drop forbidden headers in browsers.
-    // If Request is unavailable, default to "unsupported" to avoid repeating noisy attempts.
     try {
-      if (typeof Request !== 'undefined') {
-        var req = null;
-        try { req = new Request(location.href, { headers: { 'User-Agent': 'BlackLampa-UA-Test' } }); } catch (_) { req = null; }
-        if (req && req.headers && typeof req.headers.get === 'function') {
-          var got = null;
-          try { got = req.headers.get('User-Agent'); } catch (_) { got = null; }
-          ok = String(got || '') === 'BlackLampa-UA-Test';
-        }
-      }
-    } catch (_) { ok = false; }
-
-    try {
-      if (ok && window.XMLHttpRequest) {
+      if (window.XMLHttpRequest) {
         var x = new XMLHttpRequest();
         try { x.open('GET', location.href, true); } catch (_) { x.open('GET', '/', true); }
         try {
@@ -313,16 +287,8 @@
         } catch (_) { ok = false; }
       }
     } catch (_) { ok = false; }
-
     try { BL.UA.headerOverrideSupported = ok; } catch (_) { }
-    try { uaLsSet(LS_UA_HDR_SUPPORTED, ok ? '1' : '0'); } catch (_) { }
     return ok;
-  }
-
-  function disableUaHeaderOverride(reason) {
-    try { BL.UA.headerOverrideSupported = false; } catch (_) { }
-    try { uaLsSet(LS_UA_HDR_SUPPORTED, '0'); } catch (_) { }
-    try { BL.UA.headerOverrideUnsupportedReason = String(reason || ''); } catch (_) { }
   }
 
   function applyHeadersToXhr(xhr) {
@@ -332,7 +298,7 @@
       var eff = (BL.UA && BL.UA.effective) ? BL.UA.effective : null;
       var ua = eff && eff.ua ? String(eff.ua) : '';
       if (!ua) return;
-      try { xhr.setRequestHeader('User-Agent', ua); } catch (e) { disableUaHeaderOverride('xhr'); }
+      try { xhr.setRequestHeader('User-Agent', ua); } catch (e) { try { BL.UA.headerOverrideSupported = false; } catch (_) { } }
     } catch (_) { }
   }
 
@@ -361,7 +327,7 @@
 
       return { input: input, init: init };
     } catch (_) {
-      disableUaHeaderOverride('fetch');
+      try { BL.UA.headerOverrideSupported = false; } catch (__e) { }
       return { input: input, init: init };
     }
   }
@@ -449,7 +415,6 @@
   BL.UA.apply = applyUAOverride;
   BL.UA.ensureOriginalStored = ensureOriginalStored;
   BL.UA.ensureHeaderSupport = ensureUaHeaderSupportOnce;
-  BL.UA.canOverrideHeaders = function () { try { return !!ensureUaHeaderSupportOnce(); } catch (_) { return false; } };
   BL.UA.applyHeadersToXhr = applyHeadersToXhr;
   BL.UA.applyHeadersToFetch = applyHeadersToFetch;
 

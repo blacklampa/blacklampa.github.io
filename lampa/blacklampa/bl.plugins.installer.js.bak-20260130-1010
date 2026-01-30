@@ -1248,11 +1248,10 @@
       var effUa = '';
       try { effUa = String(navigator && navigator.userAgent ? navigator.userAgent : '') || ''; } catch (_) { effUa = ''; }
 
-      // Header override support (best-effort + cached)
+      // Header override support (best-effort)
+      var sup = false;
       try { if (uaApi && typeof uaApi.ensureHeaderSupport === 'function') uaApi.ensureHeaderSupport(); } catch (_) { }
-      var hdrFlag = '';
-      try { hdrFlag = window.localStorage ? String(localStorage.getItem('bl_ua_header_override_supported_v1') || '') : ''; } catch (_) { hdrFlag = ''; }
-      var hdrLine = (hdrFlag === '0') ? 'UA header override: unsupported' : 'UA header override: supported';
+      try { if (uaApi && typeof uaApi.headerOverrideSupported === 'boolean') sup = !!uaApi.headerOverrideSupported; } catch (_) { sup = false; }
 
       try {
         Lampa.SettingsApi.addParam({
@@ -1280,10 +1279,11 @@
       } catch (_) { }
 
       try {
+        var hs = sup ? 'yes' : 'no';
         Lampa.SettingsApi.addParam({
           component: STATE.componentId,
-          param: { name: 'bl_ua_eff_hdr', type: 'static', values: hdrLine, default: hdrLine },
-          field: { name: 'UA header override', description: hdrLine }
+          param: { name: 'bl_ua_eff_hdr', type: 'static', values: hs, default: hs },
+          field: { name: 'Header override supported', description: hs }
         });
       } catch (_) { }
 
@@ -2422,14 +2422,11 @@
       if (!hasLampaSettingsApi()) return;
       if (!window.Lampa || !Lampa.Settings || !Lampa.Settings.create) return;
 
-      route = String(route || 'root');
-      if (route !== 'root' && route !== 'plugins' && route !== 'network' && route !== 'network_status' && route !== 'logs' &&
-        route !== 'query_params' && route !== 'status' && route !== 'managed' && route !== 'extras' && route !== 'plugin_detail' &&
-        route !== 'danger' && route !== 'logging' && route !== 'jsqp' && route !== 'ua' && route !== 'ua_presets' &&
-        route !== 'ua_effective' && route !== 'backup' && route !== 'blocklist' && route !== 'blocklist_builtin' &&
-        route !== 'blocklist_user' && route !== 'blocklist_user_detail' && route !== 'blocklist_add') {
-        route = 'root';
-      }
+	      route = String(route || 'root');
+	      if (route !== 'root' && route !== 'managed' && route !== 'extras' && route !== 'plugin_detail' && route !== 'danger' &&
+	        route !== 'logging' && route !== 'jsqp' && route !== 'ua' && route !== 'backup' && route !== 'blocklist' && route !== 'blocklist_builtin' && route !== 'blocklist_user' && route !== 'blocklist_user_detail' && route !== 'blocklist_add') {
+	        route = 'root';
+	      }
 
       if (nav.resetStack) {
         STATE.stack = [];
