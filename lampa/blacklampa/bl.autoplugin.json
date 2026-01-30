@@ -26,11 +26,11 @@
     { "url": "https://amikdn.github.io/buttons.js", "title": "buttons.js", "desc": "", "tags": ["ui"] },
     { "url": "https://skaztv.online/store.js", "title": "store.js", "desc": "", "tags": ["store"] },
     { "url": "https://aviamovie.github.io/surs_quality.js", "title": "surs_quality.js", "desc": "", "tags": ["sources"] },
-    { "url": "https://bylampa.github.io/redirect.js", "title": "Смена сервера", "desc": "", "reason": "commented in source list", "tags": ["policy"], "since": 0 },
     { "url": "https://andreyurl54.github.io/diesel5/tricks.js", "title": "tricks.js", "desc": "", "reason": "commented in source list", "tags": ["tricks"], "since": 0 },
     { "url": "https://aviamovie.github.io/surs.js", "title": "surs.js", "desc": "", "tags": ["sources"] }
   ],
  "disabled": [
+    { "url": "https://bylampa.github.io/redirect.js", "title": "Смена сервера", "desc": "", "reason": "commented in source list", "tags": ["policy"], "since": 0 },
     { "url": "https://bylampa.github.io/reload.js", "title": "reload.js", "desc": "", "tags": ["sources"] },
     { "url": "http://smotret24.com/online.js", "title": "online24.js", "desc": "", "tags": ["sources"] },
     { "url": "https://tsynik.github.io/lampa/e.js", "title": "e.js", "desc": "", "tags": ["sources"] },
