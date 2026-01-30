@@ -1,10 +1,8 @@
 {
     "msx_preload_applied_v1": "1",
-    "__ap_bl_guarded": "true",
     "online_mod_proxy_zetflix": "false",
     "online_mod_proxy_lumex": "false",
     "online_mod_proxy_filmix": "true",
-    "ap_installer_done_v1": "1",
     "timetable": "[]",
     "content_rows_shots_main": "false",
     "native": "false",
@@ -60,7 +58,6 @@
     "interface_size": "small",
     "head_filter_show_feed": "false",
     "screensaver_type": "chrome",
-    "ap_installer_sig_v1": "7b2e1c23",
     "menu_hide": "[\"Мультфильмы\",\"Релизы\",\"Аниме\",\"Торренты\",\"Подборки\",\"Для детей\",\"YouTube\",\"RuTube\",\"Twitch\"]",
     "const_redirect": "false",
     "recomends_scan": "[]",
@@ -69,7 +66,6 @@
     "online_mod_proxy_vibix": "true",
     "shots_in_card": "false",
     "metric_adview": "0",
-    "ap_installer_ts_v1": "1419764414078",
     "head_filter_show_notice": "false",
     "bl_jsqp_force": "0",
     "metric_date": "1945-05-09",
@@ -88,6 +84,5 @@
     "online_mod_prefer_http": "false",
     "activity": "{\"title\":\"Главная - TMDB\",\"component\":\"main\",\"source\":\"tmdb\",\"page\":1,\"settings\":\"bl_autoplugin\"}",
     "language": "ru",
-    "account_user": "localhost",
-    "msx_fake_auth_ok_v2": "1"
+    "account_user": "localhost"
 }
