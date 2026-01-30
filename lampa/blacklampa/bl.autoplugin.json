@@ -20,7 +20,6 @@
     { "url": "https://bylampa.github.io/seas_and_eps.js", "title": "seas_and_eps.js", "desc": "", "tags": ["ui"] },
     { "url": "https://bylampa.github.io/cub_off.js", "title": "cub_off.js", "desc": "", "tags": ["policy"] },
     { "url": "https://bylampa.github.io/source.js", "title": "source.js", "desc": "", "tags": ["sources"] },
-    { "url": "https://bylampa.github.io/reload.js", "title": "reload.js", "desc": "", "tags": ["sources"] },
     { "url": "https://bylampa.github.io/start.js", "title": "start.js", "desc": "", "tags": ["sources"] },
     { "url": "https://nb557.github.io/plugins/online_mod.js", "title": "online_mod.js", "desc": "", "tags": ["player"] },
     { "url": "https://bwa.to/cloud.js", "title": "cloud.js", "desc": "", "tags": ["cloud"] },
@@ -28,9 +27,11 @@
     { "url": "https://skaztv.online/store.js", "title": "store.js", "desc": "", "tags": ["store"] },
     { "url": "https://aviamovie.github.io/surs_quality.js", "title": "surs_quality.js", "desc": "", "tags": ["sources"] },
     { "url": "https://bylampa.github.io/redirect.js", "title": "Смена сервера", "desc": "", "reason": "commented in source list", "tags": ["policy"], "since": 0 },
+    { "url": "https://andreyurl54.github.io/diesel5/tricks.js", "title": "tricks.js", "desc": "", "reason": "commented in source list", "tags": ["tricks"], "since": 0 },
     { "url": "https://aviamovie.github.io/surs.js", "title": "surs.js", "desc": "", "tags": ["sources"] }
   ],
  "disabled": [
+    { "url": "https://bylampa.github.io/reload.js", "title": "reload.js", "desc": "", "tags": ["sources"] },
     { "url": "http://smotret24.com/online.js", "title": "online24.js", "desc": "", "tags": ["sources"] },
     { "url": "https://tsynik.github.io/lampa/e.js", "title": "e.js", "desc": "", "tags": ["sources"] },
     { "url": "https://rc.bwa.to/sisi.js", "title": "Клубничка", "desc": "", "tags": ["sources"] },
@@ -41,7 +42,6 @@
     { "url": "http://skaz.tv/vcdn.js", "title": "vcdn.js", "desc": "", "reason": "commented in source list", "tags": ["sources", "cloud"], "since": 0 },
     { "url": "https://netfix.cc/netfix.js", "title": "netfix.js", "desc": "", "reason": "commented in source list", "tags": ["sources"], "since": 0 },
     { "url": "https://and7ey.github.io/lampa/stats.js", "title": "stats.js", "desc": "", "reason": "commented in source list", "tags": ["stats"], "since": 0 },
-    { "url": "https://andreyurl54.github.io/diesel5/tricks.js", "title": "tricks.js", "desc": "", "reason": "commented in source list", "tags": ["tricks"], "since": 0 },
     { "url": "https://bylampa.github.io/trailer_off.js", "title": "trailer_off.js", "desc": "", "reason": "commented in source list", "tags": ["ui", "tricks"], "since": 0 },
     { "url": "https://bylampa.github.io/color_vote.js", "title": "color_vote.js", "desc": "", "reason": "commented in source list", "tags": ["ui"], "since": 0 },
     { "url": "https://bylampa.github.io/old_card_status.js", "title": "old_card_status.js", "desc": "", "reason": "commented in source list", "tags": ["ui"], "since": 0 },
