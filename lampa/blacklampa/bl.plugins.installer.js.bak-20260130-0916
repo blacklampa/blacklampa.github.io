@@ -415,436 +415,151 @@
 
 	  function buildRootScreen() {
 	    try {
-      // 0) Plugins
+      // 0) Managed
       Lampa.SettingsApi.addParam({
         component: STATE.componentId,
-        param: { name: 'bl_pi_root_plugins', type: 'static', default: true },
-        field: { name: 'Plugins', description: 'Managed / Extras / plugin details.' },
+        param: { name: 'bl_pi_root_managed', type: 'static', default: true },
+        field: { name: 'Managed plugins', description: 'Плагины из bl.autoplugin.json → plugins[].' },
         onRender: function (item) {
-          try { if (item && item.on) item.on('hover:enter', function () { push('plugins', null, 0, 0); }); } catch (_) { }
+          try { if (item && item.on) item.on('hover:enter', function () { push('managed', null, 0, 0); }); } catch (_) { }
         }
       });
 
-      // 1) Network
+      // 1) Extras
       Lampa.SettingsApi.addParam({
         component: STATE.componentId,
-        param: { name: 'bl_pi_root_network', type: 'static', default: true },
-        field: { name: 'Network', description: 'Blocklist + interceptors status + JS query rewrite (JSQP).' },
+        param: { name: 'bl_pi_root_extras', type: 'static', default: true },
+        field: { name: 'Extras', description: 'Дополнительные плагины из bl.autoplugin.json → disabled[].' },
         onRender: function (item) {
-          try { if (item && item.on) item.on('hover:enter', function () { push('network', null, 0, 1); }); } catch (_) { }
+          try { if (item && item.on) item.on('hover:enter', function () { push('extras', null, 0, 1); }); } catch (_) { }
         }
       });
 
-      // 2) User-Agent
+      // 2) Blocklist
+      Lampa.SettingsApi.addParam({
+        component: STATE.componentId,
+        param: { name: 'bl_pi_root_blocklist', type: 'static', default: true },
+        field: { name: 'Blocklist', description: 'URL Blocklist (BlackLampa network policy).' },
+        onRender: function (item) {
+          try { if (item && item.on) item.on('hover:enter', function () { push('blocklist', null, 0, 2); }); } catch (_) { }
+        }
+      });
+
+      // 3) JS query params
+      Lampa.SettingsApi.addParam({
+        component: STATE.componentId,
+        param: { name: 'bl_pi_root_jsqp', type: 'static', default: true },
+        field: { name: 'JS query params', description: 'Подмена/удаление GET параметров (origin/logged/reset) в запросах на *.js' },
+        onRender: function (item) {
+          try { if (item && item.on) item.on('hover:enter', function () { push('jsqp', null, 0, 3); }); } catch (_) { }
+        }
+      });
+
+      // 4) User-Agent
       Lampa.SettingsApi.addParam({
         component: STATE.componentId,
         param: { name: 'bl_pi_root_ua', type: 'static', default: true },
-        field: { name: 'User-Agent', description: 'Presets + Effective (now).' },
+        field: { name: 'User-Agent', description: 'Подмена navigator.* (userAgent/appVersion/platform/vendor) + (опц.) X-BL-UA.' },
         onRender: function (item) {
-          try { if (item && item.on) item.on('hover:enter', function () { push('ua', null, 0, 2); }); } catch (_) { }
+          try { if (item && item.on) item.on('hover:enter', function () { push('ua', null, 0, 4); }); } catch (_) { }
         }
       });
 
-      // 3) Logs
-      Lampa.SettingsApi.addParam({
-        component: STATE.componentId,
-        param: { name: 'bl_pi_root_logs', type: 'static', default: true },
-        field: { name: 'Logs', description: 'View logs + log mode (silent/popup).' },
-        onRender: function (item) {
-          try { if (item && item.on) item.on('hover:enter', function () { push('logs', null, 0, 3); }); } catch (_) { }
-        }
-      });
+	      // 5) Logging
+	      Lampa.SettingsApi.addParam({
+	        component: STATE.componentId,
+	        param: { name: 'bl_pi_root_logging', type: 'static', default: true },
+	        field: { name: 'Logging', description: 'Режим popup-логов (silent / auto popup).' },
+	        onRender: function (item) {
+	          try { if (item && item.on) item.on('hover:enter', function () { push('logging', null, 0, 5); }); } catch (_) { }
+	        }
+	      });
 
-      // 4) Backup / Transfer
-      Lampa.SettingsApi.addParam({
-        component: STATE.componentId,
-        param: { name: 'bl_pi_root_backup', type: 'static', default: true },
-        field: { name: 'Backup / Transfer', description: 'Экспорт/импорт настроек BlackLampa (localStorage) + шифрование + history.' },
-        onRender: function (item) {
-          try { if (item && item.on) item.on('hover:enter', function () { push('backup', null, 0, 4); }); } catch (_) { }
-        }
-      });
-
-      // 5) Filesystem scan (popup)
-      Lampa.SettingsApi.addParam({
-        component: STATE.componentId,
-        param: { name: 'bl_pi_root_filesystem_scan', type: 'static', default: true },
-        field: { name: 'Filesystem Scan', description: 'Открывает popup-сканер файлов из bl.filescan.json.' },
+	      // 6) Log viewer (kept from legacy AutoPlugin UI)
+	      Lampa.SettingsApi.addParam({
+	        component: STATE.componentId,
+	        param: { name: 'bl_pi_root_log_viewer', type: 'static', default: true },
+	        field: { name: 'Log viewer', description: 'Открывает popup-лог BlackLampa.' },
         onRender: function (item) {
           try {
             if (!item || !item.on) return;
             item.on('hover:enter', function () {
-              safe(function () {
-                if (window.BL && BL.FileScanner && typeof BL.FileScanner.open === 'function') BL.FileScanner.open();
-              });
+              try {
+                if (window.BL && BL.Log && typeof BL.Log.openViewer === 'function') BL.Log.openViewer();
+                else if (window.BL && BL.Log && typeof BL.Log.ensurePopup === 'function') {
+                  BL.Log.ensurePopup();
+                  if (BL.Log && BL.Log.showInfo) BL.Log.showInfo('PluginsInstaller', 'viewer', 'BL.Log.openViewer missing');
+                }
+              } catch (_) { }
             });
           } catch (_) { }
         }
-      });
+	      });
 
-      // 6) Query Params (read-only)
-      Lampa.SettingsApi.addParam({
-        component: STATE.componentId,
-        param: { name: 'bl_pi_root_query_params', type: 'static', default: true },
-        field: { name: 'Query Params', description: 'Read-only: текущие параметры URL (legacy/info).' },
-        onRender: function (item) {
-          try { if (item && item.on) item.on('hover:enter', function () { push('query_params', null, 0, 6); }); } catch (_) { }
-        }
-      });
+	      // 7) Backup / Transfer
+	      Lampa.SettingsApi.addParam({
+	        component: STATE.componentId,
+	        param: { name: 'bl_pi_root_backup', type: 'static', default: true },
+	        field: { name: 'Backup / Transfer', description: 'Экспорт/импорт настроек BlackLampa (localStorage) + шифрование + history.' },
+	        onRender: function (item) {
+	          try { if (item && item.on) item.on('hover:enter', function () { push('backup', null, 0, 7); }); } catch (_) { }
+	        }
+	      });
 
-      // 7) Danger
+	      // 8) Filesystem scan (popup)
+	      Lampa.SettingsApi.addParam({
+	        component: STATE.componentId,
+	        param: { name: 'bl_pi_root_filesystem_scan', type: 'static', default: true },
+	        field: { name: 'Filesystem Scan', description: 'Открывает popup-сканер файлов из bl.filescan.json.' },
+	        onRender: function (item) {
+	          try {
+	            if (!item || !item.on) return;
+	            item.on('hover:enter', function () {
+	              safe(function () {
+	                if (window.BL && BL.FileScanner && typeof BL.FileScanner.open === 'function') BL.FileScanner.open();
+	              });
+	            });
+	          } catch (_) { }
+	        }
+	      });
+
+      // 9) Danger
       Lampa.SettingsApi.addParam({
         component: STATE.componentId,
         param: { name: 'bl_pi_root_danger', type: 'static', default: true },
         field: { name: 'Danger zone', description: 'Сброс/очистка/опасные операции.' },
         onRender: function (item) {
-          try { if (item && item.on) item.on('hover:enter', function () { push('danger', null, 0, 7); }); } catch (_) { }
+          try { if (item && item.on) item.on('hover:enter', function () { push('danger', null, 0, 9); }); } catch (_) { }
         }
       });
 
-      // 8) Status (last)
-      Lampa.SettingsApi.addParam({
-        component: STATE.componentId,
-        param: { name: 'bl_pi_root_status', type: 'static', values: '', default: '' },
-        field: { name: 'Status', description: '' },
-        onRender: function (item) {
-          try { if (item && item.on) item.on('hover:enter', function () { push('status', null, 0, 8); }); } catch (_) { }
-          try {
-            if (!window.$ || !item) return;
-            var ss = null;
-            try { ss = (STATE.opts && typeof STATE.opts.statusStrings === 'function') ? (STATE.opts.statusStrings() || null) : null; } catch (_) { ss = null; }
-
-            var raw = ss && ss.raw ? String(ss.raw) : '';
-            var help = ss && ss.help ? String(ss.help) : '';
-            var short = ss && ss.short ? String(ss.short) : '';
-
-            var $d = item.find('.settings-param__descr');
-            if (!$d.length) {
-              item.append('<div class="settings-param__descr"></div>');
-              $d = item.find('.settings-param__descr');
-            }
-            $d.empty();
-            if (short) $d.append($('<div></div>').text(short));
-            if (raw && raw !== short) $d.append($('<div></div>').text(raw));
-            if (help) $d.append($('<div style=\"opacity:0.85;margin-top:0.35em;white-space:pre-wrap;\"></div>').text(help));
-          } catch (_) { }
-        }
-      });
-	    } catch (_) { }
-	  }
-
-	  function buildPluginsMenuScreen() {
-	    try {
+	      // X) Status (last)
 	      Lampa.SettingsApi.addParam({
 	        component: STATE.componentId,
-	        param: { name: 'bl_pi_plugins_managed', type: 'static', default: true },
-	        field: { name: 'Managed', description: 'Плагины из bl.autoplugin.json → plugins[].' },
-	        onRender: function (item) {
-	          try { if (item && item.on) item.on('hover:enter', function () { push('managed', null, 0, 0); }); } catch (_) { }
-	        }
-	      });
-
-	      Lampa.SettingsApi.addParam({
-	        component: STATE.componentId,
-	        param: { name: 'bl_pi_plugins_extras', type: 'static', default: true },
-	        field: { name: 'Extras', description: 'Дополнительные плагины из bl.autoplugin.json → disabled[].' },
-	        onRender: function (item) {
-	          try { if (item && item.on) item.on('hover:enter', function () { push('extras', null, 0, 1); }); } catch (_) { }
-	        }
-	      });
-	    } catch (_) { }
-	  }
-
-	  function buildNetworkMenuScreen() {
-	    try {
-	      Lampa.SettingsApi.addParam({
-	        component: STATE.componentId,
-	        param: { name: 'bl_pi_network_blocklist', type: 'static', default: true },
-	        field: { name: 'Blocklist', description: 'URL Blocklist (BlackLampa network policy).' },
-	        onRender: function (item) {
-	          try { if (item && item.on) item.on('hover:enter', function () { push('blocklist', null, 0, 0); }); } catch (_) { }
-	        }
-	      });
-
-	      Lampa.SettingsApi.addParam({
-	        component: STATE.componentId,
-	        param: { name: 'bl_pi_network_status', type: 'static', default: true },
-	        field: { name: 'Interceptors Status', description: 'Coverage matrix + lastBlocked.' },
-	        onRender: function (item) {
-	          try { if (item && item.on) item.on('hover:enter', function () { push('network_status', null, 0, 1); }); } catch (_) { }
-	        }
-	      });
-
-	      Lampa.SettingsApi.addParam({
-	        component: STATE.componentId,
-	        param: { name: 'bl_pi_network_jsqp', type: 'static', default: true },
-	        field: { name: 'JS query rewrite (JSQP)', description: 'Подмена/удаление GET параметров (origin/logged/reset) в запросах на *.js' },
-	        onRender: function (item) {
-	          try { if (item && item.on) item.on('hover:enter', function () { push('jsqp', null, 0, 2); }); } catch (_) { }
-	        }
-	      });
-	    } catch (_) { }
-	  }
-
-	  function buildNetworkStatusScreen() {
-	    try {
-	      function yn(v) { return v ? 'yes' : 'no'; }
-	      function shortStr(s, max) {
-	        s = String(s || '');
-	        max = Number(max || 160);
-	        if (s.length <= max) return s;
-	        return s.slice(0, max - 1) + '…';
-	      }
-
-	      var st = null;
-	      try { st = (window.BL && BL.PolicyNetwork && typeof BL.PolicyNetwork.getStatus === 'function') ? BL.PolicyNetwork.getStatus() : null; } catch (_) { st = null; }
-	      st = st || {};
-	      var m = st.interceptors || {};
-
-	      var keys = [
-	        { k: 'fetch', title: 'fetch' },
-	        { k: 'xhr', title: 'xhr' },
-	        { k: 'ws', title: 'ws' },
-	        { k: 'eventsource', title: 'eventsource' },
-	        { k: 'beacon', title: 'beacon' },
-	        { k: 'iframe_src', title: 'iframe/src' },
-	        { k: 'img_src', title: 'img/src' },
-	        { k: 'script_src', title: 'script/src' },
-	        { k: 'link_href', title: 'link/href' },
-	        { k: 'open', title: 'window.open' },
-	        { k: 'location', title: 'location redirects' }
-	      ];
-
-	      for (var i = 0; i < keys.length; i++) {
-	        (function (row, rowIndex) {
-	          try {
-	            var active = false;
-	            try { active = !!m[row.k]; } catch (_) { active = false; }
-	            var line = yn(active);
-	            Lampa.SettingsApi.addParam({
-	              component: STATE.componentId,
-	              param: { name: 'bl_pi_net_matrix_' + row.k, type: 'static', values: line, default: line },
-	              field: { name: row.title, description: line }
-	            });
-	          } catch (_) { }
-	        })(keys[i], i);
-	      }
-
-	      var lb = st.lastBlocked || null;
-	      var lbLine = '—';
-	      var ruleLine = '—';
-	      try {
-	        if (lb && lb.url) {
-	          lbLine = String(lb.channel || '') + ' | ' + shortStr(String(lb.url || ''), 220);
-	          ruleLine = String(lb.ruleId || '') + (lb.ruleLabel ? (' | ' + shortStr(String(lb.ruleLabel || ''), 160)) : '');
-	        }
-	      } catch (_) { }
-
-	      try {
-	        Lampa.SettingsApi.addParam({
-	          component: STATE.componentId,
-	          param: { name: 'bl_pi_net_last_blocked', type: 'static', values: lbLine, default: lbLine },
-	          field: { name: 'Last blocked', description: lbLine }
-	        });
-	      } catch (_) { }
-
-	      try {
-	        Lampa.SettingsApi.addParam({
-	          component: STATE.componentId,
-	          param: { name: 'bl_pi_net_rule', type: 'static', values: ruleLine, default: ruleLine },
-	          field: { name: 'Rule matched', description: ruleLine }
-	        });
-	      } catch (_) { }
-	    } catch (_) { }
-	  }
-
-	  function buildLogsMenuScreen() {
-	    try {
-	      // 0) View logs
-	      Lampa.SettingsApi.addParam({
-	        component: STATE.componentId,
-	        param: { name: 'bl_pi_logs_view', type: 'static', default: true },
-	        field: { name: 'View logs', description: 'Открывает viewer логов BlackLampa.' },
+	        param: { name: 'bl_pi_root_status', type: 'static', values: '', default: '' },
+	        field: { name: 'Status', description: '' },
 	        onRender: function (item) {
 	          try {
-	            if (!item || !item.on) return;
-	            item.on('hover:enter', function () {
-	              try { if (window.BL && BL.Log && typeof BL.Log.openViewer === 'function') BL.Log.openViewer(); } catch (_) { }
-	            });
+	            if (!window.$ || !item) return;
+	            var ss = null;
+	            try { ss = (STATE.opts && typeof STATE.opts.statusStrings === 'function') ? (STATE.opts.statusStrings() || null) : null; } catch (_) { ss = null; }
+
+	            var raw = ss && ss.raw ? String(ss.raw) : '';
+	            var help = ss && ss.help ? String(ss.help) : '';
+	            var short = ss && ss.short ? String(ss.short) : '';
+
+	            var $d = item.find('.settings-param__descr');
+	            if (!$d.length) {
+	              item.append('<div class="settings-param__descr"></div>');
+	              $d = item.find('.settings-param__descr');
+	            }
+	            $d.empty();
+	            if (short) $d.append($('<div></div>').text(short));
+	            if (raw && raw !== short) $d.append($('<div></div>').text(raw));
+	            if (help) $d.append($('<div style=\"opacity:0.85;margin-top:0.35em;white-space:pre-wrap;\"></div>').text(help));
 	          } catch (_) { }
 	        }
 	      });
-
-	      // 1) Log mode
-	      Lampa.SettingsApi.addParam({
-	        component: STATE.componentId,
-	        param: { name: 'bl_pi_logs_mode', type: 'static', default: true },
-	        field: { name: 'Log mode', description: 'silent / popup (не влияет на блокировки).' },
-	        onRender: function (item) {
-	          try { if (item && item.on) item.on('hover:enter', function () { push('logging', null, 0, 1); }); } catch (_) { }
-	        }
-	      });
-	    } catch (_) { }
-	  }
-
-	  function buildQueryParamsScreen() {
-	    try {
-	      var raw = '';
-	      try { raw = String(location.search || ''); } catch (_) { raw = ''; }
-
-	      try {
-	        var head = raw ? raw : '(empty)';
-	        Lampa.SettingsApi.addParam({
-	          component: STATE.componentId,
-	          param: { name: 'bl_pi_qp_raw', type: 'static', values: head, default: head },
-	          field: { name: 'location.search', description: head }
-	        });
-	      } catch (_) { }
-
-	      var qs = raw;
-	      if (qs && qs.charAt(0) === '?') qs = qs.slice(1);
-	      if (!qs) return;
-
-	      var parts = [];
-	      try { parts = qs.split('&'); } catch (_) { parts = []; }
-	      for (var i = 0; i < parts.length; i++) {
-	        try {
-	          var kv = String(parts[i] || '');
-	          if (!kv) continue;
-	          var eq = kv.indexOf('=');
-	          var k = eq >= 0 ? kv.slice(0, eq) : kv;
-	          var v = eq >= 0 ? kv.slice(eq + 1) : '';
-	          try { k = decodeURIComponent(k); } catch (_) { }
-	          try { v = decodeURIComponent(v); } catch (_) { }
-	          k = String(k || '').trim();
-	          if (!k) continue;
-	          v = String(v || '');
-
-	          Lampa.SettingsApi.addParam({
-	            component: STATE.componentId,
-	            param: { name: 'bl_pi_qp_' + String(i), type: 'static', values: v, default: v },
-	            field: { name: k, description: v || '(empty)' }
-	          });
-	        } catch (_) { }
-	      }
-	    } catch (_) { }
-	  }
-
-	  function buildStatusScreen() {
-	    try {
-	      function yn(v) { return v ? 'yes' : 'no'; }
-	      function shortStr(s, max) {
-	        s = String(s || '');
-	        max = Number(max || 220);
-	        if (s.length <= max) return s;
-	        return s.slice(0, max - 1) + '…';
-	      }
-
-	      // Lampa version/build (best-effort)
-	      try {
-	        var av = '';
-	        var cv = '';
-	        try { av = (window.Lampa && Lampa.Manifest && Lampa.Manifest.app_version) ? String(Lampa.Manifest.app_version) : ''; } catch (_) { av = ''; }
-	        try { cv = (window.Lampa && Lampa.Manifest && Lampa.Manifest.css_version) ? String(Lampa.Manifest.css_version) : ''; } catch (_) { cv = ''; }
-	        var ver = (av ? ('app ' + av) : '') + (cv ? (' | css ' + cv) : '');
-	        if (ver) {
-	          Lampa.SettingsApi.addParam({
-	            component: STATE.componentId,
-	            param: { name: 'bl_pi_status_lampa_ver', type: 'static', values: ver, default: ver },
-	            field: { name: 'Lampa version', description: ver }
-	          });
-	        }
-	      } catch (_) { }
-
-	      // AutoPlugin status strings (legacy)
-	      try {
-	        var ss = null;
-	        try { ss = (STATE.opts && typeof STATE.opts.statusStrings === 'function') ? (STATE.opts.statusStrings() || null) : null; } catch (_) { ss = null; }
-	        var raw = ss && ss.raw ? String(ss.raw) : '';
-	        var help = ss && ss.help ? String(ss.help) : '';
-	        var short = ss && ss.short ? String(ss.short) : '';
-	        var sline = short || raw || '';
-	        if (sline) {
-	          Lampa.SettingsApi.addParam({
-	            component: STATE.componentId,
-	            param: { name: 'bl_pi_status_autoplugin', type: 'static', values: sline, default: sline },
-	            field: { name: 'AutoPlugin', description: sline }
-	          });
-	        }
-	        if (help) {
-	          Lampa.SettingsApi.addParam({
-	            component: STATE.componentId,
-	            param: { name: 'bl_pi_status_help', type: 'static', values: help, default: help },
-	            field: { name: 'Help', description: help }
-	          });
-	        }
-	      } catch (_) { }
-
-	      // Log mode
-	      try {
-	        var mode = 'silent';
-	        try { mode = (window.BL && BL.Log && typeof BL.Log.getMode === 'function') ? String(BL.Log.getMode() || 'silent') : 'silent'; } catch (_) { mode = 'silent'; }
-	        Lampa.SettingsApi.addParam({
-	          component: STATE.componentId,
-	          param: { name: 'bl_pi_status_log_mode', type: 'static', values: mode, default: mode },
-	          field: { name: 'Log mode', description: mode }
-	        });
-	      } catch (_) { }
-
-	      // UA preset
-	      try {
-	        var uaId = '';
-	        var uaTitle = '';
-	        try { uaId = (window.BL && BL.UA && typeof BL.UA.getSelectedPresetId === 'function') ? String(BL.UA.getSelectedPresetId() || '') : ''; } catch (_) { uaId = ''; }
-	        try { uaTitle = (window.BL && BL.UA && BL.UA.effective && BL.UA.effective.title) ? String(BL.UA.effective.title || '') : ''; } catch (_) { uaTitle = ''; }
-	        var uaLine = (uaId ? uaId : 'unknown') + (uaTitle ? (' — ' + uaTitle) : '');
-	        Lampa.SettingsApi.addParam({
-	          component: STATE.componentId,
-	          param: { name: 'bl_pi_status_ua', type: 'static', values: uaLine, default: uaLine },
-	          field: { name: 'UA preset', description: uaLine }
-	        });
-	      } catch (_) { }
-
-	      // Network interceptors summary
-	      try {
-	        var st = null;
-	        try { st = (window.BL && BL.PolicyNetwork && typeof BL.PolicyNetwork.getStatus === 'function') ? BL.PolicyNetwork.getStatus() : null; } catch (_) { st = null; }
-	        st = st || {};
-	        var m = st.interceptors || {};
-	        var sum = 'fetch=' + yn(!!m.fetch)
-	          + ' xhr=' + yn(!!m.xhr)
-	          + ' ws=' + yn(!!m.ws)
-	          + ' iframe=' + yn(!!m.iframe_src);
-	        Lampa.SettingsApi.addParam({
-	          component: STATE.componentId,
-	          param: { name: 'bl_pi_status_net', type: 'static', values: sum, default: sum },
-	          field: { name: 'Network', description: sum }
-	        });
-	      } catch (_) { }
-
-	      // FS concurrency (config)
-	      try {
-	        var conc = '';
-	        try { conc = window.localStorage ? String(localStorage.getItem('bl_fs_concurrency_v1') || '') : ''; } catch (_) { conc = ''; }
-	        if (!conc) conc = '(default)';
-	        Lampa.SettingsApi.addParam({
-	          component: STATE.componentId,
-	          param: { name: 'bl_pi_status_fs_conc', type: 'static', values: conc, default: conc },
-	          field: { name: 'FS concurrency', description: 'bl_fs_concurrency_v1 = ' + conc }
-	        });
-	      } catch (_) { }
-
-	      // Effective UA string (short)
-	      try {
-	        var effUa = '';
-	        try { effUa = String(navigator && navigator.userAgent ? navigator.userAgent : '') || ''; } catch (_) { effUa = ''; }
-	        effUa = shortStr(effUa, 180);
-	        Lampa.SettingsApi.addParam({
-	          component: STATE.componentId,
-	          param: { name: 'bl_pi_status_ua_eff', type: 'static', values: effUa, default: effUa },
-	          field: { name: 'UA effective', description: effUa }
-	        });
-	      } catch (_) { }
 	    } catch (_) { }
 	  }
 
@@ -1119,180 +834,185 @@
 
   function buildUaScreen() {
     try {
-      Lampa.SettingsApi.addParam({
-        component: STATE.componentId,
-        param: { name: 'bl_pi_ua_presets', type: 'static', default: true },
-        field: { name: 'Presets', description: 'Выбор пресета UA. Включает Original(system).' },
-        onRender: function (item) {
-          try { if (item && item.on) item.on('hover:enter', function () { push('ua_presets', null, 0, 0); }); } catch (_) { }
-        }
-      });
+      var DEF = {
+        bl_ua_enabled: '0',
+        bl_ua_mode: 'preset',
+        bl_ua_preset: 'chrome_win_latest',
+        bl_ua_custom: '',
+        bl_ua_apply_scope: 'all',
+        bl_ua_reload_on_change: '1',
+        bl_ua_add_header: '0'
+      };
 
-      Lampa.SettingsApi.addParam({
-        component: STATE.componentId,
-        param: { name: 'bl_pi_ua_effective', type: 'static', default: true },
-        field: { name: 'Effective (now)', description: 'Показывает текущий effective UA и поддержку подмены заголовка.' },
-        onRender: function (item) {
-          try { if (item && item.on) item.on('hover:enter', function () { push('ua_effective', null, 0, 1); }); } catch (_) { }
+      function sGet(k, fallback) {
+        var v = null;
+        try { if (window.Lampa && Lampa.Storage && Lampa.Storage.get) v = Lampa.Storage.get(String(k)); } catch (_) { v = null; }
+        if (v === undefined || v === null) {
+          try { if (window.localStorage) v = localStorage.getItem(String(k)); } catch (_) { v = null; }
         }
-      });
-    } catch (_) { }
-  }
+        if (v === undefined || v === null) return fallback;
+        return v;
+      }
 
-  function buildUaPresetsScreen() {
-    try {
+      function sSet(k, v) {
+        try { if (window.Lampa && Lampa.Storage && Lampa.Storage.set) return Lampa.Storage.set(String(k), String(v)); } catch (_) { }
+        try { if (window.localStorage) localStorage.setItem(String(k), String(v)); } catch (_) { }
+      }
+
+      function sEnsure(k, def) {
+        try {
+          var v = sGet(k, null);
+          if (v === undefined || v === null) sSet(k, def);
+        } catch (_) { }
+      }
+
+      // Seed defaults
+      try {
+        sEnsure('bl_ua_enabled', DEF.bl_ua_enabled);
+        sEnsure('bl_ua_mode', DEF.bl_ua_mode);
+        sEnsure('bl_ua_preset', DEF.bl_ua_preset);
+        sEnsure('bl_ua_custom', DEF.bl_ua_custom);
+        sEnsure('bl_ua_apply_scope', DEF.bl_ua_apply_scope);
+        sEnsure('bl_ua_reload_on_change', DEF.bl_ua_reload_on_change);
+        sEnsure('bl_ua_add_header', DEF.bl_ua_add_header);
+      } catch (_) { }
+
       function shortStr(s, max) {
         s = String(s || '');
-        max = Number(max || 120);
+        max = Number(max || 80);
         if (s.length <= max) return s;
         return s.slice(0, max - 1) + '…';
       }
 
-      var uaApi = null;
-      try { uaApi = (window.BL && BL.UA) ? BL.UA : null; } catch (_) { uaApi = null; }
-      try { if (uaApi && uaApi.ensureOriginalStored) uaApi.ensureOriginalStored(); } catch (_) { }
-
-      var selectedId = '';
-      try { if (uaApi && typeof uaApi.getSelectedPresetId === 'function') selectedId = String(uaApi.getSelectedPresetId() || ''); } catch (_) { selectedId = ''; }
-      if (!selectedId) {
-        try { selectedId = window.localStorage ? String(localStorage.getItem('bl_ua_preset_id_v1') || '') : ''; } catch (_) { selectedId = ''; }
+      function reloadNow() {
+        showNoty('[[BlackLampa]] UA applied, reloading…');
+        setTimeout(function () { try { location.reload(); } catch (_) { } }, 200);
       }
 
-      var presets = [];
-      try { if (uaApi && typeof uaApi.getPresets === 'function') presets = uaApi.getPresets() || []; } catch (_) { presets = []; }
-      if (!Array.isArray(presets)) presets = [];
-
-      for (var i = 0; i < presets.length; i++) {
-        (function (p, rowIndex) {
-          try {
-            if (!p || !p.id) return;
-            var id = String(p.id || '');
-            var title = String(p.title || id);
-            var desc = String(p.desc || '');
-            var ua = String(p.ua || '');
-            var isSel = (id === selectedId);
-
-            var d = desc || '';
-            if (ua) d = d ? (d + '\n' + shortStr(ua, 120)) : shortStr(ua, 120);
-            if (!d) d = ' ';
-
-            Lampa.SettingsApi.addParam({
-              component: STATE.componentId,
-              param: { name: 'bl_pi_ua_preset_' + id, type: 'static', default: true },
-              field: { name: (isSel ? '✓ ' : '') + title, description: d },
-              onRender: function (item) {
-                try {
-                  if (!item || !item.on) return;
-                  item.on('hover:enter', function () {
-                    try {
-                      if (uaApi && typeof uaApi.setSelectedPresetId === 'function') uaApi.setSelectedPresetId(id);
-                      else if (window.localStorage) localStorage.setItem('bl_ua_preset_id_v1', id);
-                    } catch (_) { }
-
-                    try { if (uaApi && typeof uaApi.apply === 'function') uaApi.apply(); } catch (_) { }
-                    showNoty('[[BlackLampa]] UA preset: ' + title);
-                    API.refresh();
-                  });
-                } catch (_) { }
-              }
-            });
-          } catch (_) { }
-        })(presets[i], i);
+      function reloadOnChangeAllowed() {
+        var roc = String(sGet('bl_ua_reload_on_change', DEF.bl_ua_reload_on_change) || DEF.bl_ua_reload_on_change);
+        if (roc === '1') { reloadNow(); return true; }
+        showNoty('[[BlackLampa]] UA: reload required');
+        return false;
       }
 
-      // Custom UA input (only when custom selected)
-      if (String(selectedId || '') === 'custom') {
-        var curCustom = '';
-        try { if (uaApi && typeof uaApi.getCustomUa === 'function') curCustom = String(uaApi.getCustomUa() || ''); } catch (_) { curCustom = ''; }
+      function enabledNow() {
+        try { return String(sGet('bl_ua_enabled', DEF.bl_ua_enabled) || DEF.bl_ua_enabled) === '1'; } catch (_) { return false; }
+      }
 
+      function reloadIfEnabled() {
+        if (!enabledNow()) return false;
+        return reloadOnChangeAllowed();
+      }
+
+      var cur = '';
+      try { cur = String(navigator && navigator.userAgent ? navigator.userAgent : '') || ''; } catch (_) { cur = ''; }
+      var st = 'Current UA: ' + shortStr(cur, 80);
+
+      // Status
+      try {
+        Lampa.SettingsApi.addParam({
+          component: STATE.componentId,
+          param: { name: 'bl_ua_status', type: 'static', values: st, default: st },
+          field: { name: 'User-Agent', description: st }
+        });
+      } catch (_) { }
+
+      // Enabled
+      try {
+        Lampa.SettingsApi.addParam({
+          component: STATE.componentId,
+          param: { name: 'bl_ua_enabled', type: 'select', values: { 0: 'OFF', 1: 'ON' }, default: 0 },
+          field: { name: 'Enabled', description: 'Подменять navigator.* (JS runtime). HTTP User-Agent не меняется.' },
+          onChange: function () {
+            reloadOnChangeAllowed();
+          }
+        });
+      } catch (_) { }
+
+      // Mode
+      var mode = String(sGet('bl_ua_mode', DEF.bl_ua_mode) || DEF.bl_ua_mode);
+      mode = mode.toLowerCase();
+      if (mode !== 'preset' && mode !== 'custom') mode = DEF.bl_ua_mode;
+
+      try {
+        Lampa.SettingsApi.addParam({
+          component: STATE.componentId,
+          param: { name: 'bl_ua_mode', type: 'select', values: { preset: 'preset', custom: 'custom' }, default: DEF.bl_ua_mode },
+          field: { name: 'Mode', description: '' },
+          onChange: function () {
+            go('ua', null, 2);
+            reloadIfEnabled();
+          }
+        });
+      } catch (_) { }
+
+      // Preset / Custom UA
+      if (mode === 'preset') {
         try {
           Lampa.SettingsApi.addParam({
             component: STATE.componentId,
-            param: { name: 'bl_ua_custom_v1', type: 'input', values: '', default: curCustom, placeholder: 'Mozilla/5.0 ...' },
-            field: { name: 'Custom UA', description: 'Используется только когда выбран preset=Custom.' },
+            param: {
+              name: 'bl_ua_preset',
+              type: 'select',
+              values: {
+                chrome_win_latest: 'chrome_win_latest',
+                edge_win_latest: 'edge_win_latest',
+                firefox_win_latest: 'firefox_win_latest',
+                chrome_android_latest: 'chrome_android_latest',
+                safari_ios_latest: 'safari_ios_latest'
+              },
+              default: DEF.bl_ua_preset
+            },
+            field: { name: 'Preset', description: '' },
             onChange: function () {
-              try {
-                var v = '';
-                try { v = (window.Lampa && Lampa.Storage && Lampa.Storage.get) ? String(Lampa.Storage.get('bl_ua_custom_v1') || '') : ''; } catch (_) { v = ''; }
-                v = String(v || '').trim();
-
-                if (uaApi && typeof uaApi.setCustomUa === 'function') uaApi.setCustomUa(v);
-                else try { if (window.localStorage) localStorage.setItem('bl_ua_custom_v1', v); } catch (_) { }
-
-                try { if (uaApi && typeof uaApi.apply === 'function') uaApi.apply(); } catch (_) { }
-                showNoty('[[BlackLampa]] UA: custom applied');
-              } catch (_) { }
+              reloadIfEnabled();
+            }
+          });
+        } catch (_) { }
+      } else {
+        try {
+          Lampa.SettingsApi.addParam({
+            component: STATE.componentId,
+            param: { name: 'bl_ua_custom', type: 'input', values: '', default: DEF.bl_ua_custom, placeholder: 'Mozilla/5.0 ...' },
+            field: { name: 'Custom UA', description: '' },
+            onChange: function () {
+              reloadIfEnabled();
             }
           });
         } catch (_) { }
       }
-    } catch (_) { }
-  }
 
-  function buildUaEffectiveScreen() {
-    try {
-      var uaApi = null;
-      try { uaApi = (window.BL && BL.UA) ? BL.UA : null; } catch (_) { uaApi = null; }
-
-      var original = '';
-      try { if (uaApi && typeof uaApi.getOriginalUa === 'function') original = String(uaApi.getOriginalUa() || ''); } catch (_) { original = ''; }
-      if (!original) {
-        try { original = window.localStorage ? String(localStorage.getItem('bl_ua_original_v1') || '') : ''; } catch (_) { original = ''; }
-      }
-
-      var selectedId = '';
-      var selectedTitle = '';
-      try { if (uaApi && typeof uaApi.getSelectedPresetId === 'function') selectedId = String(uaApi.getSelectedPresetId() || ''); } catch (_) { selectedId = ''; }
-      try { if (uaApi && uaApi.effective && uaApi.effective.title) selectedTitle = String(uaApi.effective.title || ''); } catch (_) { selectedTitle = ''; }
-
-      var effUa = '';
-      try { effUa = String(navigator && navigator.userAgent ? navigator.userAgent : '') || ''; } catch (_) { effUa = ''; }
-
-      // Header override support (best-effort)
-      var sup = false;
-      try { if (uaApi && typeof uaApi.ensureHeaderSupport === 'function') uaApi.ensureHeaderSupport(); } catch (_) { }
-      try { if (uaApi && typeof uaApi.headerOverrideSupported === 'boolean') sup = !!uaApi.headerOverrideSupported; } catch (_) { sup = false; }
-
+      // Add X-BL-UA header (optional)
       try {
         Lampa.SettingsApi.addParam({
           component: STATE.componentId,
-          param: { name: 'bl_ua_eff_orig', type: 'static', values: original, default: original },
-          field: { name: 'Original UA (stored)', description: original }
+          param: { name: 'bl_ua_add_header', type: 'select', values: { 0: 'OFF', 1: 'ON' }, default: 0 },
+          field: { name: 'Add X-BL-UA header', description: 'Опционально добавляет X-BL-UA в fetch/XHR (может вызвать CORS preflight).' },
+          onChange: function () {
+            reloadIfEnabled();
+          }
         });
       } catch (_) { }
 
+      // Reload on change
       try {
-        var selLine = (selectedId ? selectedId : 'unknown') + (selectedTitle ? (' — ' + selectedTitle) : '');
         Lampa.SettingsApi.addParam({
           component: STATE.componentId,
-          param: { name: 'bl_ua_eff_sel', type: 'static', values: selLine, default: selLine },
-          field: { name: 'Selected preset', description: selLine }
+          param: { name: 'bl_ua_reload_on_change', type: 'select', values: { 0: 'OFF', 1: 'ON' }, default: 1 },
+          field: { name: 'Reload on change', description: 'При изменении настроек (и enabled=1) выполняет reload.' }
         });
       } catch (_) { }
 
+      // Apply (always reload)
       try {
         Lampa.SettingsApi.addParam({
           component: STATE.componentId,
-          param: { name: 'bl_ua_eff_now', type: 'static', values: effUa, default: effUa },
-          field: { name: 'Effective navigator.userAgent', description: effUa }
-        });
-      } catch (_) { }
-
-      try {
-        var hs = sup ? 'yes' : 'no';
-        Lampa.SettingsApi.addParam({
-          component: STATE.componentId,
-          param: { name: 'bl_ua_eff_hdr', type: 'static', values: hs, default: hs },
-          field: { name: 'Header override supported', description: hs }
-        });
-      } catch (_) { }
-
-      try {
-        var note = 'Some channels cannot override UA headers in browser environment.';
-        Lampa.SettingsApi.addParam({
-          component: STATE.componentId,
-          param: { name: 'bl_ua_eff_note', type: 'static', values: note, default: note },
-          field: { name: 'Note', description: note }
+          param: { name: 'bl_ua_apply', type: 'button' },
+          field: { name: 'Apply', description: 'Применить и перезагрузить.' },
+          onChange: function () {
+            reloadNow();
+          }
         });
       } catch (_) { }
     } catch (_) { }
@@ -2379,12 +2099,6 @@
   }
 
 	  function buildScreen(route, payload) {
-	    if (route === 'plugins') return buildPluginsMenuScreen();
-	    if (route === 'network') return buildNetworkMenuScreen();
-	    if (route === 'network_status') return buildNetworkStatusScreen();
-	    if (route === 'logs') return buildLogsMenuScreen();
-	    if (route === 'query_params') return buildQueryParamsScreen();
-	    if (route === 'status') return buildStatusScreen();
 	    if (route === 'managed') return buildManagedScreen();
 	    if (route === 'extras') return buildExtrasScreen();
 	    if (route === 'plugin_detail') return buildPluginDetailScreen(payload);
@@ -2392,8 +2106,6 @@
 	    if (route === 'logging') return buildLoggingScreen();
 	    if (route === 'jsqp') return buildJsqpScreen();
 	    if (route === 'ua') return buildUaScreen();
-	    if (route === 'ua_presets') return buildUaPresetsScreen();
-	    if (route === 'ua_effective') return buildUaEffectiveScreen();
 	    if (route === 'backup') return buildBackupScreen();
 	    if (route === 'blocklist') return buildBlocklistScreen();
 	    if (route === 'blocklist_builtin') return buildBlocklistBuiltinScreen();

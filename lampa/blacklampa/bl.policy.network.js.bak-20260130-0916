@@ -5,62 +5,6 @@
 	  BL.Net = BL.Net || {};
 	  BL.PolicyNetwork = BL.PolicyNetwork || {};
 
-	  // ============================================================================
-	  // Runtime status (for Installer → Network → Status)
-	  // ============================================================================
-	  var __netStatus = {
-	    interceptors: {
-	      fetch: false,
-	      xhr: false,
-	      ws: false,
-	      eventsource: false,
-	      beacon: false,
-	      iframe_src: false,
-	      img_src: false,
-	      script_src: false,
-	      link_href: false,
-	      open: false,
-	      location: false
-	    },
-	    lastBlocked: null
-	  };
-
-	  function setInterceptorActive(id, on) {
-	    try { __netStatus.interceptors[String(id || '')] = !!on; } catch (_) { }
-	  }
-
-	  function snapshotInterceptors() {
-	    var out = {};
-	    try {
-	      var keys = Object.keys(__netStatus.interceptors || {});
-	      for (var i = 0; i < keys.length; i++) {
-	        var k = keys[i];
-	        out[k] = !!__netStatus.interceptors[k];
-	      }
-	    } catch (_) { }
-	    return out;
-	  }
-
-	  function snapshotLastBlocked() {
-	    try {
-	      if (!__netStatus.lastBlocked) return null;
-	      var lb = __netStatus.lastBlocked;
-	      return {
-	        url: String(lb.url || ''),
-	        channel: String(lb.channel || ''),
-	        ruleId: String(lb.ruleId || ''),
-	        ruleLabel: String(lb.ruleLabel || ''),
-	        ts: Number(lb.ts || 0)
-	      };
-	    } catch (_) {
-	      return null;
-	    }
-	  }
-
-	  BL.PolicyNetwork.getStatus = BL.PolicyNetwork.getStatus || function () {
-	    return { interceptors: snapshotInterceptors(), lastBlocked: snapshotLastBlocked() };
-	  };
-
 	  function logCall(log, method, source, message, extra) {
 	    try {
 	      if (!log) return;
@@ -446,54 +390,26 @@
       var p = String(pattern || '').trim();
       if (!u || !p) return false;
 
-      // Compile once per unique pattern string (perf).
-      if (!matchPattern.__cache) matchPattern.__cache = Object.create(null);
-      var cache = matchPattern.__cache;
-      var c = cache[p];
-
-      if (!c) {
-        c = null;
-
-        // /regex/i
-        try {
-          if (p.charAt(0) === '/' && p.lastIndexOf('/') > 1) {
-            var last = p.lastIndexOf('/');
-            var body = p.slice(1, last);
-            var flags = p.slice(last + 1);
-            // Only treat as regex when flags look valid; otherwise it's a normal substring like "/path/to".
-            if (!flags || /^[gimsuy]*$/.test(flags)) {
-              if (!flags) flags = 'i';
-              try { c = { kind: 're', re: new RegExp(body, flags) }; } catch (_) { c = null; }
-            }
-          }
-        } catch (_) { c = null; }
-
-        // wildcard (*)
-        if (!c) {
-          try {
-            if (p.indexOf('*') !== -1) {
-              var re = escapeRe(p).replace(/\\\*/g, '.*');
-              try { c = { kind: 're', re: new RegExp(re, 'i') }; } catch (_) { c = null; }
-            }
-          } catch (_) { c = null; }
+      // /regex/i
+      if (p.charAt(0) === '/' && p.lastIndexOf('/') > 1) {
+        var last = p.lastIndexOf('/');
+        var body = p.slice(1, last);
+        var flags = p.slice(last + 1);
+        // Only treat as regex when flags look valid; otherwise it's a normal substring like "/path/to".
+        if (!flags || /^[gimsuy]*$/.test(flags)) {
+          if (!flags) flags = 'i';
+          try { return new RegExp(body, flags).test(u); } catch (_) { return false; }
         }
-
-        // substring
-        if (!c) {
-          c = { kind: 'substr', lc: p.toLowerCase() };
-        }
-
-        cache[p] = c || 0;
       }
 
-      if (c === 0) return false;
-      if (!c) return false;
-      if (c.kind === 'substr') return u.toLowerCase().indexOf(String(c.lc || '')) !== -1;
-      if (c.kind === 're' && c.re) {
-        try { c.re.lastIndex = 0; } catch (_) { }
-        try { return c.re.test(u); } catch (_) { return false; }
+      // wildcard (*)
+      if (p.indexOf('*') !== -1) {
+        var re = escapeRe(p).replace(/\\\*/g, '.*');
+        try { return new RegExp(re, 'i').test(u); } catch (_) { return false; }
       }
-      return false;
+
+      // substring
+      return u.toLowerCase().indexOf(p.toLowerCase()) !== -1;
     } catch (_) {
       return false;
     }
@@ -698,14 +614,14 @@
   function classifyBlocked(url) {
     try {
       if (!url) return null;
-      if (isBwaCorsCheck(url) && isBuiltinEnabled('bwa_cors')) return { id: 'bwa_cors', label: 'BWA:CORS', reason: 'BWA:CORS' };
+      if (isBwaCorsCheck(url) && isBuiltinEnabled('bwa_cors')) return 'BWA:CORS';
 
       var h = String(url.hostname || '').toLowerCase();
       if (!h) return null;
 
-      if (isBuiltinEnabled('yandex') && BLOCK_YANDEX_RE.test(h)) return { id: 'yandex', label: 'Yandex', reason: 'Yandex' };
-      if (isBuiltinEnabled('google') && BLOCK_GOOGLE_YT_RE.test(h)) return { id: 'google', label: 'Google/YouTube', reason: 'Google/YouTube' };
-      if (isBuiltinEnabled('stats') && BLOCK_STATS_RE.test(h)) return { id: 'stats', label: 'Statistics', reason: 'Statistics' };
+      if (isBuiltinEnabled('yandex') && BLOCK_YANDEX_RE.test(h)) return 'Yandex';
+      if (isBuiltinEnabled('google') && BLOCK_GOOGLE_YT_RE.test(h)) return 'Google/YouTube';
+      if (isBuiltinEnabled('stats') && BLOCK_STATS_RE.test(h)) return 'Statistics';
 
       return null;
     } catch (_) {
@@ -713,31 +629,11 @@
     }
   }
 
-  function parseUrlSafe(u) {
-    try { return new URL(String(u), location.href); } catch (_) { }
-    // Old webview fallback: <a href>
-    try {
-      if (!document || !document.createElement) return null;
-      var a = document.createElement('a');
-      a.href = String(u || '');
-      return {
-        protocol: a.protocol,
-        hostname: a.hostname,
-        pathname: a.pathname,
-        href: a.href
-      };
-    } catch (_) { }
-    return null;
-  }
-
   function getBlockContext(u) {
     try {
       if (!u) return null;
-      var url = parseUrlSafe(u);
-      if (!url) return null;
-      var proto = String(url.protocol || '');
-      // Allow HTTP(S) + WS(S) channels (WebSocket URLs are ws:/wss:).
-      if (proto !== 'http:' && proto !== 'https:' && proto !== 'ws:' && proto !== 'wss:') return null;
+      var url = new URL(String(u), location.href);
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
 
       var urlAbs = '';
       try { urlAbs = String(url.href || ''); } catch (_) { urlAbs = String(u || ''); }
@@ -750,12 +646,7 @@
         if (!r.pattern) continue;
         if (!matchPattern(urlAbs, r.pattern)) continue;
 
-        var ctx = {
-          url: urlAbs,
-          reason: 'User:' + String(r.id || i),
-          ruleId: String(r.id || ''),
-          ruleLabel: String(r.pattern || '')
-        };
+        var ctx = { url: urlAbs, reason: 'User:' + String(r.id || i) };
 
         if (r.type === 'advanced' && r.advanced) {
           var ct = '';
@@ -772,7 +663,7 @@
       }
 
       var why = classifyBlocked(url);
-      if (why && why.reason) return { url: urlAbs, reason: String(why.reason), ruleId: String(why.id || ''), ruleLabel: String(why.label || '') };
+      if (why) return { url: urlAbs, reason: why };
       return null;
     } catch (_) {
       return null;
@@ -951,32 +842,9 @@
 	    return null;
 	  }
 
-		  function noteBlocked(context) {
-		    try {
-		      context = context || {};
-		      var url = normalizeUrlString(context.url);
-		      var channel = String(context.type || context.channel || '');
-		      var ruleId = '';
-		      var ruleLabel = '';
-		      try { ruleId = String(context.ruleId || ''); } catch (_) { ruleId = ''; }
-		      try { ruleLabel = String(context.ruleLabel || ''); } catch (_) { ruleLabel = ''; }
-		      if (!ruleId) {
-		        var rr = String(context.reason || '');
-		        if (rr.indexOf('User:') === 0) ruleId = rr.slice(5);
-		      }
-		      if (!ruleLabel) {
-		        try { ruleLabel = String(context.reason || ''); } catch (_) { ruleLabel = ''; }
-		      }
-		      __netStatus.lastBlocked = { url: url, channel: channel, ruleId: ruleId, ruleLabel: ruleLabel, ts: Date.now() };
-		    } catch (_) { }
-		  }
-
-		  BL.Net.noteBlocked = BL.Net.noteBlocked || noteBlocked;
-
 		  BL.Net.logBlocked = BL.Net.logBlocked || function (context) {
 		    try {
 		      try { if (BL.cfg && BL.cfg.PERF_DEBUG) __perfNetBlocked++; } catch (_) { }
-		      try { noteBlocked(context); } catch (_) { }
 		      if (!netLogAllow()) return;
 
 	      context = context || {};
@@ -985,8 +853,8 @@
 	      var r = String(context.reason || '');
 	      var line = '[BlackLampa][NET][BLOCK][' + t + '] ' + r + ' ' + u;
 
-	      // Prefer popup logger (and its console mirror) when available.
-	      try {
+		      // Prefer popup logger (and its console mirror) when available.
+		      try {
 		        if (BL.Log && typeof BL.Log.raw === 'function') {
 		          BL.Log.raw('WRN', line);
 		          return;
@@ -996,7 +864,7 @@
 	      try { if (BL.Console && BL.Console.warn) return BL.Console.warn(line); } catch (_) { }
 	      try { if (BL.Console && BL.Console.log) return BL.Console.log(line); } catch (_) { }
 	    } catch (_) { }
-		  };
+	  };
 
 	  function makeFetchResponse(payload) {
 	    var bodyText = String(payload.bodyText || '');
@@ -1154,36 +1022,23 @@
 	    }
     BL.PolicyNetwork.__installed = true;
 
-    // Reset status snapshot for this session install.
-    try {
-      setInterceptorActive('fetch', false);
-      setInterceptorActive('xhr', false);
-      setInterceptorActive('ws', false);
-      setInterceptorActive('eventsource', false);
-      setInterceptorActive('beacon', false);
-      setInterceptorActive('iframe_src', false);
-      setInterceptorActive('img_src', false);
-      setInterceptorActive('script_src', false);
-      setInterceptorActive('link_href', false);
-      setInterceptorActive('open', false);
-      setInterceptorActive('location', false);
-    } catch (_) { }
-
     // Config flags (read once at install)
     var cfg0 = null;
     try { cfg0 = (BL.Config && typeof BL.Config.get === 'function') ? BL.Config.get() : BL.Config; } catch (_) { cfg0 = BL.Config; }
     cfg0 = cfg0 || {};
+    var NET_HOOK_WS = false;
+    try { NET_HOOK_WS = !!cfg0.NET_HOOK_WS; } catch (_) { NET_HOOK_WS = false; }
     var PERF_DEBUG = false;
     try { PERF_DEBUG = !!cfg0.PERF_DEBUG; } catch (_) { PERF_DEBUG = false; }
 
     // Ensure JSQP defaults exist (localStorage/Lampa.Storage)
     try { jsqpEnsureDefaultsOnce(); } catch (_) { }
 
-    // User-Agent header override (best-effort; browser environments may block it).
-    var UA_APPLY_FETCH = null;
-    var UA_APPLY_XHR = null;
-    try { UA_APPLY_FETCH = (window.BL && BL.UA && typeof BL.UA.applyHeadersToFetch === 'function') ? BL.UA.applyHeadersToFetch : null; } catch (_) { UA_APPLY_FETCH = null; }
-    try { UA_APPLY_XHR = (window.BL && BL.UA && typeof BL.UA.applyHeadersToXhr === 'function') ? BL.UA.applyHeadersToXhr : null; } catch (_) { UA_APPLY_XHR = null; }
+    // Optional diagnostic header (never try to set real HTTP User-Agent)
+    var UA_ADD_HEADER = false;
+    var UA_HEADER_VALUE = '';
+    try { UA_ADD_HEADER = lsGetBool('bl_ua_add_header', false) && lsGetBool('bl_ua_enabled', false); } catch (_) { UA_ADD_HEADER = false; }
+    try { if (window.BL && BL.UA && BL.UA.uaString) UA_HEADER_VALUE = String(BL.UA.uaString || ''); } catch (_) { UA_HEADER_VALUE = ''; }
 
 	    if (window.fetch) {
 	      var origFetch = window.fetch.bind(window);
@@ -1214,12 +1069,41 @@
             }
           } catch (_) { }
 
-          // Best-effort UA header override (may be unsupported in browser env).
+          // Optional diagnostic header X-BL-UA (best-effort only).
+          // IMPORTANT: browsers forbid setting real 'User-Agent' header.
           try {
-            if (UA_APPLY_FETCH) {
-              var uaR = UA_APPLY_FETCH(input, init);
-              if (uaR && uaR.init) init = uaR.init;
-              if (uaR && uaR.input !== undefined) input = uaR.input;
+            if (UA_ADD_HEADER && UA_HEADER_VALUE) {
+              if (typeof input === 'string') {
+                init = init || {};
+                if (typeof Headers !== 'undefined') {
+                  var h0 = null;
+                  try { h0 = init.headers ? new Headers(init.headers) : new Headers(); } catch (_) { h0 = null; }
+                  if (h0) {
+                    try { h0.set('X-BL-UA', UA_HEADER_VALUE); } catch (_) { }
+                    init.headers = h0;
+                  }
+                } else if (init && init.headers && typeof init.headers === 'object') {
+                  try { init.headers['X-BL-UA'] = UA_HEADER_VALUE; } catch (_) { }
+                } else if (init) {
+                  try { init.headers = { 'X-BL-UA': UA_HEADER_VALUE }; } catch (_) { }
+                }
+              } else if (typeof Request !== 'undefined' && input instanceof Request) {
+                if (typeof Headers !== 'undefined') {
+                  try {
+                    var h1 = new Headers(input.headers);
+                    try { h1.set('X-BL-UA', UA_HEADER_VALUE); } catch (_) { }
+                    input = new Request(input, { headers: h1 });
+                    try { u = input && input.url ? input.url : u; } catch (_) { }
+                  } catch (_) { }
+                } else {
+                  init = init || {};
+                  if (init && init.headers && typeof init.headers === 'object') {
+                    try { init.headers['X-BL-UA'] = UA_HEADER_VALUE; } catch (_) { }
+                  } else if (init) {
+                    try { init.headers = { 'X-BL-UA': UA_HEADER_VALUE }; } catch (_) { }
+                  }
+                }
+              }
             }
           } catch (_) { }
 
@@ -1230,7 +1114,7 @@
 
 	        var ctx = getBlockContext(u);
 	        if (ctx && ctx.reason) {
-	          var c = { url: ctx.url || u, type: 'fetch', reason: ctx.reason, ruleId: ctx.ruleId || '', ruleLabel: ctx.ruleLabel || '' };
+	          var c = { url: ctx.url || u, type: 'fetch', reason: ctx.reason };
 	          try { if (ctx.overrideContentType) c.overrideContentType = ctx.overrideContentType; } catch (_) { }
 	          try { if (ctx.overrideBodyMode) c.overrideBodyMode = ctx.overrideBodyMode; } catch (_) { }
 	          BL.Net.logBlocked(c);
@@ -1238,7 +1122,6 @@
 	        }
 	        return origFetch(input, init);
 	      };
-	      setInterceptorActive('fetch', true);
 	    }
 
 	    if (window.XMLHttpRequest) {
@@ -1278,7 +1161,7 @@
 	        if (this.__ap_block_ctx && this.__ap_block_ctx.reason) {
 	          var u = this.__ap_url;
 	          var ctx = this.__ap_block_ctx;
-	          var c = { url: ctx.url || u, type: 'xhr', reason: ctx.reason, ruleId: ctx.ruleId || '', ruleLabel: ctx.ruleLabel || '' };
+	          var c = { url: ctx.url || u, type: 'xhr', reason: ctx.reason };
 	          try { if (ctx.overrideContentType) c.overrideContentType = ctx.overrideContentType; } catch (_) { }
 	          try { if (ctx.overrideBodyMode) c.overrideBodyMode = ctx.overrideBodyMode; } catch (_) { }
 	          BL.Net.logBlocked(c);
@@ -1293,19 +1176,21 @@
 	          return;
 	        }
 
-          // Best-effort UA header override (may be unsupported in browser env).
-          try { if (UA_APPLY_XHR) UA_APPLY_XHR(this); } catch (_) { }
+          // Optional diagnostic header X-BL-UA (best-effort only).
+          try {
+            if (UA_ADD_HEADER && UA_HEADER_VALUE && this && this.setRequestHeader) {
+              this.setRequestHeader('X-BL-UA', UA_HEADER_VALUE);
+            }
+          } catch (_) { }
 
 	        return origSend.apply(this, arguments);
 	      };
-	      setInterceptorActive('xhr', true);
 	    }
 
       // Script src hook (covers <script src="..."> dynamic loads)
       try {
         if (window.HTMLScriptElement && HTMLScriptElement.prototype && !BL.PolicyNetwork.__jsqpScriptHooked) {
           BL.PolicyNetwork.__jsqpScriptHooked = true;
-          setInterceptorActive('script_src', true);
 
           // setAttribute('src', ...)
           try {
@@ -1313,19 +1198,8 @@
             if (typeof _setAttr === 'function') {
               HTMLScriptElement.prototype.setAttribute = function (name, value) {
                 try {
-                  if (String(name || '').toLowerCase() === 'src') {
-                    // JS query params rewrite (only for *.js)
-                    try {
-                      if (BL.Net && typeof BL.Net.rewriteJsQuery === 'function') value = BL.Net.rewriteJsQuery(value);
-                    } catch (_) { }
-
-                    // Hard block (script loads must not escape the policy).
-                    var ctx = null;
-                    try { ctx = getBlockContext(value); } catch (_) { ctx = null; }
-                    if (ctx && ctx.reason) {
-                      try { BL.Net.logBlocked({ url: ctx.url || value, type: 'script', reason: ctx.reason, ruleId: ctx.ruleId || '', ruleLabel: ctx.ruleLabel || '' }); } catch (_) { }
-                      return;
-                    }
+                  if (String(name || '').toLowerCase() === 'src' && BL.Net && typeof BL.Net.rewriteJsQuery === 'function') {
+                    value = BL.Net.rewriteJsQuery(value);
                   }
                 } catch (_) { }
                 return _setAttr.call(this, name, value);
@@ -1342,193 +1216,12 @@
                 enumerable: d.enumerable,
                 get: d.get,
                 set: function (v) {
-                  // JS query params rewrite (only for *.js)
                   try { if (BL.Net && typeof BL.Net.rewriteJsQuery === 'function') v = BL.Net.rewriteJsQuery(v); } catch (_) { }
-
-                  // Hard block
-                  try {
-                    var ctx = getBlockContext(v);
-                    if (ctx && ctx.reason) {
-                      try { BL.Net.logBlocked({ url: ctx.url || v, type: 'script', reason: ctx.reason, ruleId: ctx.ruleId || '', ruleLabel: ctx.ruleLabel || '' }); } catch (_) { }
-                      return;
-                    }
-                  } catch (_) { }
                   return d.set.call(this, v);
                 }
               });
             }
           } catch (_) { }
-        }
-      } catch (_) { }
-
-      // DOM setAttribute hook (src/href) for elements that bypass fetch/XHR (img/link/iframe/etc.)
-      try {
-        if (window.Element && Element.prototype && !BL.PolicyNetwork.__domSetAttrHooked) {
-          var _elSetAttr = Element.prototype.setAttribute;
-          if (typeof _elSetAttr === 'function') {
-            BL.PolicyNetwork.__domSetAttrHooked = true;
-            Element.prototype.setAttribute = function (name, value) {
-              try {
-                var n = String(name || '').toLowerCase();
-                if (n === 'src' || n === 'href') {
-                  var tag = '';
-                  try { tag = this && this.tagName ? String(this.tagName).toLowerCase() : ''; } catch (_) { tag = ''; }
-                  var channel = '';
-                  if (tag === 'img') channel = 'img';
-                  else if (tag === 'iframe') channel = 'iframe';
-                  else if (tag === 'script') channel = 'script';
-                  else if (tag === 'link') channel = 'link';
-
-                  // JSQP for script/src (only for *.js)
-                  if (channel === 'script' && n === 'src') {
-                    try { if (BL.Net && typeof BL.Net.rewriteJsQuery === 'function') value = BL.Net.rewriteJsQuery(value); } catch (_) { }
-                  }
-
-                  // Hard block only for known channels (avoid surprising behavior for random elements).
-                  if (channel) {
-                    var ctx = null;
-                    try { ctx = getBlockContext(value); } catch (_) { ctx = null; }
-                    if (ctx && ctx.reason) {
-                      try { BL.Net.logBlocked({ url: ctx.url || value, type: channel, reason: ctx.reason, ruleId: ctx.ruleId || '', ruleLabel: ctx.ruleLabel || '' }); } catch (_) { }
-                      return;
-                    }
-                  }
-                }
-              } catch (_) { }
-              return _elSetAttr.call(this, name, value);
-            };
-          }
-        }
-      } catch (_) { }
-
-      // Element property hooks (src/href) — cheapest reliable path for dynamic loads.
-      function patchUrlProp(proto, prop, channel, statusKey) {
-        try {
-          if (!proto || !Object.getOwnPropertyDescriptor || !Object.defineProperty) return false;
-          var d0 = Object.getOwnPropertyDescriptor(proto, prop);
-          if (!d0 || !d0.set || !d0.configurable) return false;
-          if (d0.set && d0.set.__blNetWrapped) return true;
-
-          var origSet = d0.set;
-          var wrapped = function (v) {
-            try {
-              var ctx = getBlockContext(v);
-              if (ctx && ctx.reason) {
-                try { BL.Net.logBlocked({ url: ctx.url || v, type: channel, reason: ctx.reason, ruleId: ctx.ruleId || '', ruleLabel: ctx.ruleLabel || '' }); } catch (_) { }
-                return;
-              }
-            } catch (_) { }
-            return origSet.call(this, v);
-          };
-          try { wrapped.__blNetWrapped = true; } catch (_) { }
-
-          Object.defineProperty(proto, prop, {
-            configurable: true,
-            enumerable: d0.enumerable,
-            get: d0.get,
-            set: wrapped
-          });
-          setInterceptorActive(statusKey, true);
-          return true;
-        } catch (_) {
-          return false;
-        }
-      }
-
-      try { if (window.HTMLIFrameElement && HTMLIFrameElement.prototype && !BL.PolicyNetwork.__iframeSrcHooked) { BL.PolicyNetwork.__iframeSrcHooked = true; patchUrlProp(HTMLIFrameElement.prototype, 'src', 'iframe', 'iframe_src'); } } catch (_) { }
-      try { if (window.HTMLImageElement && HTMLImageElement.prototype && !BL.PolicyNetwork.__imgSrcHooked) { BL.PolicyNetwork.__imgSrcHooked = true; patchUrlProp(HTMLImageElement.prototype, 'src', 'img', 'img_src'); } } catch (_) { }
-      try { if (window.HTMLLinkElement && HTMLLinkElement.prototype && !BL.PolicyNetwork.__linkHrefHooked) { BL.PolicyNetwork.__linkHrefHooked = true; patchUrlProp(HTMLLinkElement.prototype, 'href', 'link', 'link_href'); } } catch (_) { }
-
-      // Fallback for environments where prototype setters are not configurable:
-      // MutationObserver to sanitize late-bound src/href attributes (best-effort).
-      try {
-        function ensureDomObserver() {
-          try {
-            if (BL.PolicyNetwork.__domObserverInstalled) return true;
-            if (!window.MutationObserver) return false;
-            if (!document || !document.documentElement) return false;
-
-            function sanitizeEl(el) {
-              try {
-                if (!el || el.nodeType !== 1) return;
-                var tag = '';
-                try { tag = el.tagName ? String(el.tagName).toLowerCase() : ''; } catch (_) { tag = ''; }
-
-                var attr = '';
-                var channel = '';
-                if (tag === 'iframe') { attr = 'src'; channel = 'iframe'; }
-                else if (tag === 'img') { attr = 'src'; channel = 'img'; }
-                else if (tag === 'script') { attr = 'src'; channel = 'script'; }
-                else if (tag === 'link') { attr = 'href'; channel = 'link'; }
-                else return;
-
-                var v = '';
-                try { v = el.getAttribute(attr); } catch (_) { v = ''; }
-                if (!v) return;
-
-                var ctx = null;
-                try { ctx = getBlockContext(v); } catch (_) { ctx = null; }
-                if (!ctx || !ctx.reason) return;
-
-                // Remove attribute ASAP to stop/abort the load.
-                try { el.removeAttribute(attr); } catch (_) { }
-                // For iframes: force about:blank to avoid reload loops in some webviews.
-                if (tag === 'iframe') {
-                  try { el.setAttribute('src', 'about:blank'); } catch (_) { }
-                }
-
-                try { BL.Net.logBlocked({ url: ctx.url || v, type: channel, reason: ctx.reason, ruleId: ctx.ruleId || '', ruleLabel: ctx.ruleLabel || '' }); } catch (_) { }
-              } catch (_) { }
-            }
-
-            function sanitizeNode(node) {
-              try {
-                if (!node) return;
-                if (node.nodeType !== 1) return;
-                sanitizeEl(node);
-                if (node.querySelectorAll) {
-                  var list = null;
-                  try { list = node.querySelectorAll('iframe[src],img[src],script[src],link[href]'); } catch (_) { list = null; }
-                  if (list && list.length) {
-                    for (var i = 0; i < list.length; i++) sanitizeEl(list[i]);
-                  }
-                }
-              } catch (_) { }
-            }
-
-            var mo = new MutationObserver(function (mutations) {
-              try {
-                for (var i = 0; i < mutations.length; i++) {
-                  var m = mutations[i];
-                  if (!m) continue;
-                  if (m.type === 'attributes') {
-                    sanitizeEl(m.target);
-                  } else if (m.type === 'childList') {
-                    var added = m.addedNodes || null;
-                    if (!added || !added.length) continue;
-                    for (var j = 0; j < added.length; j++) sanitizeNode(added[j]);
-                  }
-                }
-              } catch (_) { }
-            });
-
-            mo.observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['src', 'href'] });
-            BL.PolicyNetwork.__domObserverInstalled = true;
-            BL.PolicyNetwork.__domObserver = mo;
-            return true;
-          } catch (_) {
-            return false;
-          }
-        }
-
-        // Only enable observer if at least one key DOM channel is not hooked via setters.
-        var needObserver = false;
-        try { needObserver = !__netStatus.interceptors.iframe_src || !__netStatus.interceptors.img_src || !__netStatus.interceptors.link_href; } catch (_) { needObserver = true; }
-        if (needObserver && ensureDomObserver()) {
-          if (!__netStatus.interceptors.iframe_src) setInterceptorActive('iframe_src', true);
-          if (!__netStatus.interceptors.img_src) setInterceptorActive('img_src', true);
-          if (!__netStatus.interceptors.link_href) setInterceptorActive('link_href', true);
-          if (!__netStatus.interceptors.script_src) setInterceptorActive('script_src', true);
         }
       } catch (_) { }
 
@@ -1538,127 +1231,33 @@
 	        if (PERF_DEBUG) __perfNetReq++;
 	        var ctx = getBlockContext(url);
 	        if (ctx && ctx.reason) {
-	          var c = { url: ctx.url || url, type: 'beacon', reason: ctx.reason, ruleId: ctx.ruleId || '', ruleLabel: ctx.ruleLabel || '' };
+	          var c = { url: ctx.url || url, type: 'beacon', reason: ctx.reason };
 	          BL.Net.logBlocked(c);
 	          return !!BL.Net.makeFakeOkResponse(c);
 	        }
 	        return origBeacon(url, data);
 	      };
-	      setInterceptorActive('beacon', true);
 	    }
 
 	    if (window.WebSocket) {
-	      try {
-	        if (!BL.PolicyNetwork.__wsHooked) {
-	          BL.PolicyNetwork.__wsHooked = true;
-	          var OrigWS = window.WebSocket;
-	          window.WebSocket = function (url, protocols) {
-	            if (PERF_DEBUG) __perfNetReq++;
-	            var ctx = getBlockContext(url);
-	            if (ctx && ctx.reason) {
-	              var c = { url: ctx.url || url, type: 'ws', reason: ctx.reason, ruleId: ctx.ruleId || '', ruleLabel: ctx.ruleLabel || '' };
-	              // WebSocket: do not spam logs; only update lastBlocked.
-	              try { if (BL.Net && typeof BL.Net.noteBlocked === 'function') BL.Net.noteBlocked(c); } catch (_) { }
-	              return BL.Net.makeFakeOkResponse(c);
-	            }
-	            return (protocols !== undefined) ? new OrigWS(url, protocols) : new OrigWS(url);
-	          };
-	          window.WebSocket.prototype = OrigWS.prototype;
-	          setInterceptorActive('ws', true);
-	        }
-	      } catch (_) { setInterceptorActive('ws', false); }
-	    }
-
-	    if (window.EventSource) {
-	      try {
-	        if (!BL.PolicyNetwork.__esHooked) {
-	          BL.PolicyNetwork.__esHooked = true;
-	          var OrigES = window.EventSource;
-
-	          function makeFakeEventSource(url, why) {
-	            var es = null;
-	            try { es = Object.create(OrigES && OrigES.prototype ? OrigES.prototype : {}); } catch (_) { es = {}; }
-	            try { es.url = normalizeUrlString(url); } catch (_) { }
-	            try { es.readyState = 2; } catch (_) { } // CLOSED
-	            es.onopen = null;
-	            es.onmessage = null;
-	            es.onerror = null;
-	            es.close = function () { };
-	            es.addEventListener = function () { };
-	            es.removeEventListener = function () { };
-	            setTimeout(function () {
-	              try { if (typeof es.onerror === 'function') es.onerror({ type: 'error', message: String(why || 'Blocked') }); } catch (_) { }
-	            }, 0);
-	            return es;
+	      if (NET_HOOK_WS) {
+	        BL.PolicyNetwork.__wsHooked = true;
+	        var OrigWS = window.WebSocket;
+	        window.WebSocket = function (url, protocols) {
+	          if (PERF_DEBUG) __perfNetReq++;
+	          var ctx = getBlockContext(url);
+	          if (ctx && ctx.reason) {
+	            var c = { url: ctx.url || url, type: 'ws', reason: ctx.reason };
+	            // WebSocket must never be logged (even when logging is enabled).
+	            return BL.Net.makeFakeOkResponse(c);
 	          }
-
-	          window.EventSource = function (url, config) {
-	            if (PERF_DEBUG) __perfNetReq++;
-	            var ctx = getBlockContext(url);
-	            if (ctx && ctx.reason) {
-	              var c = { url: ctx.url || url, type: 'eventsource', reason: ctx.reason, ruleId: ctx.ruleId || '', ruleLabel: ctx.ruleLabel || '' };
-	              try { BL.Net.logBlocked(c); } catch (_) { }
-	              return makeFakeEventSource(c.url, c.reason);
-	            }
-	            return (config !== undefined) ? new OrigES(url, config) : new OrigES(url);
-	          };
-	          window.EventSource.prototype = OrigES.prototype;
-	          setInterceptorActive('eventsource', true);
-	        }
-	      } catch (_) { setInterceptorActive('eventsource', false); }
-	    }
-
-	    // open()/location redirects (best-effort; must be minimal and safe).
-	    try {
-	      if (window.open && !BL.PolicyNetwork.__openHooked) {
-	        BL.PolicyNetwork.__openHooked = true;
-	        var _open = window.open;
-	        window.open = function (url) {
-	          try {
-	            var ctx = getBlockContext(url);
-	            if (ctx && ctx.reason) {
-	              try { BL.Net.logBlocked({ url: ctx.url || url, type: 'open', reason: ctx.reason, ruleId: ctx.ruleId || '', ruleLabel: ctx.ruleLabel || '' }); } catch (_) { }
-	              return null;
-	            }
-	          } catch (_) { }
-	          return _open.apply(window, arguments);
+	          return (protocols !== undefined) ? new OrigWS(url, protocols) : new OrigWS(url);
 	        };
-	        setInterceptorActive('open', true);
+	        window.WebSocket.prototype = OrigWS.prototype;
+	      } else {
+	        BL.PolicyNetwork.__wsHooked = false;
 	      }
-	    } catch (_) { setInterceptorActive('open', false); }
-
-	    try {
-	      if (window.Location && Location.prototype && !BL.PolicyNetwork.__locHooked) {
-	        BL.PolicyNetwork.__locHooked = true;
-	        var _assign = Location.prototype.assign;
-	        var _replace = Location.prototype.replace;
-	        if (typeof _assign === 'function') {
-	          Location.prototype.assign = function (url) {
-	            try {
-	              var ctx = getBlockContext(url);
-	              if (ctx && ctx.reason) {
-	                try { BL.Net.logBlocked({ url: ctx.url || url, type: 'location', reason: ctx.reason, ruleId: ctx.ruleId || '', ruleLabel: ctx.ruleLabel || '' }); } catch (_) { }
-	                return;
-	              }
-	            } catch (_) { }
-	            return _assign.apply(this, arguments);
-	          };
-	        }
-	        if (typeof _replace === 'function') {
-	          Location.prototype.replace = function (url) {
-	            try {
-	              var ctx = getBlockContext(url);
-	              if (ctx && ctx.reason) {
-	                try { BL.Net.logBlocked({ url: ctx.url || url, type: 'location', reason: ctx.reason, ruleId: ctx.ruleId || '', ruleLabel: ctx.ruleLabel || '' }); } catch (_) { }
-	                return;
-	              }
-	            } catch (_) { }
-	            return _replace.apply(this, arguments);
-	          };
-	        }
-	        setInterceptorActive('location', true);
-	      }
-	    } catch (_) { setInterceptorActive('location', false); }
+	    }
 
     // Optional perf diagnostics (disabled by default)
     try {

@@ -27,67 +27,94 @@
   BL.Init.__blInitLoaded = true;
 
   // ----------------------------------------------------------------------------
-  // User-Agent override (JS runtime only; does NOT change HTTP User-Agent header)
+  // User-Agent override (JS runtime + best-effort request headers)
   // ----------------------------------------------------------------------------
   BL.UA = BL.UA || {};
 
-  var UA_PRESETS = {
-    chrome_win_latest: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-    edge_win_latest: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36 Edg/123.0.0.0',
-    firefox_win_latest: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0',
-    chrome_android_latest: 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.36',
-    safari_ios_latest: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
-  };
-
-  var UA_META = {
-    chrome_win_latest: { platform: 'Win32', vendor: 'Google Inc.', uadPlatform: 'Windows', mobile: false },
-    edge_win_latest: { platform: 'Win32', vendor: 'Google Inc.', uadPlatform: 'Windows', mobile: false },
-    firefox_win_latest: { platform: 'Win32', vendor: '', uadPlatform: 'Windows', mobile: false },
-    chrome_android_latest: { platform: 'Linux armv8l', vendor: 'Google Inc.', uadPlatform: 'Android', mobile: true },
-    safari_ios_latest: { platform: 'iPhone', vendor: 'Apple Computer, Inc.', uadPlatform: 'iOS', mobile: true }
-  };
+  var LS_UA_ORIGINAL = 'bl_ua_original_v1';
+  var LS_UA_PRESET_ID = 'bl_ua_preset_id_v1';
+  var LS_UA_CUSTOM = 'bl_ua_custom_v1';
 
   function uaLsGet(k) { try { return localStorage.getItem(String(k)); } catch (_) { return null; } }
   function uaLsSet(k, v) { try { localStorage.setItem(String(k), String(v)); } catch (_) { } }
-  function uaStorageGet(k) { try { if (window.Lampa && Lampa.Storage && Lampa.Storage.get) return Lampa.Storage.get(String(k)); } catch (_) { } return uaLsGet(k); }
-  function uaStorageSet(k, v) { try { if (window.Lampa && Lampa.Storage && Lampa.Storage.set) return Lampa.Storage.set(String(k), String(v)); } catch (_) { } uaLsSet(k, v); }
+  function uaGetAny(k) {
+    var v = null;
+    try { v = uaLsGet(k); } catch (_) { v = null; }
+    if (v === undefined || v === null) {
+      try { if (window.Lampa && Lampa.Storage && Lampa.Storage.get) v = Lampa.Storage.get(String(k)); } catch (_) { v = null; }
+    }
+    if (v === undefined || v === null) return null;
+    return String(v);
+  }
+  function uaSetAny(k, v) {
+    try { uaLsSet(k, v); } catch (_) { }
+    try { if (window.Lampa && Lampa.Storage && Lampa.Storage.set) Lampa.Storage.set(String(k), String(v)); } catch (_) { }
+  }
 
-  var __uaDefaultsEnsured = false;
-  function uaSetIfMissing(k, def) {
+  // Capture ORIGINAL values before any overrides.
+  var UA_ORIG = {
+    userAgent: '',
+    appVersion: '',
+    platform: '',
+    vendor: '',
+    uadPlatform: '',
+    mobile: null
+  };
+
+  (function captureOriginalUaOnce() {
+    try { UA_ORIG.userAgent = String(navigator && navigator.userAgent ? navigator.userAgent : '') || ''; } catch (_) { UA_ORIG.userAgent = ''; }
+    try { UA_ORIG.appVersion = String(navigator && navigator.appVersion ? navigator.appVersion : '') || UA_ORIG.userAgent; } catch (_) { UA_ORIG.appVersion = UA_ORIG.userAgent; }
+    try { UA_ORIG.platform = String(navigator && navigator.platform ? navigator.platform : '') || ''; } catch (_) { UA_ORIG.platform = ''; }
+    try { UA_ORIG.vendor = String(navigator && navigator.vendor ? navigator.vendor : '') || ''; } catch (_) { UA_ORIG.vendor = ''; }
     try {
-      var v = uaStorageGet(k);
-      if (v === undefined || v === null) uaStorageSet(k, def);
+      if (navigator && navigator.userAgentData) {
+        try { UA_ORIG.uadPlatform = String(navigator.userAgentData.platform || '') || ''; } catch (_) { UA_ORIG.uadPlatform = ''; }
+        try { UA_ORIG.mobile = !!navigator.userAgentData.mobile; } catch (_) { UA_ORIG.mobile = null; }
+      }
+    } catch (_) { }
+  })();
+
+  function ensureOriginalStored() {
+    try {
+      var cur = uaLsGet(LS_UA_ORIGINAL);
+      if (cur === undefined || cur === null || cur === '') uaLsSet(LS_UA_ORIGINAL, String(UA_ORIG.userAgent || ''));
     } catch (_) { }
   }
 
-  function uaEnsureDefaultsOnce() {
-    if (__uaDefaultsEnsured) return;
-    __uaDefaultsEnsured = true;
-    uaSetIfMissing('bl_ua_enabled', '0');
-    uaSetIfMissing('bl_ua_mode', 'preset');
-    uaSetIfMissing('bl_ua_preset', 'chrome_win_latest');
-    uaSetIfMissing('bl_ua_custom', '');
-    uaSetIfMissing('bl_ua_apply_scope', 'all');
-    uaSetIfMissing('bl_ua_reload_on_change', '1');
-    uaSetIfMissing('bl_ua_add_header', '0');
+  // Must happen before any UA override is applied.
+  ensureOriginalStored();
+
+  var UA_PRESETS = [
+    { id: 'original_system', title: 'Original (system)', desc: 'Device native UA (stored on first run)', ua: '' },
+    { id: 'win_chrome', title: 'Windows Chrome', desc: 'Desktop-like for compatibility', ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36' },
+    { id: 'win_edge', title: 'Windows Edge', desc: 'Desktop-like for compatibility', ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36 Edg/123.0.0.0' },
+    { id: 'win_firefox', title: 'Windows Firefox', desc: 'Desktop-like for compatibility', ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0' },
+    { id: 'android_chrome', title: 'Android Chrome', desc: 'Mobile UA for compatibility', ua: 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.36' },
+    { id: 'ios_safari', title: 'iOS Safari', desc: 'Mobile UA for compatibility', ua: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1' },
+    { id: 'custom', title: 'Custom', desc: 'Custom UA string (advanced)', ua: '' }
+  ];
+
+  var UA_META = {
+    win_chrome: { platform: 'Win32', vendor: 'Google Inc.', uadPlatform: 'Windows', mobile: false },
+    win_edge: { platform: 'Win32', vendor: 'Google Inc.', uadPlatform: 'Windows', mobile: false },
+    win_firefox: { platform: 'Win32', vendor: '', uadPlatform: 'Windows', mobile: false },
+    android_chrome: { platform: 'Linux armv8l', vendor: 'Google Inc.', uadPlatform: 'Android', mobile: true },
+    ios_safari: { platform: 'iPhone', vendor: 'Apple Computer, Inc.', uadPlatform: 'iOS', mobile: true }
+  };
+
+  function getPresetById(id) {
+    id = String(id || '');
+    for (var i = 0; i < UA_PRESETS.length; i++) {
+      if (UA_PRESETS[i] && String(UA_PRESETS[i].id || '') === id) return UA_PRESETS[i];
+    }
+    return null;
   }
 
-  function uaGetBool(k, def) {
-    try {
-      var v = uaStorageGet(k);
-      if (v == null || v === '') return !!def;
-      var s = String(v).toLowerCase();
-      if (s === '0' || s === 'false' || s === 'off' || s === 'no') return false;
-      return true;
-    } catch (_) { return !!def; }
-  }
-
-  function uaGetStr(k, def) {
-    try {
-      var v = uaStorageGet(k);
-      if (v === undefined || v === null) return String(def || '');
-      return String(v);
-    } catch (_) { return String(def || ''); }
+  function readOriginalUaStored() {
+    var v = '';
+    try { v = String(uaLsGet(LS_UA_ORIGINAL) || ''); } catch (_) { v = ''; }
+    if (!v) v = String(UA_ORIG.userAgent || '');
+    return v;
   }
 
   function uaDeriveMetaFromString(ua) {
@@ -95,14 +122,11 @@
     ua = String(ua || '');
     var low = ua.toLowerCase();
 
-    try { out.platform = String(navigator && navigator.platform ? navigator.platform : '') || ''; } catch (_) { out.platform = ''; }
-    try { out.vendor = String(navigator && navigator.vendor ? navigator.vendor : '') || ''; } catch (_) { out.vendor = ''; }
-    try {
-      if (navigator && navigator.userAgentData) {
-        try { out.uadPlatform = String(navigator.userAgentData.platform || '') || ''; } catch (_) { out.uadPlatform = ''; }
-        try { out.mobile = !!navigator.userAgentData.mobile; } catch (_) { out.mobile = null; }
-      }
-    } catch (_) { }
+    // Default to ORIGINAL runtime values (not current navigator.* which may already be patched).
+    try { out.platform = String(UA_ORIG.platform || ''); } catch (_) { out.platform = ''; }
+    try { out.vendor = String(UA_ORIG.vendor || ''); } catch (_) { out.vendor = ''; }
+    try { out.uadPlatform = String(UA_ORIG.uadPlatform || ''); } catch (_) { out.uadPlatform = ''; }
+    try { out.mobile = (typeof UA_ORIG.mobile === 'boolean') ? !!UA_ORIG.mobile : null; } catch (_) { out.mobile = null; }
 
     if (low.indexOf('windows nt') !== -1) { out.platform = 'Win32'; out.uadPlatform = 'Windows'; out.mobile = false; }
     else if (low.indexOf('android') !== -1) { out.platform = 'Linux armv8l'; out.uadPlatform = 'Android'; out.mobile = true; }
@@ -137,53 +161,230 @@
     return false;
   }
 
-  function applyUAOverride() {
-    try { uaEnsureDefaultsOnce(); } catch (_) { }
+  function normalizePresetId(id) {
+    id = String(id || '');
+    if (id && getPresetById(id)) return id;
+    return 'original_system';
+  }
 
-    var enabled = uaGetBool('bl_ua_enabled', false);
-    if (!enabled) {
-      try { BL.UA.enabled = false; BL.UA.uaString = ''; } catch (_) { }
-      return;
+  function legacyPresetMap(oldId) {
+    oldId = String(oldId || '');
+    if (oldId === 'chrome_win_latest') return 'win_chrome';
+    if (oldId === 'edge_win_latest') return 'win_edge';
+    if (oldId === 'firefox_win_latest') return 'win_firefox';
+    if (oldId === 'chrome_android_latest') return 'android_chrome';
+    if (oldId === 'safari_ios_latest') return 'ios_safari';
+    return '';
+  }
+
+  function migrateLegacyUaOnce() {
+    try {
+      var cur = uaGetAny(LS_UA_PRESET_ID);
+      if (cur) return;
+
+      var enabled = false;
+      try { enabled = String(uaGetAny('bl_ua_enabled') || '0') === '1'; } catch (_) { enabled = false; }
+      if (!enabled) {
+        uaSetAny(LS_UA_PRESET_ID, 'original_system');
+        return;
+      }
+
+      var mode = 'preset';
+      try { mode = String(uaGetAny('bl_ua_mode') || 'preset'); } catch (_) { mode = 'preset'; }
+      mode = mode.toLowerCase();
+
+      if (mode === 'custom') {
+        var cu = '';
+        try { cu = String(uaGetAny('bl_ua_custom') || ''); } catch (_) { cu = ''; }
+        cu = String(cu || '').trim();
+        if (cu) uaSetAny(LS_UA_CUSTOM, cu);
+        uaSetAny(LS_UA_PRESET_ID, 'custom');
+        return;
+      }
+
+      var pid = '';
+      try { pid = legacyPresetMap(String(uaGetAny('bl_ua_preset') || '')); } catch (_) { pid = ''; }
+      if (!pid) pid = 'win_chrome';
+      uaSetAny(LS_UA_PRESET_ID, pid);
+    } catch (_) { }
+  }
+
+  function getSelectedPresetId() {
+    try { migrateLegacyUaOnce(); } catch (_) { }
+    var id = uaGetAny(LS_UA_PRESET_ID);
+    if (!id) {
+      id = 'original_system';
+      uaSetAny(LS_UA_PRESET_ID, id);
     }
+    return normalizePresetId(id);
+  }
 
-    var mode = uaGetStr('bl_ua_mode', 'preset');
-    if (mode !== 'custom' && mode !== 'preset') mode = 'preset';
+  function setSelectedPresetId(id) {
+    id = normalizePresetId(id);
+    uaSetAny(LS_UA_PRESET_ID, id);
+  }
 
-    var preset = uaGetStr('bl_ua_preset', 'chrome_win_latest');
-    if (!UA_PRESETS[preset]) preset = 'chrome_win_latest';
+  function getCustomUa() {
+    var s = '';
+    try { s = String(uaGetAny(LS_UA_CUSTOM) || ''); } catch (_) { s = ''; }
+    if (!s) {
+      // Legacy fallback (read-only).
+      try { s = String(uaGetAny('bl_ua_custom') || ''); } catch (_) { s = ''; }
+    }
+    return String(s || '').trim();
+  }
+
+  function setCustomUa(ua) {
+    ua = String(ua || '').trim();
+    uaSetAny(LS_UA_CUSTOM, ua);
+  }
+
+  function computeEffective() {
+    var id = getSelectedPresetId();
+    var preset = getPresetById(id) || getPresetById('original_system');
+    if (!preset) preset = { id: 'original_system', title: 'Original (system)', desc: '', ua: '' };
 
     var ua = '';
-    if (mode === 'custom') ua = String(uaGetStr('bl_ua_custom', '') || '').trim();
-    else ua = String(UA_PRESETS[preset] || '');
+    if (id === 'original_system') ua = readOriginalUaStored();
+    else if (id === 'custom') ua = getCustomUa() || readOriginalUaStored();
+    else ua = String(preset.ua || '');
 
-    if (!ua) return;
+    ua = String(ua || '').trim();
+    if (!ua) ua = readOriginalUaStored();
 
-    var meta = UA_META[preset] || null;
-    if (!meta || mode === 'custom') meta = uaDeriveMetaFromString(ua);
+    var meta = (id && UA_META[id]) ? UA_META[id] : null;
+    if (!meta || id === 'custom' || id === 'original_system') meta = uaDeriveMetaFromString(ua);
 
-    var platform = meta && meta.platform ? String(meta.platform) : '';
-    var vendor = meta && (meta.vendor !== undefined) ? String(meta.vendor) : '';
-    var uadPlatform = meta && meta.uadPlatform ? String(meta.uadPlatform) : '';
-    var mobile = (meta && typeof meta.mobile === 'boolean') ? !!meta.mobile : null;
+    var platform = meta && meta.platform ? String(meta.platform) : String(UA_ORIG.platform || '');
+    var vendor = (meta && meta.vendor !== undefined) ? String(meta.vendor) : String(UA_ORIG.vendor || '');
+    var uadPlatform = meta && meta.uadPlatform ? String(meta.uadPlatform) : String(UA_ORIG.uadPlatform || '');
+    var mobile = (meta && typeof meta.mobile === 'boolean') ? !!meta.mobile : ((typeof UA_ORIG.mobile === 'boolean') ? !!UA_ORIG.mobile : null);
 
-    try { BL.UA.enabled = true; } catch (_) { }
-    try { BL.UA.uaString = ua; } catch (_) { }
-    try { BL.UA.platform = platform; } catch (_) { }
-    try { BL.UA.vendor = vendor; } catch (_) { }
-    try { BL.UA.uadPlatform = uadPlatform; } catch (_) { }
-    try { if (mobile !== null) BL.UA.mobile = mobile; } catch (_) { }
+    return {
+      id: String(preset.id || id),
+      title: String(preset.title || id),
+      desc: String(preset.desc || ''),
+      ua: ua,
+      platform: platform,
+      vendor: vendor,
+      uadPlatform: uadPlatform,
+      mobile: mobile
+    };
+  }
 
-    try { defineNavigatorGetter('userAgent', function () { return ua; }); } catch (_) { }
-    try { defineNavigatorGetter('appVersion', function () { return ua; }); } catch (_) { }
-    if (platform) { try { defineNavigatorGetter('platform', function () { return platform; }); } catch (_) { } }
-    if (vendor !== null) { try { defineNavigatorGetter('vendor', function () { return vendor; }); } catch (_) { } }
+  function ensureUaHeaderSupportOnce() {
+    try {
+      if (typeof BL.UA.headerOverrideSupported === 'boolean') return !!BL.UA.headerOverrideSupported;
+    } catch (_) { }
+    var ok = false;
+    try {
+      if (window.XMLHttpRequest) {
+        var x = new XMLHttpRequest();
+        try { x.open('GET', location.href, true); } catch (_) { x.open('GET', '/', true); }
+        try {
+          x.setRequestHeader('User-Agent', 'BlackLampa-UA-Test');
+          ok = true;
+        } catch (_) { ok = false; }
+      }
+    } catch (_) { ok = false; }
+    try { BL.UA.headerOverrideSupported = ok; } catch (_) { }
+    return ok;
+  }
 
-    // userAgentData (Chromium) – best effort only
+  function applyHeadersToXhr(xhr) {
+    try {
+      if (!xhr || !xhr.setRequestHeader) return;
+      if (!ensureUaHeaderSupportOnce()) return;
+      var eff = (BL.UA && BL.UA.effective) ? BL.UA.effective : null;
+      var ua = eff && eff.ua ? String(eff.ua) : '';
+      if (!ua) return;
+      try { xhr.setRequestHeader('User-Agent', ua); } catch (e) { try { BL.UA.headerOverrideSupported = false; } catch (_) { } }
+    } catch (_) { }
+  }
+
+  function applyHeadersToFetch(input, init) {
+    try {
+      if (!ensureUaHeaderSupportOnce()) return { input: input, init: init };
+
+      var eff = (BL.UA && BL.UA.effective) ? BL.UA.effective : null;
+      var ua = eff && eff.ua ? String(eff.ua) : '';
+      if (!ua) return { input: input, init: init };
+
+      // Best-effort only: some environments strip forbidden headers silently.
+      init = init || {};
+      if (typeof Headers !== 'undefined') {
+        var h = null;
+        try { h = init.headers ? new Headers(init.headers) : new Headers(); } catch (_) { h = null; }
+        if (h) {
+          try { h.set('User-Agent', ua); } catch (_) { }
+          init.headers = h;
+        }
+      } else if (init && init.headers && typeof init.headers === 'object') {
+        try { init.headers['User-Agent'] = ua; } catch (_) { }
+      } else if (init) {
+        try { init.headers = { 'User-Agent': ua }; } catch (_) { }
+      }
+
+      return { input: input, init: init };
+    } catch (_) {
+      try { BL.UA.headerOverrideSupported = false; } catch (__e) { }
+      return { input: input, init: init };
+    }
+  }
+
+  function applyUAOverride() {
+    try { ensureOriginalStored(); } catch (_) { }
+
+    var eff = computeEffective();
+    try { BL.UA.original = UA_ORIG; } catch (_) { }
+    try { BL.UA.originalStored = readOriginalUaStored(); } catch (_) { }
+    try { BL.UA.presetId = String(eff.id || ''); } catch (_) { }
+    try { BL.UA.uaString = String(eff.ua || ''); } catch (_) { }
+    try { BL.UA.platform = String(eff.platform || ''); } catch (_) { }
+    try { BL.UA.vendor = String(eff.vendor || ''); } catch (_) { }
+    try { BL.UA.uadPlatform = String(eff.uadPlatform || ''); } catch (_) { }
+    try { BL.UA.mobile = eff.mobile; } catch (_) { }
+    try { BL.UA.effective = eff; } catch (_) { }
+
+    try {
+      defineNavigatorGetter('userAgent', function () {
+        try { return (BL.UA && BL.UA.effective && BL.UA.effective.ua) ? String(BL.UA.effective.ua) : String(UA_ORIG.userAgent || ''); } catch (_) { return String(UA_ORIG.userAgent || ''); }
+      });
+    } catch (_) { }
+    try {
+      defineNavigatorGetter('appVersion', function () {
+        try { return (BL.UA && BL.UA.effective && BL.UA.effective.ua) ? String(BL.UA.effective.ua) : String(UA_ORIG.appVersion || UA_ORIG.userAgent || ''); } catch (_) { return String(UA_ORIG.appVersion || UA_ORIG.userAgent || ''); }
+      });
+    } catch (_) { }
+    try {
+      defineNavigatorGetter('platform', function () {
+        try { return (BL.UA && BL.UA.effective && BL.UA.effective.platform) ? String(BL.UA.effective.platform) : String(UA_ORIG.platform || ''); } catch (_) { return String(UA_ORIG.platform || ''); }
+      });
+    } catch (_) { }
+    try {
+      defineNavigatorGetter('vendor', function () {
+        try { return (BL.UA && BL.UA.effective && BL.UA.effective.vendor !== undefined) ? String(BL.UA.effective.vendor) : String(UA_ORIG.vendor || ''); } catch (_) { return String(UA_ORIG.vendor || ''); }
+      });
+    } catch (_) { }
+
+    // userAgentData (Chromium) – best effort only (must not crash).
     try {
       var uad = navigator && navigator.userAgentData ? navigator.userAgentData : null;
       if (uad) {
-        try { if (uadPlatform) tryDefineGetter(uad, 'platform', function () { return uadPlatform; }, true); } catch (_) { }
-        try { if (mobile !== null) tryDefineGetter(uad, 'mobile', function () { return !!mobile; }, true); } catch (_) { }
+        try {
+          tryDefineGetter(uad, 'platform', function () {
+            try { return (BL.UA && BL.UA.effective && BL.UA.effective.uadPlatform) ? String(BL.UA.effective.uadPlatform) : String(UA_ORIG.uadPlatform || ''); } catch (_) { return String(UA_ORIG.uadPlatform || ''); }
+          }, true);
+        } catch (_) { }
+        try {
+          tryDefineGetter(uad, 'mobile', function () {
+            try {
+              if (BL.UA && BL.UA.effective && typeof BL.UA.effective.mobile === 'boolean') return !!BL.UA.effective.mobile;
+              if (typeof UA_ORIG.mobile === 'boolean') return !!UA_ORIG.mobile;
+            } catch (_) { }
+            return false;
+          }, true);
+        } catch (_) { }
 
         try {
           if (!uad.__blUaPatched && typeof uad.getHighEntropyValues === 'function') {
@@ -193,9 +394,10 @@
               try {
                 return Promise.resolve(origGhev(hints)).then(function (obj) {
                   try {
-                    if (obj && typeof obj === 'object') {
-                      if (uadPlatform && obj.platform) obj.platform = uadPlatform;
-                      if (mobile !== null && obj.mobile !== undefined) obj.mobile = !!mobile;
+                    var eff2 = (BL.UA && BL.UA.effective) ? BL.UA.effective : null;
+                    if (obj && typeof obj === 'object' && eff2) {
+                      if (eff2.uadPlatform && obj.platform) obj.platform = String(eff2.uadPlatform);
+                      if (typeof eff2.mobile === 'boolean' && obj.mobile !== undefined) obj.mobile = !!eff2.mobile;
                     }
                   } catch (_) { }
                   return obj;
@@ -210,7 +412,35 @@
     } catch (_) { }
   }
 
-  try { BL.UA.apply = applyUAOverride; } catch (_) { }
+  BL.UA.apply = applyUAOverride;
+  BL.UA.ensureOriginalStored = ensureOriginalStored;
+  BL.UA.ensureHeaderSupport = ensureUaHeaderSupportOnce;
+  BL.UA.applyHeadersToXhr = applyHeadersToXhr;
+  BL.UA.applyHeadersToFetch = applyHeadersToFetch;
+
+  BL.UA.getOriginalUa = function () { return readOriginalUaStored(); };
+  BL.UA.getSelectedPresetId = function () { return getSelectedPresetId(); };
+  BL.UA.setSelectedPresetId = function (id) { setSelectedPresetId(id); };
+  BL.UA.setCustomUa = function (ua) { setCustomUa(ua); };
+  BL.UA.getCustomUa = function () { return getCustomUa(); };
+
+  BL.UA.getPresets = function () {
+    var out = [];
+    for (var i = 0; i < UA_PRESETS.length; i++) {
+      var p = UA_PRESETS[i];
+      if (!p) continue;
+      var id = String(p.id || '');
+      var ua = '';
+      if (id === 'original_system') ua = readOriginalUaStored();
+      else if (id === 'custom') ua = getCustomUa();
+      else ua = String(p.ua || '');
+      out.push({ id: id, title: String(p.title || id), desc: String(p.desc || ''), ua: String(ua || '') });
+    }
+    return out;
+  };
+
+  // Apply once ASAP (PHASE 0 will call applyUAOverride again, but it's idempotent).
+  try { applyUAOverride(); } catch (_) { }
 
   function baseDir() {
     try {
@@ -309,7 +539,6 @@
 	        'bl.config.js',
 	        'bl.core.js',
 	        'bl.ui.log.js',
-	        'bl.storage.guards.js',
 	        'bl.policy.network.js'
 		      ], function () {
 		        // Logger init (idempotent).
@@ -317,14 +546,18 @@
 		          if (BL.Log && BL.Log.init) BL.Log.init();
 		        } catch (_) { }
 
-        // Install protection layers as early as possible.
+        // Install NETWORK policy immediately after it is loaded (must be early).
         try { if (BL.PolicyNetwork && BL.PolicyNetwork.install) BL.PolicyNetwork.install(BL.Log); } catch (e1) { log('ERR', 'Policy', 'install failed', e1 && e1.message ? e1.message : e1); }
-        try { if (BL.Storage && BL.Storage.Guards && BL.Storage.Guards.installPluginsBlacklistGuard) BL.Storage.Guards.installPluginsBlacklistGuard(BL.Log); } catch (e2) { log('ERR', 'Guards', 'install failed', e2 && e2.message ? e2.message : e2); }
 
-        log('INF', 'Boot', 'phase0 installed', 'policy + guards are active pre-auth');
-        resolve(true);
+        // Guards can load/install after the policy (still PHASE 0).
+        loadSeq(['bl.storage.guards.js'], function () {
+          try { if (BL.Storage && BL.Storage.Guards && BL.Storage.Guards.installPluginsBlacklistGuard) BL.Storage.Guards.installPluginsBlacklistGuard(BL.Log); } catch (e2) { log('ERR', 'Guards', 'install failed', e2 && e2.message ? e2.message : e2); }
+
+          log('INF', 'Boot', 'phase0 installed', 'policy + guards are active pre-auth');
+          resolve(true);
+        });
       });
-    });
+	    });
 
     return phase0Promise;
   };

@@ -9,7 +9,7 @@
   var CFG = {
     jsonFile: 'bl.filescan.json',
     timeoutMs: 3500,
-    yieldEvery: 8,
+    yieldEvery: 2,
     contentMaxChars: 200000,
     contentMaxLines: 800
   };
@@ -45,15 +45,9 @@
     scanTotal: 0,
     scanDone: 0,
 
-    stopRequested: false,
-    workerActive: 0,
-    workerConcurrency: 0,
-    doneSinceYield: 0,
-
-    activeAborts: [],
-    activeXhrs: [],
-
-    uiUpdateTimer: null,
+    currentAbort: null,
+    currentAbortTimer: null,
+    currentXhr: null,
 
     listPromise: null
   };
@@ -76,22 +70,6 @@
   function clamp(n, a, b) {
     if (n < a) return a;
     if (n > b) return b;
-    return n;
-  }
-
-  function getConcurrency() {
-    var def = 6;
-    try {
-      var hc = 0;
-      try { hc = navigator && navigator.hardwareConcurrency ? Number(navigator.hardwareConcurrency) : 0; } catch (_) { hc = 0; }
-      if (hc && hc > 0 && hc <= 4) def = 4;
-    } catch (_) { def = 6; }
-
-    var raw = null;
-    try { raw = window.localStorage ? localStorage.getItem('bl_fs_concurrency_v1') : null; } catch (_) { raw = null; }
-    var n = parseInt(raw, 10);
-    if (!n || isNaN(n)) n = def;
-    n = clamp(n, 1, 12);
     return n;
   }
 
@@ -258,18 +236,6 @@
     if (!url) return null;
     if (!STATE.cache[url]) STATE.cache[url] = { state: 'UNKNOWN', text: '', errCode: '', err: '', ts: 0, truncated: false };
     return STATE.cache[url];
-  }
-
-  function scheduleUiUpdate() {
-    try {
-      if (STATE.uiUpdateTimer) return;
-      STATE.uiUpdateTimer = setTimeout(function () {
-        STATE.uiUpdateTimer = null;
-        try { updateAllRows(); } catch (_) { }
-        try { renderContent(); } catch (_) { }
-        try { updateFooter(); } catch (_) { }
-      }, 0);
-    } catch (_) { }
   }
 
   function updateFooter() {
@@ -576,17 +542,15 @@
 
   function abortInFlight() {
     try {
-      var ab = STATE.activeAborts || [];
-      for (var i = 0; i < ab.length; i++) {
-        try { if (ab[i]) ab[i].abort(); } catch (_) { }
+      if (STATE.currentAbortTimer) { clearTimeout(STATE.currentAbortTimer); STATE.currentAbortTimer = null; }
+      if (STATE.currentAbort) {
+        try { STATE.currentAbort.abort(); } catch (_) { }
+        STATE.currentAbort = null;
       }
-      STATE.activeAborts = [];
-
-      var xr = STATE.activeXhrs || [];
-      for (var j = 0; j < xr.length; j++) {
-        try { if (xr[j]) xr[j].abort(); } catch (_) { }
+      if (STATE.currentXhr) {
+        try { STATE.currentXhr.abort(); } catch (_) { }
+        STATE.currentXhr = null;
       }
-      STATE.activeXhrs = [];
     } catch (_) { }
   }
 
@@ -599,21 +563,16 @@
         var ctrl = null;
         if (window.AbortController) {
           ctrl = new AbortController();
-          try { STATE.activeAborts.push(ctrl); } catch (_) { }
+          STATE.currentAbort = ctrl;
           timer = setTimeout(function () {
             try { ctrl.abort(); } catch (_) { }
           }, timeoutMs);
+          STATE.currentAbortTimer = timer;
         }
 
         fetch(url, { cache: 'no-store', signal: ctrl ? ctrl.signal : void 0 }).then(function (r) {
-          if (timer) { clearTimeout(timer); timer = null; }
-          if (ctrl) {
-            try {
-              for (var i = 0; i < STATE.activeAborts.length; i++) {
-                if (STATE.activeAborts[i] === ctrl) { STATE.activeAborts.splice(i, 1); break; }
-              }
-            } catch (_) { }
-          }
+          if (timer) { clearTimeout(timer); timer = null; STATE.currentAbortTimer = null; }
+          STATE.currentAbort = null;
           if (!r) throw { code: 'NO_RESPONSE' };
           if (!r.ok) {
             var st = (typeof r.status === 'number') ? r.status : 0;
@@ -621,24 +580,12 @@
           }
           return r.text();
         }).then(function (text) {
-          if (timer) { clearTimeout(timer); timer = null; }
-          if (ctrl) {
-            try {
-              for (var i2 = 0; i2 < STATE.activeAborts.length; i2++) {
-                if (STATE.activeAborts[i2] === ctrl) { STATE.activeAborts.splice(i2, 1); break; }
-              }
-            } catch (_) { }
-          }
+          if (timer) { clearTimeout(timer); timer = null; STATE.currentAbortTimer = null; }
+          STATE.currentAbort = null;
           resolve(String(text || ''));
         }).catch(function (e) {
-          if (timer) { clearTimeout(timer); timer = null; }
-          if (ctrl) {
-            try {
-              for (var i3 = 0; i3 < STATE.activeAborts.length; i3++) {
-                if (STATE.activeAborts[i3] === ctrl) { STATE.activeAborts.splice(i3, 1); break; }
-              }
-            } catch (_) { }
-          }
+          if (timer) { clearTimeout(timer); timer = null; STATE.currentAbortTimer = null; }
+          STATE.currentAbort = null;
           if (e && (e.name === 'AbortError' || e.code === 20)) return reject({ code: 'TIMEOUT' });
           reject({ code: 'FETCH_ERR', err: e });
         });
@@ -652,17 +599,13 @@
     return new Promise(function (resolve, reject) {
       try {
         var xhr = new XMLHttpRequest();
-        try { STATE.activeXhrs.push(xhr); } catch (_) { }
+        STATE.currentXhr = xhr;
         xhr.open('GET', url, true);
         try { xhr.timeout = timeoutMs; } catch (_) { }
         try { xhr.responseType = 'text'; } catch (_) { }
 
         xhr.onload = function () {
-          try {
-            for (var i = 0; i < STATE.activeXhrs.length; i++) {
-              if (STATE.activeXhrs[i] === xhr) { STATE.activeXhrs.splice(i, 1); break; }
-            }
-          } catch (_) { }
+          STATE.currentXhr = null;
           var st = (typeof xhr.status === 'number') ? xhr.status : 0;
 
           // file:// often returns status=0 even on success; accept it (empty file is allowed).
@@ -670,30 +613,12 @@
           if (ok) return resolve(String(xhr.responseText || ''));
           reject({ code: 'HTTP', status: st });
         };
-        xhr.onerror = function () {
-          try {
-            for (var i2 = 0; i2 < STATE.activeXhrs.length; i2++) {
-              if (STATE.activeXhrs[i2] === xhr) { STATE.activeXhrs.splice(i2, 1); break; }
-            }
-          } catch (_) { }
-          reject({ code: 'XHR_ERR' });
-        };
-        xhr.ontimeout = function () {
-          try {
-            for (var i3 = 0; i3 < STATE.activeXhrs.length; i3++) {
-              if (STATE.activeXhrs[i3] === xhr) { STATE.activeXhrs.splice(i3, 1); break; }
-            }
-          } catch (_) { }
-          reject({ code: 'TIMEOUT' });
-        };
+        xhr.onerror = function () { STATE.currentXhr = null; reject({ code: 'XHR_ERR' }); };
+        xhr.ontimeout = function () { STATE.currentXhr = null; reject({ code: 'TIMEOUT' }); };
 
         xhr.send(null);
       } catch (e) {
-        try {
-          for (var i4 = 0; i4 < STATE.activeXhrs.length; i4++) {
-            if (STATE.activeXhrs[i4] === xhr) { STATE.activeXhrs.splice(i4, 1); break; }
-          }
-        } catch (_) { }
+        STATE.currentXhr = null;
         reject({ code: 'XHR_ERR', err: e });
       }
     });
@@ -771,7 +696,8 @@
         c.truncated = false;
 
         // Paint immediately
-        scheduleUiUpdate();
+        updateAllRows();
+        if (STATE.items[STATE.selectedIndex || 0] && String(STATE.items[STATE.selectedIndex || 0].url || '') === u) renderContent();
 
         loadText(u).then(function (text) {
           try {
@@ -790,7 +716,8 @@
             c.ts = Date.now();
           } catch (_) { }
 
-          scheduleUiUpdate();
+          updateAllRows();
+          if (STATE.items[STATE.selectedIndex || 0] && String(STATE.items[STATE.selectedIndex || 0].url || '') === u) renderContent();
           resolve(true);
         }).catch(function (e) {
           var info = classifyFail(u, e);
@@ -803,7 +730,8 @@
             c.ts = Date.now();
           } catch (_) { }
 
-          scheduleUiUpdate();
+          updateAllRows();
+          if (STATE.items[STATE.selectedIndex || 0] && String(STATE.items[STATE.selectedIndex || 0].url || '') === u) renderContent();
           resolve(false);
         });
       } catch (_) {
@@ -838,82 +766,53 @@
     try {
       STATE.queue = [];
       STATE.workerRunning = false;
-      STATE.stopRequested = true;
-      STATE.workerActive = 0;
-      STATE.workerConcurrency = 0;
-      STATE.doneSinceYield = 0;
       STATE.scanTotal = 0;
       STATE.scanDone = 0;
       if (STATE.workerTimer) { clearTimeout(STATE.workerTimer); STATE.workerTimer = null; }
       abortInFlight();
-      scheduleUiUpdate();
+      updateFooter();
     } catch (_) { }
   }
 
-  function workerMaybeFinish(seq) {
-    try {
-      if (!STATE.open) return workerStop();
-      if (seq !== STATE.workerSeq) return;
-      if (!STATE.workerRunning) return;
-      if (STATE.queue.length) return;
-      if (STATE.workerActive > 0) return;
+  function workerNext(seq) {
+    if (!STATE.open) return workerStop();
+    if (seq !== STATE.workerSeq) return;
 
+    var task = null;
+    try { task = STATE.queue.shift(); } catch (_) { task = null; }
+    if (!task) {
       STATE.workerRunning = false;
-      STATE.workerConcurrency = 0;
-      STATE.doneSinceYield = 0;
       STATE.scanTotal = 0;
       STATE.scanDone = 0;
-      scheduleUiUpdate();
-    } catch (_) { }
-  }
+      updateFooter();
+      return;
+    }
 
-  function workerPump(seq) {
-    try {
+    var shouldCount = false;
+    try { shouldCount = STATE.scanTotal > 0 && STATE.scanDone < STATE.scanTotal; } catch (_) { shouldCount = false; }
+
+    loadUrl(task.url, !!task.force).then(function () {
       if (!STATE.open) return workerStop();
       if (seq !== STATE.workerSeq) return;
-      if (!STATE.workerRunning) return;
-      if (STATE.stopRequested) return;
 
-      var task = null;
-      try { task = STATE.queue.shift(); } catch (_) { task = null; }
-      if (!task) return workerMaybeFinish(seq);
+      if (shouldCount) STATE.scanDone++;
+      updateFooter();
 
-      STATE.workerActive++;
-      loadUrl(task.url, !!task.force).then(function () {
-        if (seq !== STATE.workerSeq) return;
-        STATE.workerActive--;
+      var yieldNow = false;
+      try { yieldNow = (CFG.yieldEvery > 0) && (STATE.scanDone % CFG.yieldEvery === 0); } catch (_) { yieldNow = false; }
 
-        var shouldCount = false;
-        try { shouldCount = STATE.scanTotal > 0 && STATE.scanDone < STATE.scanTotal; } catch (_) { shouldCount = false; }
-        if (shouldCount) STATE.scanDone++;
-
-        STATE.doneSinceYield++;
-        scheduleUiUpdate();
-
-        var yieldNow = false;
-        try { yieldNow = (CFG.yieldEvery > 0) && (STATE.doneSinceYield % CFG.yieldEvery === 0); } catch (_) { yieldNow = false; }
-
-        if (yieldNow) STATE.workerTimer = setTimeout(function () { workerPump(seq); }, 0);
-        else workerPump(seq);
-
-        workerMaybeFinish(seq);
-      });
-    } catch (_) { }
+      if (yieldNow) STATE.workerTimer = setTimeout(function () { workerNext(seq); }, 0);
+      else workerNext(seq);
+    });
   }
 
   function workerStart() {
     if (STATE.workerRunning) return;
     STATE.workerRunning = true;
-    STATE.stopRequested = false;
     STATE.workerSeq++;
     var seq = STATE.workerSeq;
-    STATE.workerConcurrency = getConcurrency();
-    STATE.workerActive = 0;
-    STATE.doneSinceYield = 0;
-    scheduleUiUpdate();
-
-    var n = STATE.workerConcurrency || 1;
-    for (var i = 0; i < n; i++) workerPump(seq);
+    updateFooter();
+    workerNext(seq);
   }
 
   function scanUnknown() {
@@ -933,7 +832,7 @@
         STATE.scanDone = 0;
         workerStart();
       } else {
-        scheduleUiUpdate();
+        updateFooter();
       }
     } catch (_) { }
   }
@@ -952,7 +851,7 @@
         STATE.scanDone = 0;
       }
       workerStart();
-      scheduleUiUpdate();
+      updateFooter();
     } catch (_) { }
   }
 
@@ -1086,7 +985,7 @@
       STATE.scanTotal = STATE.items.length || 0;
       STATE.scanDone = 0;
       workerStart();
-      scheduleUiUpdate();
+      updateFooter();
     } catch (_) { }
   };
 })();
