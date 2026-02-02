@@ -1,0 +1,60 @@
+{
+  "meta": {
+    "name": "BlackLampa AutoPlugin",
+    "format": 1,
+    "source": "legacy-autoplugin",
+    "generatedAt": 0
+  },
+  "options": {
+    "defaultLogMode": 1,
+    "autoEnableDisabled": true,
+    "injectNewlyInstalled": true,
+    "reloadAfterFirstInstall": false,
+    "reloadDelaySec": 0
+  },
+  "plugins": [
+    { "url": "scripts/rating.js", "title": "rating.js", "desc": "", "tags": ["stats", "ui"] },
+    { "url": "https://bywolf88.github.io/lampa-plugins/interface_mod.js", "title": "interface_mod.js", "desc": "", "tags": ["ui"] },
+    { "url": "https://and7ey.github.io/lampa/head_filter.js", "title": "head_filter.js", "desc": "", "tags": ["ui"] },
+    { "url": "https://nb557.github.io/plugins/online_mod.js", "title": "online_mod.js", "desc": "", "tags": ["player"] },
+    { "url": "https://lampa.stream/modss", "title": "modss", "desc": "", "tags": ["store"] },
+    { "url": "https://amikdn.github.io/buttons.js", "title": "buttons.js", "desc": "", "tags": ["ui"] },
+    { "url": "https://andreyurl54.github.io/diesel5/tricks.js", "title": "tricks.js", "desc": "", "reason": "commented in source list", "tags": ["tricks"], "since": 0 },
+    { "url": "https://aviamovie.github.io/surs.js", "title": "surs.js", "desc": "", "tags": ["sources"] }
+  ],
+ "disabled": [
+    { "url": "scripts/orig_title.js", "title": "orig_title.js", "desc": "", "tags": ["stats", "ui"] },
+    { "url": "scripts/free_onl.js", "title": "free_onl.js", "desc": "", "tags": ["stats", "ui"] },
+    { "url": "https://bwa.to/cloud.js", "title": "cloud.js", "desc": "", "tags": ["cloud"] },
+    { "url": "https://aviamovie.github.io/surs_quality.js", "title": "surs_quality.js", "desc": "", "tags": ["sources"] },
+    { "url": "https://and7ey.github.io/lampa/noshots.js", "title": "noshots.js", "desc": "", "tags": ["ui", "tricks"] },
+    { "url": "https://bylampa.github.io/seas_and_eps.js", "title": "seas_and_eps.js", "desc": "", "tags": ["ui"] },
+    { "url": "https://bylampa.github.io/source.js", "title": "source.js", "desc": "", "tags": ["sources"] },
+    { "url": "https://bylampa.github.io/start.js", "title": "start.js", "desc": "", "tags": ["sources"] },
+    { "url": "https://skaztv.online/store.js", "title": "store.js", "desc": "", "tags": ["store"] },
+    { "url": "https://bylampa.github.io/cub_off.js", "title": "cub_off.js", "desc": "", "tags": ["policy"] },
+    { "url": "https://bylampa.github.io/redirect.js", "title": "Смена сервера", "desc": "", "reason": "commented in source list", "tags": ["policy"], "since": 0 },
+    { "url": "https://bylampa.github.io/reload.js", "title": "reload.js", "desc": "", "tags": ["sources"] },
+    { "url": "http://smotret24.com/online.js", "title": "online24.js", "desc": "", "tags": ["sources"] },
+    { "url": "https://tsynik.github.io/lampa/e.js", "title": "e.js", "desc": "", "tags": ["sources"] },
+    { "url": "https://rc.bwa.to/sisi.js", "title": "Клубничка", "desc": "", "tags": ["sources"] },
+    { "url": "scripts/store.js", "title": "rating.js", "desc": "", "tags": ["stats", "ui"] },
+    { "url": "https://bdvburik.github.io/title.js", "title": "title.js", "desc": "", "reason": "commented in source list", "tags": ["ui"], "since": 0 },
+    { "url": "http://skaz.tv/onlines.js", "title": "onlines.js", "desc": "", "reason": "commented in source list", "tags": ["sources"], "since": 0 },
+    { "url": "http://skaz.tv/vcdn.js", "title": "vcdn.js", "desc": "", "reason": "commented in source list", "tags": ["sources", "cloud"], "since": 0 },
+    { "url": "https://netfix.cc/netfix.js", "title": "netfix.js", "desc": "", "reason": "commented in source list", "tags": ["sources"], "since": 0 },
+    { "url": "https://and7ey.github.io/lampa/stats.js", "title": "stats.js", "desc": "", "reason": "commented in source list", "tags": ["stats"], "since": 0 },
+    { "url": "https://bylampa.github.io/trailer_off.js", "title": "trailer_off.js", "desc": "", "reason": "commented in source list", "tags": ["ui", "tricks"], "since": 0 },
+    { "url": "https://bylampa.github.io/color_vote.js", "title": "color_vote.js", "desc": "", "reason": "commented in source list", "tags": ["ui"], "since": 0 },
+    { "url": "https://bylampa.github.io/old_card_status.js", "title": "old_card_status.js", "desc": "", "reason": "commented in source list", "tags": ["ui"], "since": 0 },
+    { "url": "https://bylampa.github.io/backmenu.js", "title": "backmenu.js", "desc": "", "reason": "commented in source list", "tags": ["ui", "tricks"], "since": 0 },
+    { "url": "https://bylampa.github.io/addon.js", "title": "addon.js", "desc": "Addon bylampa: убирает из настроек пункт «Пиратские плагины» (остается «Расширения»), добавляет свои расширенные возможности.", "reason": "commented in source list", "tags": ["experimental"], "since": 0 },
+    { "url": "https://bwa.to/rc", "title": "rc", "desc": "", "reason": "commented in source list", "tags": ["player"], "since": 0 },
+    { "url": "https://amiv1.github.io/lampa/rating.js", "title": "rating.js", "desc": "", "reason": "commented in source list", "tags": ["stats", "ui"], "since": 0 }
+  ],
+  "stash": {
+    "notes": [
+      "disabled[] contains URLs that were commented-out in the original PLUGINS array"
+    ]
+  }
+}

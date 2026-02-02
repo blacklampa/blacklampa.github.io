@@ -1,0 +1,31 @@
+(function () {
+  'use strict';
+
+  var BL = window.BL = window.BL || {};
+
+  // Fallback dictionary (embedded) for environments where JSON fetch is not available.
+  BL.I18N_RU = BL.I18N_RU || {
+    "menu.root.plugins.title": "Plugins",
+    "menu.root.plugins.desc": "Managed / Extras / plugin details.",
+    "menu.root.network.title": "Network",
+    "menu.root.network.desc": "Blocklist + interceptors status + JS query rewrite (JSQP).",
+    "menu.root.ua.title": "User-Agent",
+    "menu.root.ua.desc": "Presets + Effective (now).",
+    "menu.root.logs.title": "Logs",
+    "menu.root.logs.desc": "View logs + log mode (silent/popup).",
+    "menu.root.backup.title": "Backup / Transfer",
+    "menu.root.backup.desc": "Экспорт/импорт настроек BlackLampa (localStorage) + шифрование + history.",
+    "menu.root.filescan.title": "Filesystem Scan",
+    "menu.root.filescan.desc": "Открывает popup-сканер файлов из bl.filescan.json.",
+    "menu.root.query_params.title": "Query Params",
+    "menu.root.query_params.desc": "Read-only: текущие параметры URL (legacy/info).",
+    "menu.root.danger.title": "Danger zone",
+    "menu.root.danger.desc": "Сброс/очистка/опасные операции.",
+    "menu.root.ui.title": "UI",
+    "menu.root.ui.desc": "UI tweaks (advanced filters).",
+    "menu.root.status.title": "Status",
+    "ui.extfilters.title": "Расширенные фильтры",
+    "ui.extfilters.desc": "Расширяет список рейтинга и сортировок в меню «Фильтр» (без правки app.min.js)."
+  };
+})();
+
