@@ -983,12 +983,21 @@
     } catch (_) { }
   }
 
-	  function buildUiScreen(ctx) {
-	    try {
-	      P(ctx, {
-	        id: 'ext_filters',
-	        type: 'toggle',
-	        values: { 0: 'OFF', 1: 'ON' },
+		  function buildUiScreen(ctx) {
+		    try {
+		      P(ctx, {
+		        id: 'blacklampa_ui_extended_interface_sizes',
+		        type: 'toggle',
+		        values: { 0: 'OFF', 1: 'ON' },
+		        default: 1,
+		        name: 'Расширенные размеры интерфейса',
+		        desc: 'Добавляет xsmall/xxsmall (0.8/0.7) к настройке \"Размер интерфейса\".'
+		      });
+
+		      P(ctx, {
+		        id: 'ext_filters',
+		        type: 'toggle',
+		        values: { 0: 'OFF', 1: 'ON' },
 	        default: 0,
 	        nameKey: 'ui.extfilters.title',
 	        descKey: 'ui.extfilters.desc',
