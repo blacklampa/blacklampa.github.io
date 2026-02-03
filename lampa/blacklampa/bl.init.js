@@ -21,16 +21,29 @@
   // - extending Lampa.Params.values.interface_size so items appear in Settings UI
   // - sanitizing unknown values via a wrapper around Lampa.Storage.field('interface_size')
   // ============================================================================
-  (function interfaceSizeExtV1() {
-    try {
-      var KEY = '__blacklampa_interface_size_ext_v1';
-      if (window[KEY]) return;
-      window[KEY] = true;
+	  (function interfaceSizeExtV1() {
+	    try {
+	      var KEY = '__blacklampa_interface_size_ext_v1';
+	      if (window[KEY]) return;
+	      window[KEY] = true;
 
-      function uiWarn(msg) {
-        try { if (window.BL && BL.Log && BL.Log.showWarn) return BL.Log.showWarn('UI', String(msg || ''), ''); } catch (_) { }
-        try { if (window.console && console.warn) console.warn('[BlackLampa] WRN UI: ' + String(msg || '')); } catch (_) { }
-      }
+	      var BOOT_REAL = null;
+	      try { BOOT_REAL = window.localStorage && window.localStorage.getItem ? window.localStorage.getItem('interface_size') : null; } catch (_) { BOOT_REAL = null; }
+	      var BOOT_NEED = (BOOT_REAL === 'xsmall' || BOOT_REAL === 'xxsmall');
+	      var BOOT_SCALE = (BOOT_REAL === 'xsmall') ? 0.8 : (BOOT_REAL === 'xxsmall') ? 0.7 : 1;
+	      var bootRemapActive = BOOT_NEED;
+	      var bootReapplied = false;
+
+	      function bootLog(msg) {
+	        try {
+	          if (window.console && console.log) console.log('[BL][UI][BOOT] ' + String(msg || ''));
+	        } catch (_) { }
+	      }
+
+	      function uiWarn(msg) {
+	        try { if (window.BL && BL.Log && BL.Log.showWarn) return BL.Log.showWarn('UI', String(msg || ''), ''); } catch (_) { }
+	        try { if (window.console && console.warn) console.warn('[BlackLampa] WRN UI: ' + String(msg || '')); } catch (_) { }
+	      }
 
       function defineProtoScale(k, v) {
         try {
@@ -54,14 +67,110 @@
       if (!defineProtoScale('xsmall', 0.8)) protoOk = false;
       if (!defineProtoScale('xxsmall', 0.7)) protoOk = false;
 
-      var patchedValues = false;
-      var patchedField = false;
-      var patchedListener = false;
-      var warned = {};
+	      var patchedValues = false;
+	      var patchedField = false;
+	      var patchedListener = false;
+	      var warned = {};
 
-      function patchLampaRuntime() {
-        try {
-          if (!window.Lampa) return false;
+	      function patchStorageFieldOnce(lampa) {
+	        try {
+	          if (patchedField) return true;
+	          if (!lampa || !lampa.Storage || typeof lampa.Storage.field !== 'function') return false;
+
+	          patchedField = true;
+	          var origField = lampa.Storage.field;
+	          if (origField && origField.__blInterfaceSizeWrappedV1) return true;
+
+	          lampa.Storage.field = function (name) {
+	            var val = origField.apply(this, arguments);
+	            if (String(name || '') !== 'interface_size') return val;
+
+	            var s = (val === undefined || val === null) ? '' : String(val);
+
+	            if (bootRemapActive && (s === 'xsmall' || s === 'xxsmall')) {
+	              bootRemapActive = false;
+	              bootLog('interface_size bootstrap remap: ' + s + ' → small');
+	              return 'small';
+	            }
+
+	            if (s === 'normal' || s === 'small' || s === 'bigger') return s;
+
+	            if (s === 'xsmall' || s === 'xxsmall') {
+	              if (!protoOk) {
+	                if (!warned[s]) { warned[s] = 1; uiWarn('unsupported interface_size value: ' + s); }
+	                return 'small';
+	              }
+	              return s;
+	            }
+
+	            if (s && !warned[s]) { warned[s] = 1; uiWarn('unsupported interface_size value: ' + s); }
+	            return 'normal';
+	          };
+	          lampa.Storage.field.__blInterfaceSizeWrappedV1 = true;
+	          return true;
+	        } catch (_) {
+	          return false;
+	        }
+	      }
+
+	      function attachBootstrapReapplyOnce(lampa) {
+	        try {
+	          if (!BOOT_NEED) return true;
+	          if (bootReapplied) return true;
+	          if (!lampa || !lampa.Listener || typeof lampa.Listener.follow !== 'function') return false;
+
+	          lampa.Listener.follow('app', function (e) {
+	            try {
+	              if (bootReapplied) return;
+	              if (!e || String(e.type || '') !== 'ready') return;
+	              bootReapplied = true;
+	              bootRemapActive = false;
+	              try { window.blacklampa_interface_size_bootstrap_fixed_v1 = true; } catch (_) { }
+
+	              if (lampa.Storage && typeof lampa.Storage.set === 'function') {
+	                try { lampa.Storage.set('interface_size', BOOT_REAL); } catch (_) { }
+	              }
+
+	              bootLog('interface_size reapplied: ' + String(BOOT_REAL) + ' (' + String(BOOT_SCALE) + ')');
+	            } catch (_) { }
+	          });
+	          return true;
+	        } catch (_) {
+	          return false;
+	        }
+	      }
+
+	      function hookLampaAssignmentOnce() {
+	        try {
+	          var called = false;
+	          function onLampa(l) {
+	            if (!l || called) return;
+	            called = true;
+	            try { patchStorageFieldOnce(l); } catch (_) { }
+	            try { attachBootstrapReapplyOnce(l); } catch (_) { }
+	          }
+
+	          if (window.Lampa) return onLampa(window.Lampa);
+
+	          var existing = null;
+	          try { existing = Object.getOwnPropertyDescriptor(window, 'Lampa'); } catch (_) { existing = null; }
+	          if (existing && existing.configurable === false) return;
+
+	          var v = null;
+	          Object.defineProperty(window, 'Lampa', {
+	            configurable: true,
+	            enumerable: true,
+	            get: function () { return v; },
+	            set: function (val) { v = val; onLampa(val); }
+	          });
+	        } catch (_) { }
+	      }
+
+	      hookLampaAssignmentOnce();
+
+	      function patchLampaRuntime() {
+	        try {
+	          if (!window.Lampa) return false;
 
           // Settings UI: add 2 items to the existing select list
           if (!patchedValues && Lampa.Params && Lampa.Params.values && Lampa.Params.values.interface_size && typeof Lampa.Params.values.interface_size === 'object') {
@@ -77,39 +186,15 @@
               };
               Lampa.Params.values.interface_size = next;
             } catch (_) { }
-          }
+	          }
 
-          // Safety: normalize unsupported values to prevent NaN in Layer.size()
-          if (!patchedField && Lampa.Storage && typeof Lampa.Storage.field === 'function') {
-            patchedField = true;
-            try {
-              var origField = Lampa.Storage.field;
-              if (!origField.__blInterfaceSizeWrappedV1) {
-                Lampa.Storage.field = function (name) {
-                  var val = origField.apply(this, arguments);
-                  if (String(name || '') !== 'interface_size') return val;
+	          // Field wrapper is installed via early Lampa assignment hook (for first load correctness).
+	          if (!patchedField && window.Lampa) {
+	            try { patchStorageFieldOnce(window.Lampa); } catch (_) { }
+	          }
 
-                  var s = (val === undefined || val === null) ? '' : String(val);
-                  if (s === 'normal' || s === 'small' || s === 'bigger') return s;
-
-                  if (s === 'xsmall' || s === 'xxsmall') {
-                    if (!protoOk) {
-                      if (!warned[s]) { warned[s] = 1; uiWarn('unsupported interface_size value: ' + s); }
-                      return 'small';
-                    }
-                    return s;
-                  }
-
-                  if (s && !warned[s]) { warned[s] = 1; uiWarn('unsupported interface_size value: ' + s); }
-                  return 'normal';
-                };
-                Lampa.Storage.field.__blInterfaceSizeWrappedV1 = true;
-              }
-            } catch (_) { }
-          }
-
-          // Cleanup classes for extended values + warn on unsupported selections
-          if (!patchedListener && Lampa.Storage && Lampa.Storage.listener && typeof Lampa.Storage.listener.follow === 'function') {
+	          // Cleanup classes for extended values + warn on unsupported selections
+	          if (!patchedListener && Lampa.Storage && Lampa.Storage.listener && typeof Lampa.Storage.listener.follow === 'function') {
             patchedListener = true;
             try {
               Lampa.Storage.listener.follow('change', function (e) {
