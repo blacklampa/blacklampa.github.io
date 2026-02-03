@@ -201,32 +201,40 @@
 	          if (uiSoftRefreshedV1()) return false;
 	          markUiSoftRefreshedV1();
 
-	          try {
-	            if (!window.Lampa || !Lampa.Storage || !Lampa.Storage.set || !Lampa.Storage.get) {
-	              showWarn('UI', 'soft refresh unsupported', '');
-	              return false;
-	            }
+		          try {
+		            if (!window.Lampa || !Lampa.Storage || !Lampa.Storage.set) {
+		              showWarn('UI', 'soft refresh unsupported', '');
+		              return false;
+		            }
 
+	            // Post-preload SSOT: only localStorage (no defaults, no preload config).
 	            // Trigger the same redraw chain as "Settings -> Interface size -> Smaller":
 	            // Settings -> Storage.set('interface_size', ...)
 	            // Storage.set -> Storage.listener.send('change', {name:'interface_size', value})
 	            // Layer/Activity listen and redraw.
-	            var key = 'interface_size';
-	            var current = 'normal';
-	            try {
-	              var defv = (Lampa.Storage.field ? String(Lampa.Storage.field(key) || '') : 'normal') || 'normal';
-	              current = String(Lampa.Storage.get(key, defv) || defv || 'normal');
-	            } catch (_) { current = 'normal'; }
+	            if (!window.localStorage || typeof window.localStorage.getItem !== 'function') {
+	              showWarn('UI', 'soft refresh unsupported', 'localStorage missing');
+	              return false;
+	            }
 
-	            if (current !== 'small' && current !== 'normal' && current !== 'bigger') current = 'normal';
+		            var size = window.localStorage.getItem('interface_size');
+		            if (size === null) {
+		              showWarn('UI', 'soft refresh skipped', 'interface_size not in storage');
+		              return false;
+		            }
 
-	            showInfo('UI', 'soft refresh', 'reason=' + String(reason || ''));
-	            Lampa.Storage.set(key, current);
-	            return true;
-	          } catch (e) {
-	            showWarn('UI', 'soft refresh unsupported', fmtErr(e));
-	            return false;
-	          }
+		            if (size !== undefined && size !== null) {
+		              showInfo('UI', 'soft refresh', 'reason=' + String(reason || ''));
+		              Lampa.Storage.set('interface_size', size);
+		              return true;
+		            }
+
+		            showWarn('UI', 'soft refresh skipped', 'interface_size not in storage');
+		            return false;
+		          } catch (e) {
+		            showWarn('UI', 'soft refresh unsupported', fmtErr(e));
+		            return false;
+		          }
 	        }
 
 	        BL.UI = BL.UI || {};
