@@ -122,15 +122,18 @@
 	        cfgAll2 = cfgAll2 || {};
 	        var apCfg2 = cfgAll2.autoplugin || {};
 	        var apFlags2 = apCfg2.flags || {};
-	        var AP_KEYS = {
-	          done: String(apFlags2.done || ''),
-	          sig: String(apFlags2.sig || ''),
-	          ts: String(apFlags2.ts || '')
-	        };
+		        var AP_KEYS = {
+		          done: String(apFlags2.done || ''),
+		          sig: String(apFlags2.sig || ''),
+		          ts: String(apFlags2.ts || '')
+		        };
+		        var UI_KEYS = {
+		          softrefreshed_v1: 'blacklampa_ui_softrefreshed_v1'
+		        };
 
-        // Storage helpers (official Lampa API):
-        // - For plugin install/remove and related flags we use Lampa.Storage (like lampa/scripts/addon.js).
-        // - Avoid direct localStorage mutations for deletion operations.
+	        // Storage helpers (official Lampa API):
+	        // - For plugin install/remove and related flags we use Lampa.Storage (like lampa/scripts/addon.js).
+	        // - Avoid direct localStorage mutations for deletion operations.
         function lsGet(k) {
           try { if (window.Lampa && Lampa.Storage && Lampa.Storage.get) return Lampa.Storage.get(k); } catch (_) { }
           return null;
@@ -179,16 +182,60 @@
           lsSet(AP_KEYS.ts, String(Date.now()));
         }
 
-        function resetFirstInstallFlags() {
-          lsDel(AP_KEYS.done);
-          lsDel(AP_KEYS.sig);
-          lsDel(AP_KEYS.ts);
-        }
+	        function resetFirstInstallFlags() {
+	          lsDel(AP_KEYS.done);
+	          lsDel(AP_KEYS.sig);
+	          lsDel(AP_KEYS.ts);
+	        }
 
-        // ============================================================================
-        // status string helper + settings refresh
-        // ============================================================================
-	        function getStatusInfoString() {
+	        // ============================================================================
+	        // UI soft refresh (reuse Lampa "interface_size" redraw mechanism)
+	        // ============================================================================
+	        function uiSoftRefreshedV1() {
+	          try { return String(lsGet(UI_KEYS.softrefreshed_v1) || '') === '1'; } catch (_) { return false; }
+	        }
+	        function markUiSoftRefreshedV1() {
+	          try { lsSet(UI_KEYS.softrefreshed_v1, '1'); } catch (_) { }
+	        }
+	        function softRefreshUi(reason) {
+	          if (uiSoftRefreshedV1()) return false;
+	          markUiSoftRefreshedV1();
+
+	          try {
+	            if (!window.Lampa || !Lampa.Storage || !Lampa.Storage.set || !Lampa.Storage.get) {
+	              showWarn('UI', 'soft refresh unsupported', '');
+	              return false;
+	            }
+
+	            // Trigger the same redraw chain as "Settings -> Interface size -> Smaller":
+	            // Settings -> Storage.set('interface_size', ...)
+	            // Storage.set -> Storage.listener.send('change', {name:'interface_size', value})
+	            // Layer/Activity listen and redraw.
+	            var key = 'interface_size';
+	            var current = 'normal';
+	            try {
+	              var defv = (Lampa.Storage.field ? String(Lampa.Storage.field(key) || '') : 'normal') || 'normal';
+	              current = String(Lampa.Storage.get(key, defv) || defv || 'normal');
+	            } catch (_) { current = 'normal'; }
+
+	            if (current !== 'small' && current !== 'normal' && current !== 'bigger') current = 'normal';
+
+	            showInfo('UI', 'soft refresh', 'reason=' + String(reason || ''));
+	            Lampa.Storage.set(key, current);
+	            return true;
+	          } catch (e) {
+	            showWarn('UI', 'soft refresh unsupported', fmtErr(e));
+	            return false;
+	          }
+	        }
+
+	        BL.UI = BL.UI || {};
+	        if (!BL.UI.softRefresh) BL.UI.softRefresh = softRefreshUi;
+
+	        // ============================================================================
+	        // status string helper + settings refresh
+	        // ============================================================================
+		        function getStatusInfoString() {
 	          try {
 	            var doneFlag = String(lsGet(AP_KEYS.done) || '') === '1';
 	            var sigOk = String(lsGet(AP_KEYS.sig) || '') === calcPluginsSig();
@@ -873,20 +920,21 @@
               return;
             }
 
-            ensureInstalledAll(PLUGINS).then(function () {
-              markFirstInstallCompleted();
-              refreshInstallerSettingsUi();
+	            ensureInstalledAll(PLUGINS).then(function () {
+	              markFirstInstallCompleted();
+	              refreshInstallerSettingsUi();
 
               var info = getStatusInfoString();
-              if (info.indexOf('done=1') >= 0) showOk('flags', 'written', info);
-              else showWarn('flags', 'unexpected', info);
+	              if (info.indexOf('done=1') >= 0) showOk('flags', 'written', info);
+	              else showWarn('flags', 'unexpected', info);
 
-              showOk('AutoPlugin', 'done', 'total=' + String(PLUGINS.length));
-              scheduleReloadCountdown(RELOAD_DELAY_SEC, 'first install completed');
+	              showOk('AutoPlugin', 'done', 'total=' + String(PLUGINS.length));
+	              safe(function () { if (BL.UI && BL.UI.softRefresh) BL.UI.softRefresh('first-install'); });
+	              scheduleReloadCountdown(RELOAD_DELAY_SEC, 'first install completed');
 
-              finalizeLoggingAfterDone();
-              doneSafe();
-            });
+	              finalizeLoggingAfterDone();
+	              doneSafe();
+	            });
           });
         }
 
