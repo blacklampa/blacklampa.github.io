@@ -23,6 +23,7 @@
     { "url": "https://aviamovie.github.io/surs.js", "title": "surs.js", "desc": "", "tags": ["sources"] }
   ],
  "disabled": [
+    { "url": "http://nb557.surge.sh/online_mod.js", "title": "Online_Mod.sh", "desc": "", "tags": ["player"] },
     { "url": "scripts/orig_title.js", "title": "orig_title.js", "desc": "", "tags": ["stats", "ui"] },
     { "url": "scripts/free_onl.js", "title": "free_onl.js", "desc": "", "tags": ["stats", "ui"] },
     { "url": "https://bwa.to/cloud.js", "title": "cloud.js", "desc": "", "tags": ["cloud"] },

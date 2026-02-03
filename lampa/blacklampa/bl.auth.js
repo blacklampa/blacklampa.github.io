@@ -88,15 +88,172 @@
   }
 
   // =========================
-  // SHA-256 base64 (WebCrypto ONLY)
+  // BASE64 helpers
+  // =========================
+  function bytesToBase64(bytes) {
+    // bytes: Uint8Array
+    var bin = '';
+    for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i] & 0xff);
+    // btoa expects latin1
+    return btoa(bin);
+  }
+
+  function hasWebCrypto() {
+    try { return !!(window.crypto && crypto.subtle && window.TextEncoder); } catch (_) { return false; }
+  }
+
+  // =========================
+  // SHA-256 (pure JS) -> base64
+  // =========================
+  // Minimal SHA-256 implementation (works in old/TV engines). Returns Uint8Array(32).
+  function sha256BytesFallback(str) {
+    // UTF-8 encode
+    var utf8;
+    try {
+      utf8 = new TextEncoder().encode(str);
+    } catch (_) {
+      // old engines: manual UTF-8 encoding
+      utf8 = (function (s) {
+        var out = [];
+        for (var i = 0; i < s.length; i++) {
+          var c = s.charCodeAt(i);
+          if (c < 0x80) out.push(c);
+          else if (c < 0x800) {
+            out.push(0xc0 | (c >> 6));
+            out.push(0x80 | (c & 0x3f));
+          } else if (c >= 0xd800 && c <= 0xdbff) {
+            // surrogate pair
+            var d = s.charCodeAt(++i);
+            var cp = ((c - 0xd800) << 10) + (d - 0xdc00) + 0x10000;
+            out.push(0xf0 | (cp >> 18));
+            out.push(0x80 | ((cp >> 12) & 0x3f));
+            out.push(0x80 | ((cp >> 6) & 0x3f));
+            out.push(0x80 | (cp & 0x3f));
+          } else {
+            out.push(0xe0 | (c >> 12));
+            out.push(0x80 | ((c >> 6) & 0x3f));
+            out.push(0x80 | (c & 0x3f));
+          }
+        }
+        return new Uint8Array(out);
+      })(str);
+    }
+
+    // SHA-256
+    function rotr(x, n) { return (x >>> n) | (x << (32 - n)); }
+    function ch(x, y, z) { return (x & y) ^ (~x & z); }
+    function maj(x, y, z) { return (x & y) ^ (x & z) ^ (y & z); }
+    function s0(x) { return rotr(x, 2) ^ rotr(x, 13) ^ rotr(x, 22); }
+    function s1(x) { return rotr(x, 6) ^ rotr(x, 11) ^ rotr(x, 25); }
+    function g0(x) { return rotr(x, 7) ^ rotr(x, 18) ^ (x >>> 3); }
+    function g1(x) { return rotr(x, 17) ^ rotr(x, 19) ^ (x >>> 10); }
+
+    var K = [
+      0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+      0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+      0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+      0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+      0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+      0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+      0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+      0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+    ];
+
+    var H0 = 0x6a09e667, H1 = 0xbb67ae85, H2 = 0x3c6ef372, H3 = 0xa54ff53a;
+    var H4 = 0x510e527f, H5 = 0x9b05688c, H6 = 0x1f83d9ab, H7 = 0x5be0cd19;
+
+    // Pre-processing (padding)
+    var l = utf8.length;
+    var bitLenHi = (l / 0x20000000) | 0; // (l*8) >> 32
+    var bitLenLo = (l << 3) >>> 0;
+
+    var withOne = l + 1;
+    var padLen = (withOne % 64 <= 56) ? (56 - (withOne % 64)) : (56 + (64 - (withOne % 64)));
+    var total = withOne + padLen + 8;
+
+    var msg = new Uint8Array(total);
+    msg.set(utf8, 0);
+    msg[l] = 0x80;
+
+    // append length (64-bit big-endian)
+    msg[total - 8] = (bitLenHi >>> 24) & 0xff;
+    msg[total - 7] = (bitLenHi >>> 16) & 0xff;
+    msg[total - 6] = (bitLenHi >>> 8) & 0xff;
+    msg[total - 5] = (bitLenHi >>> 0) & 0xff;
+    msg[total - 4] = (bitLenLo >>> 24) & 0xff;
+    msg[total - 3] = (bitLenLo >>> 16) & 0xff;
+    msg[total - 2] = (bitLenLo >>> 8) & 0xff;
+    msg[total - 1] = (bitLenLo >>> 0) & 0xff;
+
+    var W = new Int32Array(64);
+
+    for (var off = 0; off < msg.length; off += 64) {
+      for (var i = 0; i < 16; i++) {
+        var j = off + i * 4;
+        W[i] = ((msg[j] << 24) | (msg[j + 1] << 16) | (msg[j + 2] << 8) | (msg[j + 3])) | 0;
+      }
+      for (i = 16; i < 64; i++) {
+        W[i] = (g1(W[i - 2]) + W[i - 7] + g0(W[i - 15]) + W[i - 16]) | 0;
+      }
+
+      var a = H0, b = H1, c = H2, d = H3, e = H4, f = H5, g = H6, h = H7;
+
+      for (i = 0; i < 64; i++) {
+        var t1 = (h + s1(e) + ch(e, f, g) + K[i] + W[i]) | 0;
+        var t2 = (s0(a) + maj(a, b, c)) | 0;
+        h = g;
+        g = f;
+        f = e;
+        e = (d + t1) | 0;
+        d = c;
+        c = b;
+        b = a;
+        a = (t1 + t2) | 0;
+      }
+
+      H0 = (H0 + a) | 0;
+      H1 = (H1 + b) | 0;
+      H2 = (H2 + c) | 0;
+      H3 = (H3 + d) | 0;
+      H4 = (H4 + e) | 0;
+      H5 = (H5 + f) | 0;
+      H6 = (H6 + g) | 0;
+      H7 = (H7 + h) | 0;
+    }
+
+    var out = new Uint8Array(32);
+    function put32(i, v) {
+      out[i] = (v >>> 24) & 0xff;
+      out[i + 1] = (v >>> 16) & 0xff;
+      out[i + 2] = (v >>> 8) & 0xff;
+      out[i + 3] = (v >>> 0) & 0xff;
+    }
+    put32(0, H0); put32(4, H1); put32(8, H2); put32(12, H3);
+    put32(16, H4); put32(20, H5); put32(24, H6); put32(28, H7);
+    return out;
+  }
+
+  // =========================
+  // SHA-256 base64 (WebCrypto OR fallback)
   // =========================
   function sha256Base64(str) {
-    var enc = new TextEncoder().encode(str);
-    return crypto.subtle.digest('SHA-256', enc).then(function (buf) {
-      var bytes = new Uint8Array(buf);
-      var bin = '';
-      for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-      return btoa(bin);
+    // Prefer WebCrypto
+    if (hasWebCrypto()) {
+      var enc = new TextEncoder().encode(str);
+      return crypto.subtle.digest('SHA-256', enc).then(function (buf) {
+        return bytesToBase64(new Uint8Array(buf));
+      });
+    }
+
+    // Fallback (sync) but return Promise for API compatibility
+    return new Promise(function (resolve) {
+      try {
+        var bytes = sha256BytesFallback(String(str));
+        resolve(bytesToBase64(bytes));
+      } catch (_) {
+        // last-ditch: return empty (will never match)
+        resolve('');
+      }
     });
   }
 
@@ -191,7 +348,6 @@
   // LIVE HASH (added): подсветка совпадения, без изменения HTML
   function setLiveHighlight(isMatch) {
     if (!ui.hashBox || !ui.hashText) return;
-    // зелёный/красный делаем только стилями существующих элементов
     ui.hashText.style.color = isMatch ? 'rgba(140,255,170,.95)' : 'rgba(255,170,170,.95)';
     ui.hashBox.style.opacity = isMatch ? '.95' : '.8';
   }
@@ -204,29 +360,21 @@
     ui.lastPlain = v;
 
     if (!v) {
-      // ничего не показываем/не подсвечиваем если пусто
       try { ui.hashBox && (ui.hashBox.style.display = 'none'); } catch (_) { }
       return;
     }
-
-    // crypto must exist
-    if (!(window.crypto && crypto.subtle && window.TextEncoder)) return;
 
     if (ui.liveTimer) clearTimeout(ui.liveTimer);
     var seq = ++ui.liveSeq;
 
     ui.liveTimer = setTimeout(function () {
       sha256Base64(v).then(function (hash) {
-        // если за время вычисления ввод изменился — игнор
         if (seq !== ui.liveSeq) return;
         if (String(ui.lastPlain || '') !== v) return;
 
         ui.lastHash = hash;
 
-        // показываем пару сразу
         showHashPair(AUTH_KEY, hash);
-
-        // live-highlight: совпадает ли с JSON
         setLiveHighlight(!!findAuthEntry(AUTH_KEY, hash));
       }).catch(function () { });
     }, 140);
@@ -277,15 +425,11 @@
       '">Unlock</div>' +
       '</div>' +
       '<div id="msx_pw_err" style="margin-top:10px;opacity:.85;display:none;color:#ff6b6b">Wrong password</div>' +
-
-      // hash pair (no focus, no inputs)
       '<div id="msx_hash_box" style="' +
       'margin-top:10px;display:none;font-size:16px;opacity:.65;' +
       'word-break:break-all;user-select:text' +
       '">' +
-
       '<div id="msx_hash_text" style="margin-bottom:8px;"></div>' +
-
       '<div id="msx_hash_copy" style="' +
       'flex:1;display:flex;align-items:center;justify-content:center;' +
       'padding:12px 14px;border:1px solid rgba(255,255,255,.22);' +
@@ -293,7 +437,6 @@
       '">' +
       '📋 Copy' +
       '</div>' +
-
       '</div>' +
       '<div style="margin-top:10px;opacity:.55;font-size:12px">TV: use arrows and OK</div>';
 
@@ -310,7 +453,6 @@
     ui.hashText = box.querySelector('#msx_hash_text');
     ui.hashCopy = box.querySelector('#msx_hash_copy');
 
-    // COPY: make focusable for TV engines that respect focus() / tabindex
     try {
       if (ui.hashCopy) {
         ui.hashCopy.setAttribute('tabindex', '0');
@@ -328,9 +470,8 @@
       if (e.key === 'Enter' || (e.keyCode || 0) === 13) submit();
     }, true);
 
-    // LIVE HASH (added): вывод пары на лету
     ui.inp.addEventListener('input', liveHashFromInput, true);
-    ui.inp.addEventListener('keyup', liveHashFromInput, true); // на некоторых ТВ input бывает кривой
+    ui.inp.addEventListener('keyup', liveHashFromInput, true);
   }
 
   function focusInput() {
@@ -338,8 +479,6 @@
     try { ui.err && (ui.err.style.display = 'none'); } catch (_) { }
     setSel(0);
     try { ui.inp.focus(); } catch (_) { }
-
-    // LIVE HASH (added): при фокусе тоже обновим (если уже что-то введено)
     liveHashFromInput();
   }
 
@@ -351,15 +490,7 @@
     var v = String(ui.inp.value || '').trim();
     if (!v) return;
 
-    // crypto must exist
-    if (!(window.crypto && crypto.subtle && window.TextEncoder)) {
-      try { ui.err && (ui.err.style.display = 'block'); } catch (_) { }
-      try { ui.err && (ui.err.textContent = 'No WebCrypto'); } catch (_) { }
-      return;
-    }
-
     sha256Base64(v).then(function (hash) {
-      // показываем пару для добавления в JSON
       showHashPair(AUTH_KEY, hash);
 
       if (findAuthEntry(AUTH_KEY, hash)) {
@@ -369,12 +500,14 @@
         startMainOnce();
       } else {
         try { ui.err && (ui.err.style.display = 'block'); } catch (_) { }
+        try { ui.err && (ui.err.textContent = 'Wrong password'); } catch (_) { }
         try { ui.inp.value = ''; } catch (_) { }
         setSel(0);
         blurInputHard();
       }
     }).catch(function () {
       try { ui.err && (ui.err.style.display = 'block'); } catch (_) { }
+      try { ui.err && (ui.err.textContent = 'Auth error'); } catch (_) { }
     });
   }
 
@@ -406,13 +539,11 @@
     e.preventDefault();
     e.stopImmediatePropagation();
 
-    // left/right keep old behavior (Enter/Unlock row)
     if (k === 37 || k === 21) { setSel(0); return; }
     if (k === 39 || k === 22) { setSel(1); return; }
 
-    // up/down: cycle through Enter -> Unlock -> Copy (when visible)
-    if (k === 40 || k === 20) { setSel(ui.sel + 1); return; } // вниз
-    if (k === 38 || k === 19) { setSel(ui.sel - 1); return; } // вверх
+    if (k === 40 || k === 20) { setSel(ui.sel + 1); return; }
+    if (k === 38 || k === 19) { setSel(ui.sel - 1); return; }
 
     if (k === 13 || k === 23) {
       if (ui.sel === 0) focusInput();
