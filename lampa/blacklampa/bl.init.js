@@ -9,6 +9,155 @@
   if (BL.Init.__blInitLoaded) return;
   BL.Init.__blInitLoaded = true;
 
+  // ============================================================================
+  // Interface size extension (xsmall/xxsmall) without editing app.min.js
+  //
+  // Mechanism in app.min.js:
+  // - Layer.size() uses a local map: {normal:1, small:0.9, bigger:1.05}
+  // - Then reads: fs = sz[Storage.field('interface_size')]
+  //
+  // We extend it safely by:
+  // - defining non-enumerable Object.prototype.xsmall / xxsmall so sz[...] resolves via prototype chain
+  // - extending Lampa.Params.values.interface_size so items appear in Settings UI
+  // - sanitizing unknown values via a wrapper around Lampa.Storage.field('interface_size')
+  // ============================================================================
+  (function interfaceSizeExtV1() {
+    try {
+      var KEY = '__blacklampa_interface_size_ext_v1';
+      if (window[KEY]) return;
+      window[KEY] = true;
+
+      function uiWarn(msg) {
+        try { if (window.BL && BL.Log && BL.Log.showWarn) return BL.Log.showWarn('UI', String(msg || ''), ''); } catch (_) { }
+        try { if (window.console && console.warn) console.warn('[BlackLampa] WRN UI: ' + String(msg || '')); } catch (_) { }
+      }
+
+      function defineProtoScale(k, v) {
+        try {
+          if (!Object || !Object.prototype) return false;
+          if (Object.prototype[k] === v) return true;
+        } catch (_) { }
+        try {
+          if (Object && Object.defineProperty) {
+            Object.defineProperty(Object.prototype, k, { value: v, writable: false, configurable: true });
+            return true;
+          }
+        } catch (_) { }
+        try {
+          Object.prototype[k] = v;
+          return Object.prototype[k] === v;
+        } catch (_) { }
+        return false;
+      }
+
+      var protoOk = true;
+      if (!defineProtoScale('xsmall', 0.8)) protoOk = false;
+      if (!defineProtoScale('xxsmall', 0.7)) protoOk = false;
+
+      var patchedValues = false;
+      var patchedField = false;
+      var patchedListener = false;
+      var warned = {};
+
+      function patchLampaRuntime() {
+        try {
+          if (!window.Lampa) return false;
+
+          // Settings UI: add 2 items to the existing select list
+          if (!patchedValues && Lampa.Params && Lampa.Params.values && Lampa.Params.values.interface_size && typeof Lampa.Params.values.interface_size === 'object') {
+            patchedValues = true;
+            try {
+              var cur = Lampa.Params.values.interface_size || {};
+              var next = {
+                xxsmall: 'Минимальный',
+                xsmall: 'Очень маленький',
+                small: cur.small || '#{settings_param_interface_size_small}',
+                normal: cur.normal || '#{settings_param_interface_size_normal}',
+                bigger: cur.bigger || '#{settings_param_interface_size_bigger}'
+              };
+              Lampa.Params.values.interface_size = next;
+            } catch (_) { }
+          }
+
+          // Safety: normalize unsupported values to prevent NaN in Layer.size()
+          if (!patchedField && Lampa.Storage && typeof Lampa.Storage.field === 'function') {
+            patchedField = true;
+            try {
+              var origField = Lampa.Storage.field;
+              if (!origField.__blInterfaceSizeWrappedV1) {
+                Lampa.Storage.field = function (name) {
+                  var val = origField.apply(this, arguments);
+                  if (String(name || '') !== 'interface_size') return val;
+
+                  var s = (val === undefined || val === null) ? '' : String(val);
+                  if (s === 'normal' || s === 'small' || s === 'bigger') return s;
+
+                  if (s === 'xsmall' || s === 'xxsmall') {
+                    if (!protoOk) {
+                      if (!warned[s]) { warned[s] = 1; uiWarn('unsupported interface_size value: ' + s); }
+                      return 'small';
+                    }
+                    return s;
+                  }
+
+                  if (s && !warned[s]) { warned[s] = 1; uiWarn('unsupported interface_size value: ' + s); }
+                  return 'normal';
+                };
+                Lampa.Storage.field.__blInterfaceSizeWrappedV1 = true;
+              }
+            } catch (_) { }
+          }
+
+          // Cleanup classes for extended values + warn on unsupported selections
+          if (!patchedListener && Lampa.Storage && Lampa.Storage.listener && typeof Lampa.Storage.listener.follow === 'function') {
+            patchedListener = true;
+            try {
+              Lampa.Storage.listener.follow('change', function (e) {
+                try {
+                  if (!e || String(e.name || '') !== 'interface_size') return;
+
+                  var raw = null;
+                  try { raw = window.localStorage && window.localStorage.getItem ? window.localStorage.getItem('interface_size') : null; } catch (_) { raw = null; }
+                  if (raw === null || raw === undefined) raw = e.value;
+                  if (raw !== null && raw !== undefined) {
+                    var vv = String(raw);
+                    if (vv !== 'normal' && vv !== 'small' && vv !== 'bigger' && vv !== 'xsmall' && vv !== 'xxsmall') {
+                      if (!warned[vv]) { warned[vv] = 1; uiWarn('unsupported interface_size value: ' + vv); }
+                    }
+                  }
+
+                  // Ensure only one size--* class remains (app.min.js only removes 3 base ones)
+                  try {
+                    var body = document && document.body;
+                    if (!body || !body.classList) return;
+                    body.classList.remove('size--small', 'size--normal', 'size--bigger', 'size--xsmall', 'size--xxsmall');
+                    var cur = null;
+                    try { cur = (window.Lampa && Lampa.Storage && Lampa.Storage.field) ? String(Lampa.Storage.field('interface_size') || '') : ''; } catch (_) { cur = ''; }
+                    if (cur) body.classList.add('size--' + cur);
+                  } catch (_) { }
+                } catch (_) { }
+              });
+            } catch (_) { }
+          }
+
+          return patchedValues && patchedField && patchedListener;
+        } catch (_) {
+          return false;
+        }
+      }
+
+      var tries = 0;
+      var t = setInterval(function () {
+        tries++;
+        if (patchLampaRuntime()) {
+          clearInterval(t);
+          return;
+        }
+        if (tries >= 80) clearInterval(t);
+      }, 250);
+    } catch (_) { }
+  })();
+
   BL.UA = BL.UA || {};
 
 	  var K = (BL.Keys || BL.LocalStorageKeys || {});
