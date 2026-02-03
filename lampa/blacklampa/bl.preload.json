@@ -94,6 +94,7 @@
   "online_mod_proxy_animelib": "false",
   "blacklampa_net_rule_new_pattern": "",
   "online_mod_proxy_cdnmovies": "false",
+  "showModssVip": "true",
   "surs_settings": "{\"default\":{\"interface_size_initialized\":true,\"custom_button_surs_bookmarks\":false,\"custom_button_surs_history\":false,\"custom_button_surs_kids\":false,\"custom_button_surs_settings\":false,\"genre_16\":false,\"genre_10762\":false,\"without_keywords\":\"2\"}}",
   "blacklampa_net_rule_new_ct": "application/json",
   "head_filter_show_blackfriday": "false",
