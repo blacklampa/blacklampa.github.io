@@ -1090,23 +1090,39 @@
 			        }
 			      });
 
-			      P(ctx, {
-			        id: 'player_guard_popup_min_sec',
-			        type: 'select',
-			        values: { '1': '1', '2': '2', '3': '3', '4': '4', '5': '5' },
-			        default: '2',
-			        name: 'Мин. показ попапа (сек)',
-			        desc: 'Минимальное время показа каждого шага (1–5 сек).',
-			        onChange: function () {
-			          try { if (window.BL && BL.PlayerGuard && BL.PlayerGuard.refresh) BL.PlayerGuard.refresh(); } catch (_) { }
-			        }
-			      });
+				      P(ctx, {
+				        id: 'player_guard_popup_min_sec',
+				        type: 'select',
+				        values: { '1': '1', '2': '2', '3': '3', '4': '4', '5': '5' },
+				        default: '2',
+				        name: 'Мин. показ попапа (сек)',
+				        desc: 'Минимальное время показа каждого шага (1–5 сек).',
+				        onChange: function () {
+				          try { if (window.BL && BL.PlayerGuard && BL.PlayerGuard.refresh) BL.PlayerGuard.refresh(); } catch (_) { }
+				        }
+				      });
 
-			      P(ctx, {
-			        id: 'player_guard_block_next',
-			        type: 'toggle',
-			        values: { 0: 'OFF', 1: 'ON' },
-			        default: 1,
+				      try {
+				        var pg_ac = [];
+				        for (var pg_i = 0; pg_i <= 60; pg_i++) pg_ac.push(String(pg_i));
+				        P(ctx, {
+				          id: 'player_guard_popup_autoclose_sec',
+				          type: 'select',
+				          values: pg_ac,
+				          default: '10',
+				          name: 'PlayerGuard popup: автозакрытие (сек)',
+				          desc: 'Автозакрытие попапа при бездействии. 0 = выключено.',
+				          onChange: function () {
+				            try { if (window.BL && BL.PlayerGuard && BL.PlayerGuard.refresh) BL.PlayerGuard.refresh(); } catch (_) { }
+				          }
+				        });
+				      } catch (_) { }
+
+				      P(ctx, {
+				        id: 'player_guard_block_next',
+				        type: 'toggle',
+				        values: { 0: 'OFF', 1: 'ON' },
+				        default: 1,
 			        name: 'Блокировать авто-переход к следующему',
 			        desc: 'В режиме guardLock блокирует autoplay next при ложном конце/сбросе сессии.',
 			        onChange: function () {

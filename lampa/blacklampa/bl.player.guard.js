@@ -24,6 +24,7 @@
   var KEY_ALLOW_SOFT = LS_PREFIX + 'player_guard_allow_soft';
   var KEY_ALLOW_HARD = LS_PREFIX + 'player_guard_allow_hard';
   var KEY_AUTO_REOPEN_FROM_POSITION = LS_PREFIX + 'player_guard_auto_reopen_from_position';
+  var KEY_POPUP_AUTOCLOSE_SEC = LS_PREFIX + 'player_guard_popup_autoclose_sec';
 
   var DET = {
     epsilonEndSec: 2.0,
@@ -49,7 +50,8 @@
     budgetResetOkMs: 25000,
     reopenBackoffSec: 1.5,
     autoReopenCooldownMs: 25000,
-    autoBufferDelayMs: 1800
+    autoBufferDelayMs: 1800,
+    popupIdleMs: 3000
   };
 
   var CFG = {
@@ -64,7 +66,8 @@
     blockNext: true,
     debugPopup: true,
     storePos: true,
-    autoReopenFromPosition: true
+    autoReopenFromPosition: true,
+    popupAutoCloseSec: 10
   };
 
   var MODE_NORMAL = 'NORMAL';
@@ -145,6 +148,7 @@
       seq: 0,
       reason: '',
       resumeTimeSec: 0,
+      resumePinnedSec: NaN,
       hardIntent: '',
       softAttempt: 0,
       hardAttempt: 0,
@@ -180,6 +184,9 @@
       btns: [],
       selected: 0,
       mode: 'hidden',
+      autoCloseTimer: null,
+      autoCloseIdleTimer: null,
+      autoCloseLastActTs: 0,
       keyHandler: null
     },
 
@@ -541,6 +548,7 @@
   function uiSetMode(mode) {
     var root = ensureUiRoot();
     if (!root) return;
+    var prev = String(STATE.ui.mode || 'hidden');
     STATE.ui.mode = String(mode || 'hidden');
     safe(function () {
       root.classList.remove('bl-pg-hidden');
@@ -548,6 +556,25 @@
       if (STATE.ui.mode === 'hidden') root.classList.add('bl-pg-hidden');
       else if (STATE.ui.mode === 'fail') root.classList.add('bl-pg-fail');
     });
+
+    try {
+      if (prev !== STATE.ui.mode) {
+        var s = 'RECOVERING';
+        if (STATE.ui.mode === 'hidden') s = 'HIDDEN';
+        else if (STATE.ui.mode === 'fail') s = 'FAILED';
+        logEvt('DBG', 'popup_update', { state: s }, 'popup:update:' + s, 900);
+      }
+    } catch (_) { }
+
+    try {
+      if (STATE.ui.mode === 'hidden') uiAutoCloseClear('hidden');
+      else if (prev === 'hidden') uiAutoCloseArm('show');
+      else if (!STATE.ui.autoCloseTimer && !STATE.ui.autoCloseIdleTimer) uiAutoCloseArm('mode');
+    } catch (_) { }
+
+    try {
+      if (prev === 'fail' && STATE.ui.mode !== 'fail') uiAutoCloseClear('leave_fail');
+    } catch (_) { }
   }
 
   function uiUpdate(title, stage, info, details) {
@@ -567,6 +594,85 @@
       STATE.ui.selected = 0;
       if (STATE.ui.actionsEl) STATE.ui.actionsEl.innerHTML = '';
     });
+  }
+
+  function uiAutoCloseClear(why) {
+    try {
+      if (STATE.ui.autoCloseTimer) clearTimeout(STATE.ui.autoCloseTimer);
+    } catch (_) { }
+    try {
+      if (STATE.ui.autoCloseIdleTimer) clearTimeout(STATE.ui.autoCloseIdleTimer);
+    } catch (_) { }
+    STATE.ui.autoCloseTimer = null;
+    STATE.ui.autoCloseIdleTimer = null;
+  }
+
+  function uiAutoCloseArm(why) {
+    try {
+      if (!CFG.enabled) return;
+      var sec = clampInt(CFG.popupAutoCloseSec, 0, 60);
+      if (!sec) return;
+      if (!STATE.ui || !STATE.ui.mode || STATE.ui.mode === 'hidden') return;
+      if (STATE.ui.mode !== 'fail') return;
+      if (STATE.ui.autoCloseTimer) return;
+
+      STATE.ui.autoCloseTimer = setTimeout(function () {
+        try {
+          STATE.ui.autoCloseTimer = null;
+          logLine('INF', 'popup_autoclose fired', null, 'popup:ac:fired', 1500);
+
+          // In FAILED state we must fully stop guard/recovery, otherwise user loses controls while guardLock stays.
+          if (STATE.rec && STATE.rec.mode === MODE_FAIL) {
+            try { manualSuppress(15000, 'popup_autoclose'); } catch (_) { }
+            try { recoveryStop('popup_autoclose'); } catch (_) { }
+            try { unlockGuard('popup_autoclose'); } catch (_) { }
+            return;
+          }
+
+          uiHide('autoclose');
+        } catch (_) { }
+      }, Math.max(0, sec * 1000));
+
+      logLine('DBG', 'popup_autoclose armed in=' + String(sec) + 's', null, 'popup:ac:arm', 1200);
+    } catch (_) { }
+  }
+
+  function uiAutoClosePause(reason) {
+    try {
+      if (!CFG.enabled) return;
+      if (!clampInt(CFG.popupAutoCloseSec, 0, 60)) return;
+      if (!STATE.ui || !STATE.ui.mode || STATE.ui.mode === 'hidden') return;
+
+      try {
+        if (STATE.ui.autoCloseTimer) clearTimeout(STATE.ui.autoCloseTimer);
+      } catch (_) { }
+      STATE.ui.autoCloseTimer = null;
+
+      logLine('DBG', 'popup_autoclose paused by user activity', String(reason || ''), 'popup:ac:pause', 1200);
+
+      try {
+        if (STATE.ui.autoCloseIdleTimer) clearTimeout(STATE.ui.autoCloseIdleTimer);
+      } catch (_) { }
+      STATE.ui.autoCloseIdleTimer = null;
+
+      var idleMs = toInt(DET.popupIdleMs, 3000);
+      if (!isFinite(idleMs) || idleMs < 500) idleMs = 3000;
+
+      STATE.ui.autoCloseIdleTimer = setTimeout(function () {
+        try {
+          STATE.ui.autoCloseIdleTimer = null;
+          if (!STATE.ui || !STATE.ui.mode || STATE.ui.mode === 'hidden') return;
+          uiAutoCloseArm('idle');
+        } catch (_) { }
+      }, idleMs);
+    } catch (_) { }
+  }
+
+  function uiAutoCloseUserActivity(reason) {
+    try {
+      STATE.ui.autoCloseLastActTs = now();
+      uiAutoClosePause('user:' + String(reason || 'activity'));
+    } catch (_) { }
   }
 
   function uiSelectBtn(idx) {
@@ -630,9 +736,9 @@
         try { e.preventDefault(); } catch (_) { }
         try { e.stopPropagation(); } catch (_) { }
 
-        if (isLeft || isUp) uiSelectBtn(STATE.ui.selected - 1);
-        else if (isRight || isDown) uiSelectBtn(STATE.ui.selected + 1);
-        else if (isEnter) uiActivateSelected();
+        if (isLeft || isUp) { try { uiAutoCloseUserActivity('nav'); } catch (_) { } uiSelectBtn(STATE.ui.selected - 1); }
+        else if (isRight || isDown) { try { uiAutoCloseUserActivity('nav'); } catch (_) { } uiSelectBtn(STATE.ui.selected + 1); }
+        else if (isEnter) { try { uiAutoCloseUserActivity('activate'); } catch (_) { } uiActivateSelected(); }
       } catch (_) { }
     };
     safe(function () { window.addEventListener('keydown', STATE.ui.keyHandler, true); });
@@ -663,7 +769,7 @@
           b.className = 'bl-pg-btn';
           b.setAttribute('data-act', String(a.act));
           b.textContent = String(a.text);
-          b.onclick = function () { try { STATE.ui.selected = idx; uiSelectBtn(idx); uiActivateSelected(); } catch (_) { } };
+          b.onclick = function () { try { uiAutoCloseUserActivity('click'); } catch (_) { } try { STATE.ui.selected = idx; uiSelectBtn(idx); uiActivateSelected(); } catch (_) { } };
           STATE.ui.actionsEl.appendChild(b);
           STATE.ui.btns.push(b);
         })(actions[i], i);
@@ -674,15 +780,19 @@
     uiSelectBtn(0);
   }
 
-  function uiHide() {
+  function uiHide(reason) {
     uiRemoveFailKeyHandler();
+    uiAutoCloseClear('hide');
+    uiClearActions();
+    uiUpdate('', '', '', '');
     uiSetMode('hidden');
+    logEvt('DBG', 'popup_close', { reason: String(reason || '') }, 'popup:close:' + String(reason || ''), 1200);
   }
 
   function stopGuardAndRecovery(why, suppressMs) {
     try { manualSuppress(toInt(suppressMs, 0), String(why || '')); } catch (_) { }
     try { recoveryStop(String(why || 'stop')); } catch (_) { }
-    try { uiHide(); } catch (_) { }
+    try { if (STATE.ui && STATE.ui.mode && STATE.ui.mode !== 'hidden') uiHide(String(why || 'stop')); } catch (_) { }
     try { unlockGuard(String(why || 'stop')); } catch (_) { }
     logEvt('INF', 'manual_exit', { why: String(why || '') }, 'manual:exit:' + String(why || ''), 1200);
   }
@@ -799,10 +909,6 @@
         if (isFinite(liveT) && liveT >= dur - DET.epsilonEndSec) useLive = false;
         if (liveCand >= dur - DET.epsilonEndSec) useLive = false;
       }
-      if (useLive) {
-        var jump = liveCand - truthT;
-        if (isFinite(jump) && jump > Math.max(12, DET.jumpThresholdSec)) useLive = false;
-      }
 
       resume = useLive ? Math.max(truthT, liveCand) : Math.max(0, truthT);
     }
@@ -811,6 +917,7 @@
     resume = Math.max(0, toNum(resume, 0));
 
     STATE.rec.resumeTimeSec = resume;
+    STATE.rec.resumePinnedSec = resume;
     STATE.rec.pendingSeekSec = resume;
 
     // Transition window: avoid truth/LS corruption by t=0/dur=0 while reopening.
@@ -860,6 +967,7 @@
 
   function uiShowRecover(stage, info, details) {
     uiInstallFailKeyHandler();
+    try { if (STATE.ui && STATE.ui.mode === 'fail') uiClearActions(); } catch (_) { }
     uiSetMode('recover');
     uiUpdate('Поток оборвался / восстановление…', stage, info, details);
     STATE.rec.stepShownTs = now();
@@ -867,6 +975,7 @@
 
   function uiShowOk(text) {
     uiInstallFailKeyHandler();
+    try { if (STATE.ui && STATE.ui.mode === 'fail') uiClearActions(); } catch (_) { }
     uiSetMode('recover');
     uiUpdate(String(text || 'Восстановлено'), '', '', '');
     STATE.rec.stepShownTs = now();
@@ -1559,10 +1668,11 @@
   function recoveryStop(why) {
     if (STATE.rec.mode === MODE_NORMAL) return;
     clearTimers();
-    uiHide();
+    uiHide(String(why || 'recovery_stop'));
     STATE.rec.mode = MODE_NORMAL;
     STATE.rec.reason = '';
     STATE.rec.resumeTimeSec = 0;
+    STATE.rec.resumePinnedSec = NaN;
     STATE.rec.hardIntent = '';
     STATE.rec.pendingSeekSec = NaN;
     STATE.rec.pendingParams = null;
@@ -1578,6 +1688,7 @@
   function recoveryFail(why) {
     clearTimers();
     STATE.rec.mode = MODE_FAIL;
+    STATE.rec.resumePinnedSec = NaN;
     STATE.rec.activeReopenTransition = false;
     STATE.rec.reopenTransitionStartTs = 0;
     STATE.rec.reopenTransitionResumeSec = NaN;
@@ -1612,6 +1723,7 @@
     STATE.rec.reason = '';
     STATE.rec.pendingSeekSec = NaN;
     STATE.rec.pendingParams = null;
+    STATE.rec.resumePinnedSec = NaN;
     STATE.rec.activeReopenTransition = false;
     STATE.rec.reopenTransitionStartTs = 0;
     STATE.rec.reopenTransitionResumeSec = NaN;
@@ -1838,10 +1950,51 @@
     try {
       if (!window.Lampa || !Lampa.Player || typeof Lampa.Player.play !== 'function') return false;
 
+      // forced snapshot right before close (resumePinned)
+      var video = null;
+      try { video = STATE.video || (window.Lampa && Lampa.PlayerVideo && Lampa.PlayerVideo.video ? Lampa.PlayerVideo.video() : null); } catch (_) { video = STATE.video; }
+
+      var truthT = 0;
+      var liveT = NaN;
+      var dur = NaN;
+      try { truthT = getTruthTime(); } catch (_) { truthT = 0; }
+      try { liveT = video ? toNum(video.currentTime, NaN) : NaN; } catch (_) { liveT = NaN; }
+      try { dur = video ? toNum(video.duration, NaN) : NaN; } catch (_) { dur = NaN; }
+
+      var backoff = toNum(DET.reopenBackoffSec, 1.5);
+      if (!isFinite(backoff) || backoff < 0) backoff = 1.5;
+
+      var resumePinned = Math.max(0, toNum(t, 0));
+      try {
+        resumePinned = Math.max(resumePinned, Math.max(0, truthT));
+
+        if (isFinite(liveT) && liveT >= 0) {
+          var liveCand = Math.max(0, liveT - backoff);
+          var tail = false;
+          if (isFinite(dur) && dur > 0) {
+            if (liveT >= dur - DET.epsilonEndSec) tail = true;
+            if (liveCand >= dur - DET.epsilonEndSec) tail = true;
+          }
+          // If time jumped to the tail (false-ended), don't pin to the end.
+          if (!tail) resumePinned = Math.max(resumePinned, liveCand);
+        }
+
+        if (isFinite(dur) && dur > 0) resumePinned = Math.min(resumePinned, Math.max(0, dur - DET.epsilonEndSec));
+        resumePinned = Math.max(0, toNum(resumePinned, 0));
+      } catch (_) { }
+
+      STATE.rec.resumeTimeSec = resumePinned;
+      STATE.rec.resumePinnedSec = resumePinned;
+      STATE.rec.pendingSeekSec = resumePinned;
+      t = resumePinned;
+
+      try { if (CFG.storePos) writeTruthLS(resumePinned, isFinite(dur) && dur > 0 ? dur : 0, String(STATE.srcSig || ''), 'snapshotNow'); } catch (_) { }
+      logEvt('INF', 'snapshotNow', { truth: toNum(truthT, 0).toFixed(2), live: isFinite(liveT) ? liveT.toFixed(2) : '', resumePinned: resumePinned.toFixed(2) }, 'snap:now', 1200);
+
       try {
         STATE.rec.activeReopenTransition = true;
         STATE.rec.reopenTransitionStartTs = now();
-        STATE.rec.reopenTransitionResumeSec = toNum(t, 0);
+        STATE.rec.reopenTransitionResumeSec = toNum(resumePinned, 0);
       } catch (_) { }
 
       var pd = STATE.guard.lockedWork || getPlayData();
@@ -2416,6 +2569,7 @@
       CFG.hardAttempts = clampInt(sGet(KEY_HARD_ATTEMPTS, '1'), 0, 2);
       CFG.attemptDelaySec = clampInt(sGet(KEY_DELAY_SEC, '2'), 1, 5);
       CFG.popupMinSec = clampInt(sGet(KEY_POPUP_MIN_SEC, '2'), 1, 5);
+      CFG.popupAutoCloseSec = clampInt(sGet(KEY_POPUP_AUTOCLOSE_SEC, '10'), 0, 60);
     } catch (_) { }
 
     STATE.rec.softMax = CFG.allowSoft ? clampInt(CFG.softAttempts, 0, 5) : 0;
@@ -2432,6 +2586,16 @@
   API.refresh = function () {
     var was = !!CFG.enabled;
     readSettingsFromStorage();
+
+    try {
+      // apply popup autoclose setting without restart
+      if (STATE.ui && STATE.ui.mode === 'fail') {
+        if (!clampInt(CFG.popupAutoCloseSec, 0, 60)) uiAutoCloseClear('cfg');
+        else if (!STATE.ui.autoCloseTimer && !STATE.ui.autoCloseIdleTimer) uiAutoCloseArm('refresh');
+      } else {
+        uiAutoCloseClear('refresh');
+      }
+    } catch (_) { }
 
     if (was && !CFG.enabled) {
       recoveryStop('disabled');
@@ -2473,7 +2637,7 @@
           try {
             if (!e || !e.name) return;
             var n = String(e.name);
-            if (n === KEY_ENABLED || n === KEY_STORE_POS || n === KEY_BLOCK_NEXT || n === KEY_DEBUG_POPUP || n === KEY_REOPEN || n === KEY_AUTO_REOPEN_FROM_POSITION || n === KEY_ALLOW_SOFT || n === KEY_ALLOW_HARD || n === KEY_SOFT_ATTEMPTS || n === KEY_ATTEMPTS_LEGACY || n === KEY_HARD_ATTEMPTS || n === KEY_DELAY_SEC || n === KEY_POPUP_MIN_SEC) API.refresh();
+            if (n === KEY_ENABLED || n === KEY_STORE_POS || n === KEY_BLOCK_NEXT || n === KEY_DEBUG_POPUP || n === KEY_REOPEN || n === KEY_AUTO_REOPEN_FROM_POSITION || n === KEY_ALLOW_SOFT || n === KEY_ALLOW_HARD || n === KEY_SOFT_ATTEMPTS || n === KEY_ATTEMPTS_LEGACY || n === KEY_HARD_ATTEMPTS || n === KEY_DELAY_SEC || n === KEY_POPUP_MIN_SEC || n === KEY_POPUP_AUTOCLOSE_SEC) API.refresh();
           } catch (_) { }
         });
       }
