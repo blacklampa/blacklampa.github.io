@@ -994,41 +994,77 @@
 		        desc: 'Добавляет xsmall/xxsmall (0.8/0.7) к настройке \"Размер интерфейса\".'
 		      });
 
-			      P(ctx, {
-			        id: 'player_guard_enabled',
-			        type: 'toggle',
-			        values: { 0: 'OFF', 1: 'ON' },
-			        default: 0,
-			        name: 'Защита плеера от обрывов (PlayerGuard)',
-			        desc: 'Double-guard: защита от ложного конца/сессионных сбросов (t=0/dur=0) + анти-автопереход к следующему. По умолчанию OFF.',
-			        onChange: function () {
-			          try { if (window.BL && BL.PlayerGuard && BL.PlayerGuard.refresh) BL.PlayerGuard.refresh(); } catch (_) { }
-			        }
-			      });
+				      P(ctx, {
+				        id: 'player_guard_enabled',
+				        type: 'toggle',
+				        values: { 0: 'OFF', 1: 'ON' },
+				        default: 0,
+				        name: 'Защита плеера от обрывов (PlayerGuard)',
+				        desc: 'Double-guard: защита от ложного конца/сессионных сбросов (t=0/dur=0) + анти-автопереход к следующему. По умолчанию OFF.',
+				        onChange: function () {
+				          try { if (window.BL && BL.PlayerGuard && BL.PlayerGuard.refresh) BL.PlayerGuard.refresh(); } catch (_) { }
+				        }
+				      });
 
-			      P(ctx, {
-			        id: 'player_guard_soft_attempts',
-			        type: 'select',
-			        values: { '3': '3', '4': '4', '5': '5', '6': '6' },
-			        default: '4',
-			        name: 'Попыток восстановления (SOFT)',
-			        desc: 'Мягкие попытки: seek/play, load, reload URL.',
-			        onChange: function () {
-			          try { if (window.BL && BL.PlayerGuard && BL.PlayerGuard.refresh) BL.PlayerGuard.refresh(); } catch (_) { }
-			        }
-			      });
+				      P(ctx, {
+				        id: 'player_guard_reopen_on_fault',
+				        type: 'toggle',
+				        values: { 0: 'OFF', 1: 'ON' },
+				        default: 1,
+				        name: 'PlayerGuard: Перезапускать плеер при обрыве (reopen)',
+				        desc: 'Основной фикс: при цикличных/сессионных сбоях закрывает плеер и открывает текущий эпизод заново на truth позиции.',
+				        onChange: function () {
+				          try { if (window.BL && BL.PlayerGuard && BL.PlayerGuard.refresh) BL.PlayerGuard.refresh(); } catch (_) { }
+				        }
+				      });
 
-			      P(ctx, {
-			        id: 'player_guard_hard_attempts',
-			        type: 'select',
-			        values: { '1': '1', '2': '2' },
-			        default: '1',
-			        name: 'Попыток восстановления (HARD)',
-			        desc: 'Жёсткие попытки: реинициализация PlayerVideo/плеера и возврат на truth позицию.',
-			        onChange: function () {
-			          try { if (window.BL && BL.PlayerGuard && BL.PlayerGuard.refresh) BL.PlayerGuard.refresh(); } catch (_) { }
-			        }
-			      });
+				      P(ctx, {
+				        id: 'player_guard_allow_soft',
+				        type: 'toggle',
+				        values: { 0: 'OFF', 1: 'ON' },
+				        default: 1,
+				        name: 'PlayerGuard: Разрешить SOFT recovery',
+				        desc: 'Быстрые попытки (seek/play/load) перед reopen. При fault-loop SOFT отключается автоматически.',
+				        onChange: function () {
+				          try { if (window.BL && BL.PlayerGuard && BL.PlayerGuard.refresh) BL.PlayerGuard.refresh(); } catch (_) { }
+				        }
+				      });
+
+				      P(ctx, {
+				        id: 'player_guard_allow_hard',
+				        type: 'toggle',
+				        values: { 0: 'OFF', 1: 'ON' },
+				        default: 0,
+				        name: 'PlayerGuard: Разрешить HARD reset',
+				        desc: 'Разрешает тяжёлый reset PlayerVideo (destroy/url). По умолчанию OFF (предпочтительно reopen).',
+				        onChange: function () {
+				          try { if (window.BL && BL.PlayerGuard && BL.PlayerGuard.refresh) BL.PlayerGuard.refresh(); } catch (_) { }
+				        }
+				      });
+
+				      P(ctx, {
+				        id: 'player_guard_soft_attempts',
+				        type: 'select',
+				        values: { '0': '0', '1': '1', '2': '2', '3': '3', '4': '4', '5': '5' },
+				        default: '2',
+				        name: 'Попыток восстановления (SOFT)',
+				        desc: 'Мягкие попытки: seek/play, load, reload URL. Бюджет не сбрасывается при повторных fault в коротком окне.',
+				        onChange: function () {
+				          try { if (window.BL && BL.PlayerGuard && BL.PlayerGuard.refresh) BL.PlayerGuard.refresh(); } catch (_) { }
+				        }
+				      });
+
+				      P(ctx, {
+				        id: 'player_guard_hard_attempts',
+				        type: 'select',
+				        values: { '0': '0', '1': '1', '2': '2' },
+				        default: '1',
+				        name: 'Попыток восстановления (HARD)',
+				        desc: 'HARD попытки: reopen плеера на truth позицию (и/или hard reset, если разрешён).',
+				        onChange: function () {
+				          try { if (window.BL && BL.PlayerGuard && BL.PlayerGuard.refresh) BL.PlayerGuard.refresh(); } catch (_) { }
+				        }
+				      });
 
 			      P(ctx, {
 			        id: 'player_guard_attempt_delay_sec',

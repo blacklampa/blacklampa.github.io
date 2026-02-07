@@ -20,6 +20,9 @@
   var KEY_BLOCK_NEXT = LS_PREFIX + 'player_guard_block_next';
   var KEY_DEBUG_POPUP = LS_PREFIX + 'player_guard_debug_popup';
   var KEY_STORE_POS = LS_PREFIX + 'player_guard_store_pos';
+  var KEY_REOPEN = LS_PREFIX + 'player_guard_reopen_on_fault';
+  var KEY_ALLOW_SOFT = LS_PREFIX + 'player_guard_allow_soft';
+  var KEY_ALLOW_HARD = LS_PREFIX + 'player_guard_allow_hard';
 
   var DET = {
     epsilonEndSec: 2.0,
@@ -31,18 +34,26 @@
     reset0EpsSec: 0.5,
     reset0MinTruthSec: 30,
     reset0HardTruthSec: 60,
+    loopWindowMs: 30000,
+    loopBucketSec: 5,
+    loopMinTruthSec: 10,
+    loopMinCount: 3,
     saveThrottleMs: 1500,
     saveMaxAgeMs: 72 * 3600 * 1000,
     guardLockMs: 25000,
-    stableOkSec: 4.0,
+    stableOkSec: 6.0,
     repeatFaultHardMs: 20000,
     attemptEvalMs: 1200,
-    manualNextAllowMs: 1500
+    manualNextAllowMs: 1500,
+    budgetResetOkMs: 25000
   };
 
   var CFG = {
     enabled: false,
-    softAttempts: 4,
+    reopenOnFault: true,
+    allowSoft: true,
+    allowHard: false,
+    softAttempts: 2,
     hardAttempts: 1,
     attemptDelaySec: 2,
     popupMinSec: 2,
@@ -58,7 +69,7 @@
 
   var STATE = {
     installed: false,
-    patched: { video: false, playlist: false, panel: false, player: false },
+    patched: { video: false, playlist: false, panel: false, player: false, controller: false },
     video: null,
     streamId: '',
     src: '',
@@ -95,6 +106,13 @@
       seq: 0
     },
 
+    loop: {
+      events: [],
+      reopenRequiredTs: 0,
+      reopenBucket: null,
+      reopenCount: 0
+    },
+
     seek: {
       lastSeekTs: 0
     },
@@ -110,7 +128,11 @@
     },
 
     manual: {
-      allowNextTs: 0
+      allowNextTs: 0,
+      suppressUntilTs: 0,
+      suppressWhy: '',
+      lastAction: '',
+      lastActionTs: 0
     },
 
     rec: {
@@ -118,6 +140,7 @@
       seq: 0,
       reason: '',
       resumeTimeSec: 0,
+      hardIntent: '',
       softAttempt: 0,
       hardAttempt: 0,
       softMax: 4,
@@ -555,11 +578,13 @@
     try { act = String(btn.getAttribute('data-act') || ''); } catch (_) { act = ''; }
     if (!act) return;
     if (act === 'retry') {
-      enterRecovery(MODE_SOFT, 'manual_retry', { manual: true });
+      try { uiActionRetry(); } catch (_) { }
     } else if (act === 'exit') {
-      exitPlayer('manual_exit');
+      try { uiActionExitPlayer(); } catch (_) { }
     } else if (act === 'restart') {
-      enterRecovery(MODE_HARD, 'manual_restart', { manual: true, forceHard: true });
+      try { uiActionRestart(); } catch (_) { }
+    } else if (act === 'close') {
+      uiClose('btn_close');
     }
   }
 
@@ -567,7 +592,7 @@
     if (STATE.ui.keyHandler) return;
     STATE.ui.keyHandler = function (e) {
       try {
-        if (STATE.ui.mode !== 'fail') return;
+        if (STATE.ui.mode === 'hidden') return;
         if (!e) return;
         var k = '';
         try { k = (typeof e.key === 'string') ? e.key : ''; } catch (_) { k = ''; }
@@ -579,14 +604,22 @@
         var isUp = (k === 'ArrowUp' || kc === 38);
         var isDown = (k === 'ArrowDown' || kc === 40);
         var isEnter = (k === 'Enter' || kc === 13);
-        var isBack = (k === 'Backspace' || k === 'Escape' || kc === 8 || kc === 27 || kc === 461 || kc === 10009);
+        var isBack = (k === 'Backspace' || k === 'Escape' || kc === 8 || kc === 27 || kc === 461 || kc === 10009 || kc === 4);
 
-        if (!(isLeft || isRight || isUp || isDown || isEnter || isBack)) return;
+        if (isBack) {
+          try { e.preventDefault(); } catch (_) { }
+          try { e.stopPropagation(); } catch (_) { }
+          var r = (k === 'Escape' || kc === 27) ? 'esc' : 'back';
+          uiClose(r);
+          return;
+        }
+
+        if (STATE.ui.mode !== 'fail') return;
+        if (!(isLeft || isRight || isUp || isDown || isEnter)) return;
 
         try { e.preventDefault(); } catch (_) { }
         try { e.stopPropagation(); } catch (_) { }
 
-        if (isBack) { exitPlayer('key_back'); return; }
         if (isLeft || isUp) uiSelectBtn(STATE.ui.selected - 1);
         else if (isRight || isDown) uiSelectBtn(STATE.ui.selected + 1);
         else if (isEnter) uiActivateSelected();
@@ -609,7 +642,8 @@
     var actions = [
       { act: 'retry', text: 'Повторить' },
       { act: 'restart', text: 'Старт заново с позиции' },
-      { act: 'exit', text: 'Выйти из плеера' }
+      { act: 'exit', text: 'Выйти из плеера' },
+      { act: 'close', text: 'Закрыть' }
     ];
 
     safe(function () {
@@ -635,15 +669,123 @@
     uiSetMode('hidden');
   }
 
+  function stopGuardAndRecovery(why, suppressMs) {
+    try { manualSuppress(toInt(suppressMs, 0), String(why || '')); } catch (_) { }
+    try { recoveryStop(String(why || 'stop')); } catch (_) { }
+    try { uiHide(); } catch (_) { }
+    try { unlockGuard(String(why || 'stop')); } catch (_) { }
+    logEvt('INF', 'manual_exit', { why: String(why || '') }, 'manual:exit:' + String(why || ''), 1200);
+  }
+
+  function uiClose(reason) {
+    logEvt('INF', 'ui_close', { reason: String(reason || '') }, 'ui:close:' + String(reason || ''), 1200);
+    stopGuardAndRecovery('ui_close', 15000);
+  }
+
+  function uiActionExitPlayer() {
+    exitPlayer('btn_exit');
+  }
+
+  function uiActionRestart() {
+    manualReopenOnce('btn_restart');
+  }
+
+  function uiActionRetry() {
+    if (CFG.reopenOnFault) manualReopenOnce('btn_retry');
+    else manualSoftOnce('btn_retry');
+  }
+
+  function manualSoftOnce(why) {
+    if (!CFG.enabled) return;
+    if (!CFG.allowSoft) return recoveryFail('soft_disabled');
+    if (isManualSuppressed()) clearManualSuppress();
+
+    clearTimers();
+    STATE.rec.mode = MODE_SOFT;
+    STATE.rec.reason = String(why || 'manual_soft');
+    STATE.rec.hardIntent = '';
+    STATE.rec.stableSec = 0;
+    STATE.rec.stableLastCur = NaN;
+    STATE.rec.stableLastTs = 0;
+
+    var video = null;
+    try { video = STATE.video || (window.Lampa && Lampa.PlayerVideo && Lampa.PlayerVideo.video ? Lampa.PlayerVideo.video() : null); } catch (_) { video = STATE.video; }
+    updateStreamContext(video, null);
+
+    var resume = pickResumeTime(video);
+    STATE.rec.resumeTimeSec = resume;
+    STATE.rec.pendingSeekSec = resume;
+
+    lockGuard('manual_soft', { capture: true });
+
+    var stage = 'SOFT manual: seek_play';
+    var info = 'truth=' + fmtTime(getTruthTime()) + ' | resume=' + fmtTime(resume) + ' | video=' + fmtTime(video ? video.currentTime : 0) + ' | dur=' + fmtTime(video ? video.duration : 0);
+    var details = CFG.debugPopup ? ('why=' + String(why || '') + '\n' + mediaState(video)) : '';
+    uiShowRecover(stage, info, details);
+
+    try { actionSeekPlay(video, resume); } catch (_) { }
+
+    STATE.rec.evalTimer = setTimeout(function () {
+      try {
+        if (!CFG.enabled) return;
+        if (STATE.rec.mode !== MODE_SOFT) return;
+        // if not recovered yet => show FAILED, do not loop
+        recoveryFail('manual_soft_failed');
+      } catch (_) { }
+    }, Math.max(2500, clampInt(CFG.attemptDelaySec, 1, 5) * 1000));
+  }
+
+  function manualReopenOnce(why) {
+    if (!CFG.enabled) return;
+    if (isManualSuppressed()) clearManualSuppress();
+
+    clearTimers();
+    STATE.rec.mode = MODE_HARD;
+    STATE.rec.reason = String(why || 'manual_reopen');
+    STATE.rec.hardIntent = 'reopen';
+    STATE.rec.stableSec = 0;
+    STATE.rec.stableLastCur = NaN;
+    STATE.rec.stableLastTs = 0;
+
+    var video = null;
+    try { video = STATE.video || (window.Lampa && Lampa.PlayerVideo && Lampa.PlayerVideo.video ? Lampa.PlayerVideo.video() : null); } catch (_) { video = STATE.video; }
+    updateStreamContext(video, null);
+
+    var resume = pickResumeTime(video);
+    STATE.rec.resumeTimeSec = resume;
+    STATE.rec.pendingSeekSec = resume;
+
+    lockGuard('manual_reopen', { capture: true });
+
+    logEvt('INF', 'reopen_start', { why: String(why || ''), resume: resume.toFixed(2), url: shortUrl(STATE.guard.lockedUrl || '') }, 'reopen:start', 1200);
+
+    var stage = 'REOPEN manual';
+    var info = 'truth=' + fmtTime(getTruthTime()) + ' | resume=' + fmtTime(resume);
+    var details = CFG.debugPopup ? ('why=' + String(why || '') + '\n' + mediaState(video)) : '';
+    uiShowRecover(stage, info, details);
+
+    var ok = false;
+    try { ok = actionHardReopenPlayer(resume); } catch (_) { ok = false; }
+    if (!ok) return recoveryFail('reopen_failed');
+
+    STATE.rec.evalTimer = setTimeout(function () {
+      try {
+        if (!CFG.enabled) return;
+        if (STATE.rec.mode !== MODE_HARD) return;
+        recoveryFail('manual_reopen_failed');
+      } catch (_) { }
+    }, Math.max(4500, clampInt(CFG.attemptDelaySec, 1, 5) * 1000 + 1500));
+  }
+
   function uiShowRecover(stage, info, details) {
-    uiRemoveFailKeyHandler();
+    uiInstallFailKeyHandler();
     uiSetMode('recover');
     uiUpdate('Поток оборвался / восстановление…', stage, info, details);
     STATE.rec.stepShownTs = now();
   }
 
   function uiShowOk(text) {
-    uiRemoveFailKeyHandler();
+    uiInstallFailKeyHandler();
     uiSetMode('recover');
     uiUpdate(String(text || 'Восстановлено'), '', '', '');
     STATE.rec.stepShownTs = now();
@@ -684,6 +826,7 @@
   function isRecovering() { return STATE.rec.mode === MODE_SOFT || STATE.rec.mode === MODE_HARD; }
 
   function isGuardLocked() {
+    if (isManualSuppressed()) return false;
     var t = now();
     if (STATE.guard.lock && (t < STATE.guard.untilTs)) return true;
     if (STATE.guard.lock && (isRecovering() || STATE.rec.mode === MODE_FAIL)) return true;
@@ -694,6 +837,7 @@
   function lockGuard(reason, meta) {
     meta = meta || {};
     if (!CFG.enabled) return;
+    if (isManualSuppressed()) return;
     STATE.guard.lock = true;
     STATE.guard.reason = String(reason || '');
     STATE.guard.untilTs = Math.max(toInt(STATE.guard.untilTs, 0), now() + DET.guardLockMs);
@@ -733,6 +877,25 @@
     return false;
   }
 
+  function manualSuppress(ms, why) {
+    ms = toInt(ms, 0);
+    if (ms < 0) ms = 0;
+    STATE.manual.suppressUntilTs = Math.max(toInt(STATE.manual.suppressUntilTs, 0), now() + ms);
+    STATE.manual.suppressWhy = String(why || '');
+    STATE.manual.lastAction = String(why || '');
+    STATE.manual.lastActionTs = now();
+  }
+
+  function isManualSuppressed() {
+    var t = now();
+    return STATE.manual.suppressUntilTs && t < STATE.manual.suppressUntilTs;
+  }
+
+  function clearManualSuppress() {
+    STATE.manual.suppressUntilTs = 0;
+    STATE.manual.suppressWhy = '';
+  }
+
   function isSeekRecent(ts) {
     ts = toInt(ts, 0);
     if (!STATE.seek.lastSeekTs) return false;
@@ -764,6 +927,7 @@
   }
 
   function markBuffering(on, type, details) {
+    if (isManualSuppressed()) return;
     STATE.session.buffering = !!on;
     if (on) {
       STATE.fault.lastTs = now();
@@ -953,9 +1117,64 @@
     STATE.truth.fromSession = true;
 
     // throttle storage writes
-    if (STATE.truth.lastSaveTs && (ts - STATE.truth.lastSaveTs) < DET.saveThrottleMs) return;
-    STATE.truth.lastSaveTs = ts;
-    writeTruthLS(cur, dur, STATE.truth.srcSig, 'tick');
+    if (!STATE.truth.lastSaveTs || (ts - STATE.truth.lastSaveTs) >= DET.saveThrottleMs) {
+      STATE.truth.lastSaveTs = ts;
+      writeTruthLS(cur, dur, STATE.truth.srcSig, 'tick');
+    }
+
+    maybeResetBudgetsOnStable(ts);
+  }
+
+  function softLeft() {
+    var m = clampInt(STATE.rec.softMax, 0, 20);
+    var u = clampInt(STATE.rec.softAttempt, 0, 1000);
+    return Math.max(0, m - u);
+  }
+
+  function hardLeft() {
+    var m = clampInt(STATE.rec.hardMax, 0, 20);
+    var u = clampInt(STATE.rec.hardAttempt, 0, 1000);
+    return Math.max(0, m - u);
+  }
+
+  function maybeResetBudgetsOnStable(ts) {
+    try {
+      ts = toInt(ts, now());
+      if (!STATE.rec.lastOkTs) return;
+      if ((ts - STATE.rec.lastOkTs) < DET.budgetResetOkMs) return;
+      if (STATE.fault.lastLongTs && STATE.fault.lastLongTs > STATE.rec.lastOkTs) return;
+      if (!STATE.truth.fromSession) return;
+
+      STATE.rec.softAttempt = 0;
+      STATE.rec.hardAttempt = 0;
+      try { if (STATE.loop && STATE.loop.events) STATE.loop.events = []; } catch (_) { }
+      try { if (STATE.loop) { STATE.loop.reopenRequiredTs = 0; STATE.loop.reopenBucket = null; STATE.loop.reopenCount = 0; } } catch (_) { }
+      STATE.rec.lastOkTs = 0;
+
+      logEvt('DBG', 'attempts_budget', { softLeft: softLeft(), hardLeft: hardLeft(), why: 'stable_reset' }, 'budget:reset', 3000);
+    } catch (_) { }
+  }
+
+  function isLoopReopenRequired(ts) {
+    try {
+      ts = toInt(ts, now());
+      if (!STATE.loop || !STATE.loop.reopenRequiredTs) return false;
+      var dt = ts - toInt(STATE.loop.reopenRequiredTs, 0);
+      if (dt < 0 || dt > DET.loopWindowMs) return false;
+      if (STATE.loop.reopenBucket === null || STATE.loop.reopenBucket === undefined) return true;
+      return truthBucket(getTruthTime()) === STATE.loop.reopenBucket;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function computeHardIntent(meta) {
+    meta = meta || {};
+    try { if (meta && meta.hardIntent) return String(meta.hardIntent); } catch (_) { }
+    try { if (meta && meta.needReopen) return 'reopen'; } catch (_) { }
+    if (CFG.reopenOnFault) return 'reopen';
+    if (CFG.allowHard) return 'hard_reset';
+    return '';
   }
 
   function updateRecoveryStability(ts, cur, dur, video) {
@@ -1018,20 +1237,72 @@
       else if (isFinite(dur) && dur > 0 && cur >= dur - DET.epsilonEndSec) need = true;
       if (need) {
         try { video.currentTime = Math.max(0, t); } catch (_) { }
-        try { if (video && typeof video.play === 'function') video.play(); } catch (_) { }
+        safePlay(video, 'force_seek:' + String(why || ''));
+        if (String(STATE.rec.hardIntent || '') === 'reopen') {
+          logEvt('INF', 'reopen_ready', { why: String(why || ''), seek: t.toFixed(2) }, 'reopen:ready', 1200);
+        }
         logEvt('INF', 'force_seek', { why: String(why || ''), to: t.toFixed(2) }, 'rec:seek:' + String(why || ''), 900);
       }
     } catch (_) { }
   }
 
+  function truthBucket(tSec) {
+    tSec = toNum(tSec, 0);
+    var b = DET.loopBucketSec;
+    if (!b || b <= 0) b = 5;
+    return Math.round(tSec / b) * b;
+  }
+
+  function loopGuardRecordFault(ts, type) {
+    try {
+      if (!STATE.loop) STATE.loop = { events: [] };
+      if (!STATE.loop.events) STATE.loop.events = [];
+
+      ts = toInt(ts, now());
+      var truthT = getTruthTime();
+      if (!truthT || truthT < DET.loopMinTruthSec) return null;
+
+      var b = truthBucket(truthT);
+      var arr = STATE.loop.events;
+      var out = [];
+      for (var i = 0; i < arr.length; i++) {
+        var e = arr[i];
+        if (!e || typeof e.ts !== 'number') continue;
+        var dt = ts - e.ts;
+        if (dt >= 0 && dt <= DET.loopWindowMs) out.push(e);
+      }
+      out.push({ ts: ts, bucket: b, type: String(type || '') });
+      STATE.loop.events = out;
+
+      var cnt = 0;
+      for (var j = 0; j < out.length; j++) {
+        try { if (out[j].bucket === b) cnt++; } catch (_) { }
+      }
+      if (cnt >= DET.loopMinCount) {
+        STATE.loop.reopenRequiredTs = ts;
+        STATE.loop.reopenBucket = b;
+        STATE.loop.reopenCount = cnt;
+        logEvt('WRN', 'fault_loop_detected', { count: cnt, bucket: b, type: String(type || ''), action: 'reopen_required' }, 'loop:' + String(b), 2000);
+        return { bucket: b, count: cnt };
+      }
+
+      return { bucket: b, count: cnt };
+    } catch (_) {
+      return null;
+    }
+  }
+
   function faultDetected(type, meta) {
     meta = meta || {};
+    if (isManualSuppressed()) return;
     var ts = now();
     STATE.fault.lastTs = ts;
     STATE.fault.lastType = String(type || '');
     STATE.fault.lastDetails = kv(meta) || '';
     STATE.fault.lastLongTs = ts;
     STATE.fault.seq++;
+
+    loopGuardRecordFault(ts, type);
 
     var video = null;
     try { video = STATE.video || (window.Lampa && Lampa.PlayerVideo && Lampa.PlayerVideo.video ? Lampa.PlayerVideo.video() : null); } catch (_) { video = STATE.video; }
@@ -1082,6 +1353,7 @@
     STATE.rec.mode = MODE_NORMAL;
     STATE.rec.reason = '';
     STATE.rec.resumeTimeSec = 0;
+    STATE.rec.hardIntent = '';
     STATE.rec.pendingSeekSec = NaN;
     STATE.rec.pendingParams = null;
     STATE.rec.stableSec = 0;
@@ -1096,17 +1368,29 @@
     var video = null;
     try { video = STATE.video || (window.Lampa && Lampa.PlayerVideo && Lampa.PlayerVideo.video ? Lampa.PlayerVideo.video() : null); } catch (_) { video = STATE.video; }
 
-    var info = 'truth=' + fmtTime(getTruthTime()) + ' | resume=' + fmtTime(STATE.rec.resumeTimeSec);
+    var stage = 'FAILED';
+    try {
+      if (String(why || '') === 'reopen_required' || String(why || '') === 'reopen_disabled') stage = 'Требуется перезапуск плеера';
+      if (String(why || '') === 'no_supported_source') stage = 'Нет поддерживаемого источника (нужен перезапуск)';
+      if (String(why || '') === 'play_interrupted') stage = 'play() interrupted (нужен перезапуск)';
+      if (String(why || '') === 'hard_disabled') stage = 'HARD reset отключён';
+      if (isLoopReopenRequired(now())) stage = 'Обрыв повторяется циклом. Требуется перезапуск плеера.';
+    } catch (_) { }
+
+    var info = 'truth=' + fmtTime(getTruthTime()) + ' | resume=' + fmtTime(STATE.rec.resumeTimeSec) + ' | softLeft=' + String(softLeft()) + ' | hardLeft=' + String(hardLeft());
     var details = CFG.debugPopup ? (String(why || '') + '\n' + mediaState(video)) : '';
-    uiShowFail('FAILED', info, details);
+    uiShowFail(stage, info, details);
     lockGuard('failed', { capture: false });
-    logEvt('ERR', 'fail', { why: String(why || ''), truth: fmtTime(getTruthTime()), resume: fmtTime(STATE.rec.resumeTimeSec) }, 'rec:fail', 2000);
+    logEvt('ERR', 'fail', { why: String(why || ''), stage: String(stage || ''), truth: fmtTime(getTruthTime()), resume: fmtTime(STATE.rec.resumeTimeSec) }, 'rec:fail', 2000);
   }
 
   function recoverySuccess(why, meta) {
     if (!isRecovering()) return;
     clearTimers();
-    STATE.rec.lastRecoveryMode = STATE.rec.mode;
+    var prevMode = STATE.rec.mode;
+    var prevIntent = '';
+    try { prevIntent = String(STATE.rec.hardIntent || ''); } catch (_) { prevIntent = ''; }
+    STATE.rec.lastRecoveryMode = prevMode;
     STATE.rec.lastOkTs = now();
     STATE.rec.mode = MODE_NORMAL;
     STATE.rec.reason = '';
@@ -1116,10 +1400,16 @@
 
     logEvt('OK', 'success', {
       why: String(why || ''),
+      mode: String(prevMode || ''),
+      intent: prevMode === MODE_HARD ? prevIntent : '',
       stable: STATE.rec.stableSec.toFixed(2),
       truth: fmtTime(getTruthTime()),
       srcSig: String(STATE.srcSig || '')
     }, 'rec:ok', 1200);
+
+    if (prevMode === MODE_HARD && prevIntent !== 'hard_reset') {
+      logEvt('OK', 'recovered_by_reopen', { stable: STATE.rec.stableSec.toFixed(2), truth: fmtTime(getTruthTime()) }, 'reopen:ok', 1500);
+    }
 
     uiShowOk('Восстановлено');
     STATE.rec.okTimer = setTimeout(function () { uiHide(); }, 1500);
@@ -1138,37 +1428,66 @@
   function enterRecovery(mode, reason, meta) {
     meta = meta || {};
     if (!CFG.enabled) return;
+    if (isManualSuppressed()) return;
+    if (STATE.rec.mode === MODE_FAIL && !meta.manual) return;
 
-    var hard = (String(mode || '') === MODE_HARD) || !!meta.forceHard;
-    var nextMode = hard ? MODE_HARD : MODE_SOFT;
+    var ts = now();
+    var hardRequested = (String(mode || '') === MODE_HARD) || !!meta.forceHard;
+    var needReopen = !!meta.needReopen || isLoopReopenRequired(ts);
 
-    // Escalate from soft to hard if requested or if we are already failing often.
-    if (isRecovering()) {
-      if (!hard && STATE.rec.mode === MODE_HARD) nextMode = MODE_HARD;
-      if (hard && STATE.rec.mode !== MODE_HARD) {
-        logEvt('WRN', 'escalate', { from: STATE.rec.mode, to: MODE_HARD, why: String(reason || '') }, 'rec:escalate', 1200);
-        nextMode = MODE_HARD;
+    var desiredMode = MODE_SOFT;
+    var hardIntent = '';
+
+    // Need reopen => no SOFT loops
+    if (needReopen) {
+      if (CFG.reopenOnFault && hardLeft() > 0) {
+        desiredMode = MODE_HARD;
+        hardIntent = 'reopen';
+      } else {
+        recoveryFail('reopen_required');
+        return;
       }
+    } else if (hardRequested) {
+      // Hard reset is allowed only when soft is exhausted/disabled, or on explicit manual request
+      var softPossible = CFG.allowSoft && softLeft() > 0;
+      if (softPossible && !meta.fromSoftExhausted && !meta.manualHardNow) desiredMode = MODE_SOFT;
+      else {
+        desiredMode = MODE_HARD;
+        hardIntent = computeHardIntent(meta);
+        if (hardIntent === 'hard_reset' && !CFG.allowHard) { recoveryFail('hard_disabled'); return; }
+        if (hardIntent === 'reopen' && !CFG.reopenOnFault && !meta.manual) { recoveryFail('reopen_disabled'); return; }
+        if (hardLeft() <= 0) { recoveryFail('hard_exhausted'); return; }
+      }
+    } else {
+      // Soft by default
+      if (CFG.allowSoft && softLeft() > 0) desiredMode = MODE_SOFT;
+      else if (CFG.reopenOnFault && hardLeft() > 0) { desiredMode = MODE_HARD; hardIntent = 'reopen'; }
+      else if (CFG.allowHard && hardLeft() > 0 && (!CFG.allowSoft || softLeft() <= 0)) { desiredMode = MODE_HARD; hardIntent = 'hard_reset'; }
+      else { recoveryFail('budget_exhausted'); return; }
+    }
+
+    // if already recovering: avoid resetting counters (budget is session-based)
+    if (isRecovering()) {
+      if (STATE.rec.mode === MODE_HARD && desiredMode === MODE_SOFT) return;
+      if (STATE.rec.mode === desiredMode) {
+        STATE.rec.reason = String(reason || STATE.rec.reason || '');
+        if (desiredMode === MODE_HARD && hardIntent) STATE.rec.hardIntent = hardIntent;
+        lockGuard('fault', { capture: false });
+        return;
+      }
+
+      // escalate soft -> hard
+      logEvt('WRN', 'escalate', { from: STATE.rec.mode, to: desiredMode, why: String(reason || '') }, 'rec:escalate', 1200);
     }
 
     var video = null;
     try { video = STATE.video || (window.Lampa && Lampa.PlayerVideo && Lampa.PlayerVideo.video ? Lampa.PlayerVideo.video() : null); } catch (_) { video = STATE.video; }
     updateStreamContext(video, null);
 
-    // repeated fault after soft success => hard
-    try {
-      if (!hard && STATE.rec.lastRecoveryMode === MODE_SOFT && STATE.rec.lastOkTs && (now() - STATE.rec.lastOkTs) < DET.repeatFaultHardMs) {
-        nextMode = MODE_HARD;
-      }
-    } catch (_) { }
-
     STATE.rec.seq++;
-    STATE.rec.mode = nextMode;
+    STATE.rec.mode = desiredMode;
     STATE.rec.reason = String(reason || '');
-    STATE.rec.softMax = clampInt(CFG.softAttempts, 1, 10);
-    STATE.rec.hardMax = clampInt(CFG.hardAttempts, 0, 5);
-    STATE.rec.softAttempt = 0;
-    STATE.rec.hardAttempt = 0;
+    STATE.rec.hardIntent = hardIntent || STATE.rec.hardIntent || '';
     STATE.rec.stableSec = 0;
     STATE.rec.stableLastCur = NaN;
     STATE.rec.stableLastTs = 0;
@@ -1181,18 +1500,24 @@
 
     lockGuard(String(reason || ''), { capture: true });
 
-    var stage = (nextMode === MODE_HARD ? 'HARD' : 'SOFT') + ' start';
-    var info = 'attempt 0/' + String(nextMode === MODE_HARD ? STATE.rec.hardMax : STATE.rec.softMax) + ' | truth=' + fmtTime(getTruthTime()) + ' | video=' + fmtTime(video ? video.currentTime : 0) + ' | dur=' + fmtTime(video ? video.duration : 0);
+    var modeLabel = (desiredMode === MODE_HARD ? (STATE.rec.hardIntent === 'reopen' ? 'REOPEN' : 'HARD') : 'SOFT');
+    var stage = modeLabel + ' start';
+    var info = 'softLeft=' + String(softLeft()) + ' | hardLeft=' + String(hardLeft()) + ' | truth=' + fmtTime(getTruthTime()) + ' | video=' + fmtTime(video ? video.currentTime : 0) + ' | dur=' + fmtTime(video ? video.duration : 0);
     var details = CFG.debugPopup ? ('reason=' + String(reason || '') + '\n' + mediaState(video)) : '';
     uiShowRecover(stage, info, details);
 
     logEvt('WRN', 'enter_recovery', {
-      mode: nextMode === MODE_HARD ? 'hard' : 'soft',
+      mode: desiredMode === MODE_HARD ? 'hard' : 'soft',
+      intent: desiredMode === MODE_HARD ? String(STATE.rec.hardIntent || '') : '',
       reason: String(reason || ''),
       resume: resume.toFixed(2),
       truth: getTruthTime().toFixed(2),
+      softLeft: softLeft(),
+      hardLeft: hardLeft(),
       srcSig: String(STATE.srcSig || '')
     }, 'rec:enter:' + String(reason || ''), 1200);
+
+    logEvt('DBG', 'attempts_budget', { softLeft: softLeft(), hardLeft: hardLeft() }, 'budget:enter', 1500);
 
     scheduleNextAttempt(0);
   }
@@ -1205,14 +1530,14 @@
   }
 
   function hardActionName(n) {
-    if (n === 1) return 'hard_reload_video';
-    return 'hard_reopen_player';
+    if (String(STATE.rec.hardIntent || '') === 'hard_reset') return 'hard_reset_video';
+    return 'reopen_player';
   }
 
   function actionSeekPlay(video, t) {
     try { if (!video) return; } catch (_) { return; }
     try { video.currentTime = Math.max(0, t); } catch (_) { }
-    try { if (typeof video.play === 'function') video.play(); } catch (_) { }
+    safePlay(video, 'seek_play');
   }
 
   function actionPauseLoadSeek(video, t) {
@@ -1220,6 +1545,42 @@
     safe(function () { if (typeof video.pause === 'function') video.pause(); });
     safe(function () { if (typeof video.load === 'function') video.load(); });
     setTimeout(function () { actionSeekPlay(video, t); }, 250);
+  }
+
+  function safePlay(video, why) {
+    try {
+      if (!video || typeof video.play !== 'function') return;
+      var p = null;
+      try { p = video.play(); } catch (_) { p = null; }
+      if (!p || typeof p.catch !== 'function') return;
+      p.catch(function (err) {
+        try {
+          if (!CFG.enabled) return;
+          if (isManualSuppressed()) return;
+          var msg = '';
+          try { msg = err && err.message ? String(err.message) : String(err); } catch (_) { msg = ''; }
+          var low = '';
+          try { low = msg.toLowerCase(); } catch (_) { low = ''; }
+          if (!low) return;
+
+          if (low.indexOf('no supported source') >= 0) {
+            faultDetected('no_supported_source', { reason: msg, where: String(why || '') });
+            lockGuard('no_supported_source', { capture: true });
+            enterRecovery(MODE_HARD, 'no_supported_source', { forceHard: true, needReopen: true });
+            return;
+          }
+
+          if (low.indexOf('interrupted') >= 0 && low.indexOf('pause') >= 0) {
+            faultDetected('play_interrupted', { reason: msg, where: String(why || '') });
+            lockGuard('play_interrupted', { capture: true });
+            enterRecovery(MODE_HARD, 'play_interrupted', { forceHard: true, needReopen: true });
+            return;
+          }
+
+          faultDetected('play_error', { reason: msg, where: String(why || '') });
+        } catch (_) { }
+      });
+    } catch (_) { }
   }
 
   function actionReloadUrl(url, t) {
@@ -1260,6 +1621,8 @@
       if (!pd || typeof pd !== 'object') return false;
       if (!pd.url || typeof pd.url !== 'string') return false;
 
+      logEvt('INF', 'reopen_start', { resume: toNum(t, 0).toFixed(2), truth: getTruthTime().toFixed(2), url: shortUrl(pd.url), reason: String(STATE.rec.reason || '') }, 'reopen:start', 1200);
+
       // try to avoid preroll if possible (playlist continue)
       try { pd.continue_play = true; } catch (_) { }
       try {
@@ -1296,6 +1659,7 @@
   function runRecoveryAttempt() {
     if (!CFG.enabled) return;
     if (!isRecovering()) return;
+    if (isManualSuppressed()) return;
 
     var video = null;
     try { video = STATE.video || (window.Lampa && Lampa.PlayerVideo && Lampa.PlayerVideo.video ? Lampa.PlayerVideo.video() : null); } catch (_) { video = STATE.video; }
@@ -1311,8 +1675,15 @@
     var mode = STATE.rec.mode;
 
     if (mode === MODE_SOFT) {
+      // When reopen strategy is enabled: give only one SOFT chance, then reopen.
+      try {
+        if (CFG.reopenOnFault && STATE.rec.softAttempt >= 1 && STATE.rec.hardMax > 0 && hardLeft() > 0) {
+          return enterRecovery(MODE_HARD, 'soft_to_reopen', { forceHard: true, fromSoftExhausted: true });
+        }
+      } catch (_) { }
+
       if (STATE.rec.softAttempt >= STATE.rec.softMax) {
-        if (STATE.rec.hardMax > 0) return enterRecovery(MODE_HARD, 'soft_exhausted', { forceHard: true });
+        if (STATE.rec.hardMax > 0) return enterRecovery(MODE_HARD, 'soft_exhausted', { forceHard: true, fromSoftExhausted: true });
         return recoveryFail('soft_exhausted');
       }
 
@@ -1334,8 +1705,12 @@
       var url2 = '';
       try { url2 = (STATE.guard.lockedUrl && typeof STATE.guard.lockedUrl === 'string') ? STATE.guard.lockedUrl : String(STATE.streamId || STATE.src || ''); } catch (_) { url2 = ''; }
 
-      if (STATE.rec.hardAttempt === 1) ok = actionHardReloadVideo(url2, resume);
-      else ok = actionHardReopenPlayer(resume);
+      if (String(STATE.rec.hardIntent || '') === 'hard_reset') {
+        if (!CFG.allowHard) return recoveryFail('hard_disabled');
+        ok = actionHardReloadVideo(url2, resume);
+      } else {
+        ok = actionHardReopenPlayer(resume);
+      }
     }
 
     STATE.rec.attemptStartedTs = now();
@@ -1343,13 +1718,15 @@
 
     var total = (mode === MODE_HARD) ? STATE.rec.hardMax : STATE.rec.softMax;
     var n = (mode === MODE_HARD) ? STATE.rec.hardAttempt : STATE.rec.softAttempt;
-    var stage = (mode === MODE_HARD ? 'HARD' : 'SOFT') + ' attempt ' + String(n) + '/' + String(total) + ': ' + action;
-    var info = 'truth=' + fmtTime(getTruthTime()) + ' | video=' + fmtTime(video ? video.currentTime : 0) + ' | resume=' + fmtTime(resume) + ' | dur=' + fmtTime(video ? video.duration : 0);
+    var modeLabel = (mode === MODE_HARD ? (String(STATE.rec.hardIntent || '') === 'hard_reset' ? 'HARD' : 'REOPEN') : 'SOFT');
+    var stage = modeLabel + ' attempt ' + String(n) + '/' + String(total) + ': ' + action;
+    var info = 'softLeft=' + String(softLeft()) + ' | hardLeft=' + String(hardLeft()) + ' | truth=' + fmtTime(getTruthTime()) + ' | video=' + fmtTime(video ? video.currentTime : 0) + ' | resume=' + fmtTime(resume) + ' | dur=' + fmtTime(video ? video.duration : 0);
     var details = CFG.debugPopup ? ('reason=' + String(STATE.rec.reason || '') + '\n' + mediaState(video)) : '';
     uiShowRecover(stage, info, details);
 
     logEvt('INF', 'attempt', {
       mode: mode === MODE_HARD ? 'hard' : 'soft',
+      intent: mode === MODE_HARD ? String(STATE.rec.hardIntent || '') : '',
       n: n,
       m: total,
       action: action,
@@ -1369,11 +1746,11 @@
   }
 
   function exitPlayer(why) {
-    logEvt('INF', 'exit', { why: String(why || '') }, 'ui:exit', 1200);
-    recoveryStop('exit');
-    unlockGuard('exit');
-    safe(function () { if (window.Lampa && Lampa.Player && typeof Lampa.Player.close === 'function') return Lampa.Player.close(); });
-    safe(function () { if (window.Lampa && Lampa.Controller && typeof Lampa.Controller.back === 'function') return Lampa.Controller.back(); });
+    logEvt('INF', 'ui_close', { reason: String(why || 'exit') }, 'ui:exit', 1200);
+    stopGuardAndRecovery('exit_player', 30000);
+    var closed = false;
+    safe(function () { if (window.Lampa && Lampa.Player && typeof Lampa.Player.close === 'function') { closed = true; return Lampa.Player.close(); } });
+    if (!closed) safe(function () { if (window.Lampa && Lampa.Controller && typeof Lampa.Controller.back === 'function') return Lampa.Controller.back(); });
   }
 
   function handlePlayerVideoSend(origSend, args) {
@@ -1385,6 +1762,7 @@
     var video = null;
     try { video = STATE.video || (window.Lampa && Lampa.PlayerVideo && Lampa.PlayerVideo.video ? Lampa.PlayerVideo.video() : null); } catch (_) { video = STATE.video; }
     updateStreamContext(video, null);
+    if (isManualSuppressed()) return origSend.apply(this, args || []);
 
     if (t === 'timeupdate') {
       var cur = safe(function () { return (data && data.current !== undefined) ? data.current : (video ? video.currentTime : 0); }, 0);
@@ -1404,7 +1782,7 @@
         STATE.session.health = 'SUSPECT';
         lockGuard('session_reset0', { capture: true });
         faultDetected('reset0', { reason: 't/dur reset', cur: toNum(cur, 0).toFixed(2), dur: toNum(dur, 0).toFixed(2) });
-        enterRecovery(MODE_HARD, 'reset0', { forceHard: true });
+        enterRecovery(MODE_HARD, 'reset0', { forceHard: true, needReopen: true });
         return; // suppress bad timeupdate (avoid UI reset to 0)
       }
 
@@ -1420,7 +1798,7 @@
         STATE.session.health = 'SUSPECT';
         lockGuard('srcchange', { capture: true });
         faultDetected('srcchange', { reason: 'srcSig changed', from: String(STATE.truth.srcSig || ''), to: String(STATE.srcSig || '') });
-        enterRecovery(MODE_HARD, 'srcchange', { forceHard: true });
+        enterRecovery(MODE_HARD, 'srcchange', { forceHard: true, needReopen: true });
         return;
       }
 
@@ -1451,7 +1829,7 @@
       if (isRecovering() || isGuardLocked()) {
         lockGuard('ended_during_guard', { capture: true });
         faultDetected('ended_guard', { reason: 'ended while guard/recover' });
-        enterRecovery(MODE_HARD, 'ended_guard', { forceHard: true });
+        enterRecovery(MODE_HARD, 'ended_guard', { forceHard: true, needReopen: true });
         return;
       }
 
@@ -1498,7 +1876,28 @@
 
     on('waiting', function () { try { if (!CFG.enabled) return; if (STATE.video === video) markBuffering(true, 'waiting', ''); } catch (_) { } });
     on('stalled', function () { try { if (!CFG.enabled) return; if (STATE.video === video) markBuffering(true, 'stalled', ''); } catch (_) { } });
-    on('error', function () { try { if (!CFG.enabled) return; if (STATE.video === video) markBuffering(true, 'error', ''); } catch (_) { } });
+    on('error', function () {
+      try {
+        if (!CFG.enabled) return;
+        if (STATE.video !== video) return;
+
+        var code = 0;
+        var msg = '';
+        try { code = video && video.error && typeof video.error.code === 'number' ? video.error.code : 0; } catch (_) { code = 0; }
+        try { msg = video && video.error && video.error.message ? String(video.error.message) : ''; } catch (_) { msg = ''; }
+        var low = '';
+        try { low = msg.toLowerCase(); } catch (_) { low = ''; }
+
+        markBuffering(true, 'error', msg || String(code || ''));
+
+        // MEDIA_ERR_SRC_NOT_SUPPORTED
+        if (code === 4 || (low && low.indexOf('no supported source') >= 0)) {
+          faultDetected('no_supported_source', { reason: msg || 'MEDIA_ERR_SRC_NOT_SUPPORTED', code: String(code || '') });
+          lockGuard('no_supported_source', { capture: true });
+          enterRecovery(MODE_HARD, 'no_supported_source', { forceHard: true, needReopen: true });
+        }
+      } catch (_) { }
+    });
     on('abort', function () { try { if (!CFG.enabled) return; if (STATE.video === video) markBuffering(true, 'abort', ''); } catch (_) { } });
     on('emptied', function () { try { if (!CFG.enabled) return; if (STATE.video === video) markBuffering(true, 'emptied', ''); } catch (_) { } });
     on('playing', function () { try { if (!CFG.enabled) return; if (STATE.video === video) STATE.session.buffering = false; } catch (_) { } });
@@ -1578,18 +1977,19 @@
 
     try {
       if (pl.listener && typeof pl.listener.send === 'function' && !pl.listener.send.__blPlayerGuardWrappedV2) {
-        var origSend = pl.listener.send;
-        pl.listener.send = function () {
-          if (!CFG.enabled) return origSend.apply(this, arguments);
-          var type = (arguments && arguments.length) ? arguments[0] : '';
-          if (String(type || '') === 'select' && CFG.blockNext && isGuardLocked() && !isManualAllowed()) {
-            logEvt('WRN', 'prevent_next', { where: 'playlist.select', reason: String(STATE.guard.reason || '') }, 'prevent:pl', 1200);
-            // escalate if needed
-            if (!isRecovering()) enterRecovery(MODE_HARD, 'prevent_next', { forceHard: true });
-            return;
-          }
-          return origSend.apply(this, arguments);
-        };
+	        var origSend = pl.listener.send;
+	        pl.listener.send = function () {
+	          if (!CFG.enabled) return origSend.apply(this, arguments);
+	          if (isManualSuppressed()) return origSend.apply(this, arguments);
+	          var type = (arguments && arguments.length) ? arguments[0] : '';
+	          if (String(type || '') === 'select' && CFG.blockNext && isGuardLocked() && !isManualAllowed()) {
+	            logEvt('WRN', 'prevent_next', { where: 'playlist.select', reason: String(STATE.guard.reason || '') }, 'prevent:pl', 1200);
+	            // escalate if needed
+	            if (!isRecovering()) enterRecovery(MODE_HARD, 'prevent_next', { forceHard: true, needReopen: true });
+	            return;
+	          }
+	          return origSend.apply(this, arguments);
+	        };
         pl.listener.send.__blPlayerGuardWrappedV2 = true;
       }
     } catch (_) { }
@@ -1633,12 +2033,13 @@
 
     try {
       if (p.listener && typeof p.listener.send === 'function' && !p.listener.send.__blPlayerGuardWrappedV2) {
-        var origSend = p.listener.send;
-        p.listener.send = function () {
-          if (!CFG.enabled) return origSend.apply(this, arguments);
-          var type = (arguments && arguments.length) ? arguments[0] : '';
-          var payload = (arguments && arguments.length > 1) ? arguments[1] : undefined;
-          var t = String(type || '');
+	        var origSend = p.listener.send;
+	        p.listener.send = function () {
+	          if (!CFG.enabled) return origSend.apply(this, arguments);
+	          if (isManualSuppressed()) return origSend.apply(this, arguments);
+	          var type = (arguments && arguments.length) ? arguments[0] : '';
+	          var payload = (arguments && arguments.length > 1) ? arguments[1] : undefined;
+	          var t = String(type || '');
 
           if (t === 'create' && payload && payload.data && typeof payload.abort === 'function') {
             try {
@@ -1646,12 +2047,12 @@
                 var u = '';
                 try { u = (payload.data && typeof payload.data.url === 'string') ? String(payload.data.url) : ''; } catch (_) { u = ''; }
                 if (STATE.guard.lockedUrl && u && u !== STATE.guard.lockedUrl) {
-                  payload.abort();
-                  logEvt('WRN', 'prevent_next', { where: 'player.create', url: shortUrl(u), locked: shortUrl(STATE.guard.lockedUrl), reason: String(STATE.guard.reason || '') }, 'prevent:create', 1200);
-                  if (!isRecovering()) enterRecovery(MODE_HARD, 'prevent_next', { forceHard: true });
-                  return;
-                }
-              }
+	                  payload.abort();
+	                  logEvt('WRN', 'prevent_next', { where: 'player.create', url: shortUrl(u), locked: shortUrl(STATE.guard.lockedUrl), reason: String(STATE.guard.reason || '') }, 'prevent:create', 1200);
+	                  if (!isRecovering()) enterRecovery(MODE_HARD, 'prevent_next', { forceHard: true, needReopen: true });
+	                  return;
+	                }
+	              }
             } catch (_) { }
           }
 
@@ -1661,11 +2062,11 @@
                 var uStart = '';
                 try { uStart = (payload && typeof payload.url === 'string') ? String(payload.url) : ''; } catch (_) { uStart = ''; }
                 if (STATE.guard.lockedUrl && uStart && uStart !== STATE.guard.lockedUrl) {
-                  logEvt('WRN', 'prevent_next', { where: 'player.start', url: shortUrl(uStart), locked: shortUrl(STATE.guard.lockedUrl), reason: String(STATE.guard.reason || '') }, 'prevent:start', 1200);
-                  enterRecovery(MODE_HARD, 'next_started', { forceHard: true });
-                  return;
-                }
-              }
+	                  logEvt('WRN', 'prevent_next', { where: 'player.start', url: shortUrl(uStart), locked: shortUrl(STATE.guard.lockedUrl), reason: String(STATE.guard.reason || '') }, 'prevent:start', 1200);
+	                  enterRecovery(MODE_HARD, 'next_started', { forceHard: true, needReopen: true });
+	                  return;
+	                }
+	              }
 
               var protect = false;
               try { protect = isRecovering() || isGuardLocked(); } catch (_) { protect = false; }
@@ -1676,21 +2077,28 @@
               STATE.session.buffering = false;
               STATE.session.lastSrcChangeTs = 0;
 
-              if (!protect) {
+	              if (!protect) {
                 STATE.session.maxTimeSec = 0;
                 STATE.session.hadValidDur = false;
                 STATE.session.lastValidDurSec = 0;
                 STATE.session.lastValidDurTs = 0;
                 STATE.session.health = 'OK';
 
-                // reset session-truth (LS stays as backup)
-                STATE.truth.t = 0;
-                STATE.truth.ts = 0;
-                STATE.truth.dur = 0;
-                STATE.truth.srcSig = '';
-                STATE.truth.fromSession = false;
-                STATE.truth.lastSaveTs = 0;
-              }
+	                // reset session-truth (LS stays as backup)
+	                STATE.truth.t = 0;
+	                STATE.truth.ts = 0;
+	                STATE.truth.dur = 0;
+	                STATE.truth.srcSig = '';
+	                STATE.truth.fromSession = false;
+	                STATE.truth.lastSaveTs = 0;
+
+	                // reset attempt budgets for new content/session
+	                STATE.rec.softAttempt = 0;
+	                STATE.rec.hardAttempt = 0;
+	                STATE.rec.lastOkTs = 0;
+	                try { if (STATE.loop && STATE.loop.events) STATE.loop.events = []; } catch (_) { }
+	                try { if (STATE.loop) { STATE.loop.reopenRequiredTs = 0; STATE.loop.reopenBucket = null; STATE.loop.reopenCount = 0; } } catch (_) { }
+	              }
 
               updateStreamContext(STATE.video, payload.url || '');
             } catch (_) { }
@@ -1721,12 +2129,40 @@
     return true;
   }
 
+  function patchController() {
+    if (STATE.patched.controller) return true;
+    if (!window.Lampa || !Lampa.Controller) return false;
+    var c = Lampa.Controller;
+    if (!c || typeof c !== 'object') return false;
+
+    try {
+      if (typeof c.back === 'function' && !c.back.__blPlayerGuardWrappedV2) {
+        var origBack = c.back;
+        c.back = function () {
+          try {
+            if (CFG.enabled && STATE.ui && STATE.ui.mode && STATE.ui.mode !== 'hidden') {
+              uiClose('back');
+              return;
+            }
+          } catch (_) { }
+          return origBack.apply(this, arguments);
+        };
+        c.back.__blPlayerGuardWrappedV2 = true;
+      }
+    } catch (_) { }
+
+    STATE.patched.controller = true;
+    logEvt('OK', 'installed', { what: 'Controller' }, 'pg:installed:controller', 5000);
+    return true;
+  }
+
   function patchAll() {
     var ok = true;
     if (!patchPlayerVideo()) ok = false;
     if (!patchPlaylist()) ok = false;
     if (!patchPanel()) ok = false;
     if (!patchPlayer()) ok = false;
+    if (!patchController()) ok = false;
     return ok;
   }
 
@@ -1736,18 +2172,21 @@
       CFG.storePos = parseBool(sGet(KEY_STORE_POS, '1'), true);
       CFG.blockNext = parseBool(sGet(KEY_BLOCK_NEXT, '1'), true);
       CFG.debugPopup = parseBool(sGet(KEY_DEBUG_POPUP, '1'), true);
+      CFG.reopenOnFault = parseBool(sGet(KEY_REOPEN, '1'), true);
+      CFG.allowSoft = parseBool(sGet(KEY_ALLOW_SOFT, '1'), true);
+      CFG.allowHard = parseBool(sGet(KEY_ALLOW_HARD, '0'), false);
 
       var soft = sGet(KEY_SOFT_ATTEMPTS, null);
       if (soft === null || soft === undefined || soft === '') soft = sGet(KEY_ATTEMPTS_LEGACY, '4');
-      CFG.softAttempts = clampInt(soft, 1, 10);
+      CFG.softAttempts = clampInt(soft, 0, 5);
 
-      CFG.hardAttempts = clampInt(sGet(KEY_HARD_ATTEMPTS, '1'), 0, 5);
+      CFG.hardAttempts = clampInt(sGet(KEY_HARD_ATTEMPTS, '1'), 0, 2);
       CFG.attemptDelaySec = clampInt(sGet(KEY_DELAY_SEC, '2'), 1, 5);
       CFG.popupMinSec = clampInt(sGet(KEY_POPUP_MIN_SEC, '2'), 1, 5);
     } catch (_) { }
 
-    STATE.rec.softMax = clampInt(CFG.softAttempts, 1, 10);
-    STATE.rec.hardMax = clampInt(CFG.hardAttempts, 0, 5);
+    STATE.rec.softMax = CFG.allowSoft ? clampInt(CFG.softAttempts, 0, 5) : 0;
+    STATE.rec.hardMax = clampInt(CFG.hardAttempts, 0, 2);
     return CFG;
   }
 
@@ -1769,7 +2208,7 @@
           attachToVideo(Lampa.PlayerVideo.video(), null);
         }
       } catch (_) { }
-      logEvt('INF', 'enabled', { soft: CFG.softAttempts, hard: CFG.hardAttempts, delay: CFG.attemptDelaySec, blockNext: CFG.blockNext ? 1 : 0 }, 'pg:enabled', 1500);
+      logEvt('INF', 'enabled', { soft: CFG.softAttempts, hard: CFG.hardAttempts, delay: CFG.attemptDelaySec, reopen: CFG.reopenOnFault ? 1 : 0, allowSoft: CFG.allowSoft ? 1 : 0, allowHard: CFG.allowHard ? 1 : 0, blockNext: CFG.blockNext ? 1 : 0 }, 'pg:enabled', 1500);
     }
 
     return CFG;
@@ -1797,7 +2236,7 @@
           try {
             if (!e || !e.name) return;
             var n = String(e.name);
-            if (n === KEY_ENABLED || n === KEY_STORE_POS || n === KEY_BLOCK_NEXT || n === KEY_DEBUG_POPUP || n === KEY_SOFT_ATTEMPTS || n === KEY_ATTEMPTS_LEGACY || n === KEY_HARD_ATTEMPTS || n === KEY_DELAY_SEC || n === KEY_POPUP_MIN_SEC) API.refresh();
+            if (n === KEY_ENABLED || n === KEY_STORE_POS || n === KEY_BLOCK_NEXT || n === KEY_DEBUG_POPUP || n === KEY_REOPEN || n === KEY_ALLOW_SOFT || n === KEY_ALLOW_HARD || n === KEY_SOFT_ATTEMPTS || n === KEY_ATTEMPTS_LEGACY || n === KEY_HARD_ATTEMPTS || n === KEY_DELAY_SEC || n === KEY_POPUP_MIN_SEC) API.refresh();
           } catch (_) { }
         });
       }
