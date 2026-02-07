@@ -995,6 +995,54 @@
 		      });
 
 		      P(ctx, {
+		        id: 'player_guard_enabled',
+		        type: 'toggle',
+		        values: { 0: 'OFF', 1: 'ON' },
+		        default: 0,
+		        name: 'Защита плеера от обрывов',
+		        desc: 'Детектирует ложный конец (jump→end/ended после waiting/error) и пытается восстановить позицию. По умолчанию OFF.',
+		        onChange: function () {
+		          try { if (window.BL && BL.PlayerGuard && BL.PlayerGuard.refresh) BL.PlayerGuard.refresh(); } catch (_) { }
+		        }
+		      });
+
+		      P(ctx, {
+		        id: 'player_guard_attempts',
+		        type: 'select',
+		        values: { '3': '3', '5': '5', '7': '7' },
+		        default: '5',
+		        name: 'Кол-во попыток восстановления',
+		        desc: 'Сколько раз пытаться восстановить (backoff).',
+		        onChange: function () {
+		          try { if (window.BL && BL.PlayerGuard && BL.PlayerGuard.refresh) BL.PlayerGuard.refresh(); } catch (_) { }
+		        }
+		      });
+
+		      P(ctx, {
+		        id: 'player_guard_debug_popup',
+		        type: 'toggle',
+		        values: { 0: 'OFF', 1: 'ON' },
+		        default: 0,
+		        name: 'Отладочная инфа в попапе',
+		        desc: 'Показывает reason/state (readyState/networkState/src) в recovery попапе.',
+		        onChange: function () {
+		          try { if (window.BL && BL.PlayerGuard && BL.PlayerGuard.refresh) BL.PlayerGuard.refresh(); } catch (_) { }
+		        }
+		      });
+
+		      P(ctx, {
+		        id: 'player_guard_store_pos',
+		        type: 'toggle',
+		        values: { 0: 'OFF', 1: 'ON' },
+		        default: 1,
+		        name: 'Сохранять позицию (localStorage)',
+		        desc: 'Пишет lastGoodTime в localStorage (throttle) как backup для восстановления.',
+		        onChange: function () {
+		          try { if (window.BL && BL.PlayerGuard && BL.PlayerGuard.refresh) BL.PlayerGuard.refresh(); } catch (_) { }
+		        }
+		      });
+
+		      P(ctx, {
 		        id: 'ext_filters',
 		        type: 'toggle',
 		        values: { 0: 'OFF', 1: 'ON' },

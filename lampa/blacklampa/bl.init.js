@@ -842,6 +842,7 @@
 	        'bl.ui.filescanner.js',
 	        'bl.backup.js',
 	        'bl.ext.filters.js',
+	        'bl.player.guard.js',
 	        'bl.i18n.ru.js',
 	        'bl.i18n.core.js',
 	        'bl.menu.registry.js',
