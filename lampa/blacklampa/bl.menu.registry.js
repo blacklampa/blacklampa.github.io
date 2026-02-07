@@ -1006,24 +1006,36 @@
 				        }
 				      });
 
-				      P(ctx, {
-				        id: 'player_guard_reopen_on_fault',
-				        type: 'toggle',
-				        values: { 0: 'OFF', 1: 'ON' },
-				        default: 1,
-				        name: 'PlayerGuard: Перезапускать плеер при обрыве (reopen)',
-				        desc: 'Основной фикс: при цикличных/сессионных сбоях закрывает плеер и открывает текущий эпизод заново на truth позиции.',
-				        onChange: function () {
-				          try { if (window.BL && BL.PlayerGuard && BL.PlayerGuard.refresh) BL.PlayerGuard.refresh(); } catch (_) { }
-				        }
-				      });
+					      P(ctx, {
+					        id: 'player_guard_reopen_on_fault',
+					        type: 'toggle',
+					        values: { 0: 'OFF', 1: 'ON' },
+					        default: 1,
+					        name: 'PlayerGuard: Перезапускать плеер при обрыве (reopen)',
+					        desc: 'Основной фикс: при цикличных/сессионных сбоях закрывает плеер и открывает текущий эпизод заново на truth позиции.',
+					        onChange: function () {
+					          try { if (window.BL && BL.PlayerGuard && BL.PlayerGuard.refresh) BL.PlayerGuard.refresh(); } catch (_) { }
+					        }
+					      });
 
-				      P(ctx, {
-				        id: 'player_guard_allow_soft',
-				        type: 'toggle',
-				        values: { 0: 'OFF', 1: 'ON' },
-				        default: 1,
-				        name: 'PlayerGuard: Разрешить SOFT recovery',
+					      P(ctx, {
+					        id: 'player_guard_auto_reopen_from_position',
+					        type: 'toggle',
+					        values: { 0: 'OFF', 1: 'ON' },
+					        default: 1,
+					        name: 'PlayerGuard: Авто \"старт заново с позиции\" при обрыве',
+					        desc: 'При fault автоматически выполняет \"Старт заново с позиции\": перезапуск плеера и продолжение с последней стабильной позиции.',
+					        onChange: function () {
+					          try { if (window.BL && BL.PlayerGuard && BL.PlayerGuard.refresh) BL.PlayerGuard.refresh(); } catch (_) { }
+					        }
+					      });
+
+					      P(ctx, {
+					        id: 'player_guard_allow_soft',
+					        type: 'toggle',
+					        values: { 0: 'OFF', 1: 'ON' },
+					        default: 1,
+					        name: 'PlayerGuard: Разрешить SOFT recovery',
 				        desc: 'Быстрые попытки (seek/play/load) перед reopen. При fault-loop SOFT отключается автоматически.',
 				        onChange: function () {
 				          try { if (window.BL && BL.PlayerGuard && BL.PlayerGuard.refresh) BL.PlayerGuard.refresh(); } catch (_) { }

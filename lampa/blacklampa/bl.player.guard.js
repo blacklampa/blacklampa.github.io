@@ -23,12 +23,13 @@
   var KEY_REOPEN = LS_PREFIX + 'player_guard_reopen_on_fault';
   var KEY_ALLOW_SOFT = LS_PREFIX + 'player_guard_allow_soft';
   var KEY_ALLOW_HARD = LS_PREFIX + 'player_guard_allow_hard';
+  var KEY_AUTO_REOPEN_FROM_POSITION = LS_PREFIX + 'player_guard_auto_reopen_from_position';
 
   var DET = {
     epsilonEndSec: 2.0,
     jumpThresholdSec: 20,
     faultWindowMs: 10000,
-    keepFaultMs: 30000,
+    keepFaultMs: 60000,
     minWatchTimeSec: 5,
     seekGuardMs: 2500,
     reset0EpsSec: 0.5,
@@ -38,14 +39,17 @@
     loopBucketSec: 5,
     loopMinTruthSec: 10,
     loopMinCount: 3,
-    saveThrottleMs: 1500,
+    saveThrottleMs: 1000,
     saveMaxAgeMs: 72 * 3600 * 1000,
     guardLockMs: 25000,
     stableOkSec: 6.0,
     repeatFaultHardMs: 20000,
     attemptEvalMs: 1200,
     manualNextAllowMs: 1500,
-    budgetResetOkMs: 25000
+    budgetResetOkMs: 25000,
+    reopenBackoffSec: 1.5,
+    autoReopenCooldownMs: 25000,
+    autoBufferDelayMs: 1800
   };
 
   var CFG = {
@@ -59,7 +63,8 @@
     popupMinSec: 2,
     blockNext: true,
     debugPopup: true,
-    storePos: true
+    storePos: true,
+    autoReopenFromPosition: true
   };
 
   var MODE_NORMAL = 'NORMAL';
@@ -154,6 +159,11 @@
       lastOkTs: 0,
       pendingSeekSec: NaN,
       pendingParams: null,
+      autoTimer: null,
+      reopenCooldownUntilTs: 0,
+      activeReopenTransition: false,
+      reopenTransitionStartTs: 0,
+      reopenTransitionResumeSec: NaN,
       nextTimer: null,
       evalTimer: null,
       okTimer: null
@@ -687,11 +697,11 @@
   }
 
   function uiActionRestart() {
-    manualReopenOnce('btn_restart');
+    reopenFromPosition('btn_restart', null, { manual: true });
   }
 
   function uiActionRetry() {
-    if (CFG.reopenOnFault) manualReopenOnce('btn_retry');
+    if (CFG.reopenOnFault) reopenFromPosition('btn_retry', null, { manual: true });
     else manualSoftOnce('btn_retry');
   }
 
@@ -735,13 +745,22 @@
     }, Math.max(2500, clampInt(CFG.attemptDelaySec, 1, 5) * 1000));
   }
 
-  function manualReopenOnce(why) {
-    if (!CFG.enabled) return;
-    if (isManualSuppressed()) clearManualSuppress();
+  function reopenFromPosition(why, resumeOverride, meta) {
+    meta = meta || {};
+    var isAuto = !!meta.auto;
+
+    if (!CFG.enabled) return false;
+    if (isAuto) {
+      var ts0 = now();
+      if (inReopenCooldown(ts0)) return false;
+      bumpReopenCooldown(ts0, 'auto:' + String(why || ''));
+    } else if (isManualSuppressed()) {
+      clearManualSuppress();
+    }
 
     clearTimers();
     STATE.rec.mode = MODE_HARD;
-    STATE.rec.reason = String(why || 'manual_reopen');
+    STATE.rec.reason = String(why || (isAuto ? 'auto_reopen_from_position' : 'manual_reopen_from_position'));
     STATE.rec.hardIntent = 'reopen';
     STATE.rec.stableSec = 0;
     STATE.rec.stableLastCur = NaN;
@@ -751,16 +770,72 @@
     try { video = STATE.video || (window.Lampa && Lampa.PlayerVideo && Lampa.PlayerVideo.video ? Lampa.PlayerVideo.video() : null); } catch (_) { video = STATE.video; }
     updateStreamContext(video, null);
 
-    var resume = pickResumeTime(video);
+    var truthT = 0;
+    try {
+      // Auto path must not unexpectedly "resume at start" from LS: prefer current-session truth.
+      if (isAuto) {
+        if (STATE.truth && STATE.truth.fromSession) truthT = toNum(STATE.truth.t, 0);
+        else truthT = toNum(STATE.session.maxTimeSec, 0);
+      } else {
+        truthT = getTruthTime();
+      }
+    } catch (_) {
+      truthT = getTruthTime();
+    }
+    var liveT = NaN;
+    var dur = NaN;
+    try { liveT = video ? toNum(video.currentTime, NaN) : NaN; } catch (_) { liveT = NaN; }
+    try { dur = video ? toNum(video.duration, NaN) : NaN; } catch (_) { dur = NaN; }
+
+    var resume = NaN;
+    try { resume = (typeof resumeOverride === 'number' && isFinite(resumeOverride)) ? toNum(resumeOverride, NaN) : NaN; } catch (_) { resume = NaN; }
+    if (!isFinite(resume) || resume < 0) {
+      var backoff = toNum(DET.reopenBackoffSec, 1.5);
+      if (!isFinite(backoff) || backoff < 0) backoff = 1.5;
+      var liveCand = isFinite(liveT) ? Math.max(0, liveT - backoff) : NaN;
+
+      var useLive = isFinite(liveCand);
+      if (useLive && isFinite(dur) && dur > 0) {
+        if (isFinite(liveT) && liveT >= dur - DET.epsilonEndSec) useLive = false;
+        if (liveCand >= dur - DET.epsilonEndSec) useLive = false;
+      }
+      if (useLive) {
+        var jump = liveCand - truthT;
+        if (isFinite(jump) && jump > Math.max(12, DET.jumpThresholdSec)) useLive = false;
+      }
+
+      resume = useLive ? Math.max(truthT, liveCand) : Math.max(0, truthT);
+    }
+
+    if (isFinite(dur) && dur > 0) resume = Math.min(resume, Math.max(0, dur - DET.epsilonEndSec));
+    resume = Math.max(0, toNum(resume, 0));
+
     STATE.rec.resumeTimeSec = resume;
     STATE.rec.pendingSeekSec = resume;
 
-    lockGuard('manual_reopen', { capture: true });
+    // Transition window: avoid truth/LS corruption by t=0/dur=0 while reopening.
+    STATE.rec.activeReopenTransition = true;
+    STATE.rec.reopenTransitionStartTs = now();
+    STATE.rec.reopenTransitionResumeSec = resume;
 
-    logEvt('INF', 'reopen_start', { why: String(why || ''), resume: resume.toFixed(2), url: shortUrl(STATE.guard.lockedUrl || '') }, 'reopen:start', 1200);
+    lockGuard(isAuto ? 'auto_reopen_from_position' : 'manual_reopen_from_position', { capture: true });
 
-    var stage = 'REOPEN manual';
-    var info = 'truth=' + fmtTime(getTruthTime()) + ' | resume=' + fmtTime(resume);
+    try {
+      if (CFG.storePos) writeTruthLS(resume, isFinite(dur) && dur > 0 ? dur : 0, String(STATE.srcSig || ''), isAuto ? 'auto_reopen_from_position' : 'manual_reopen_from_position');
+    } catch (_) { }
+
+    logEvt('INF', 'reopenFromPosition', {
+      reason: String(why || ''),
+      resume: resume.toFixed(2),
+      truth: toNum(truthT, 0).toFixed(2),
+      live: isFinite(liveT) ? liveT.toFixed(2) : '',
+      dur: isFinite(dur) ? dur.toFixed(2) : '',
+      srcSig: String(STATE.srcSig || ''),
+      auto: isAuto ? 1 : 0
+    }, 'reopenFromPos:start', 1200);
+
+    var stage = 'REOPEN ' + (isAuto ? 'auto' : 'manual');
+    var info = 'truth=' + fmtTime(truthT) + ' | live=' + fmtTime(isFinite(liveT) ? liveT : 0) + ' | resume=' + fmtTime(resume) + (isFinite(dur) && dur > 0 ? (' | dur=' + fmtTime(dur)) : '');
     var details = CFG.debugPopup ? ('why=' + String(why || '') + '\n' + mediaState(video)) : '';
     uiShowRecover(stage, info, details);
 
@@ -772,9 +847,15 @@
       try {
         if (!CFG.enabled) return;
         if (STATE.rec.mode !== MODE_HARD) return;
-        recoveryFail('manual_reopen_failed');
+        recoveryFail(isAuto ? 'auto_reopen_failed' : 'manual_reopen_failed');
       } catch (_) { }
     }, Math.max(4500, clampInt(CFG.attemptDelaySec, 1, 5) * 1000 + 1500));
+
+    return true;
+  }
+
+  function manualReopenOnce(why) {
+    return reopenFromPosition(String(why || ''), null, { manual: true });
   }
 
   function uiShowRecover(stage, info, details) {
@@ -802,9 +883,11 @@
     safe(function () { if (STATE.rec.nextTimer) clearTimeout(STATE.rec.nextTimer); });
     safe(function () { if (STATE.rec.evalTimer) clearTimeout(STATE.rec.evalTimer); });
     safe(function () { if (STATE.rec.okTimer) clearTimeout(STATE.rec.okTimer); });
+    safe(function () { if (STATE.rec.autoTimer) clearTimeout(STATE.rec.autoTimer); });
     STATE.rec.nextTimer = null;
     STATE.rec.evalTimer = null;
     STATE.rec.okTimer = null;
+    STATE.rec.autoTimer = null;
   }
 
   function detachVideoListeners() {
@@ -903,15 +986,31 @@
   }
 
   function markSeek() {
-    STATE.seek.lastSeekTs = now();
+    var ts = now();
+    try {
+      // During reopen transition: do not touch truth (avoid t=0 overwrite), but keep seek-guard.
+      if (STATE.rec && STATE.rec.activeReopenTransition) {
+        STATE.seek.lastSeekTs = ts;
+        return;
+      }
+    } catch (_) { }
     try {
       var v = null;
       try { v = STATE.video || (window.Lampa && Lampa.PlayerVideo && typeof Lampa.PlayerVideo.video === 'function' ? Lampa.PlayerVideo.video() : null); } catch (_) { v = STATE.video; }
       if (v && typeof v.currentTime !== 'undefined') {
         var ct = toNum(v.currentTime, NaN);
+        try {
+          // Do not treat session reset-to-0 as a user seek (preserve truth).
+          var truthT = getTruthTime();
+          if (isFinite(ct) && ct <= DET.reset0EpsSec && truthT >= DET.reset0HardTruthSec) {
+            if (STATE.session.buffering || isGuardLocked() || isFaultWindowOpen(ts) || isRecovering()) return;
+          }
+        } catch (_) { }
+
         if (isFinite(ct) && ct >= 0) {
+          STATE.seek.lastSeekTs = ts;
           STATE.truth.t = ct;
-          STATE.truth.ts = now();
+          STATE.truth.ts = ts;
           try {
             var dur = toNum(v.duration, NaN);
             if (isFinite(dur) && dur > 0) STATE.truth.dur = dur;
@@ -926,6 +1025,38 @@
     STATE.truth.fromSession = false;
   }
 
+  function forceTruthSnapshot(video, why) {
+    try {
+      if (!CFG.enabled) return;
+      if (!video) return;
+      if (STATE.rec && STATE.rec.activeReopenTransition) return;
+      if (isRecovering()) return;
+
+      var ts = now();
+      var rs = 0;
+      try { rs = video && typeof video.readyState === 'number' ? video.readyState : 0; } catch (_) { rs = 0; }
+      if (rs < 2) return;
+
+      var dur = toNum(video.duration, NaN);
+      var cur = toNum(video.currentTime, NaN);
+      if (!isFinite(dur) || dur <= 0) return;
+      if (!isFinite(cur) || cur < 0) return;
+      if (cur >= dur - DET.epsilonEndSec) return;
+
+      // Do not snap backwards (avoid jitter on seeks).
+      var prev = toNum(STATE.truth.t, 0);
+      if (cur + 0.01 < prev) return;
+
+      STATE.truth.t = cur;
+      STATE.truth.ts = ts;
+      STATE.truth.dur = dur;
+      STATE.truth.srcSig = String(STATE.srcSig || '');
+      STATE.truth.fromSession = true;
+
+      logEvt('DBG', 'truth_snapshot', { why: String(why || ''), t: cur.toFixed(2) }, 'truth:snap:' + String(why || ''), 1200);
+    } catch (_) { }
+  }
+
   function markBuffering(on, type, details) {
     if (isManualSuppressed()) return;
     STATE.session.buffering = !!on;
@@ -936,6 +1067,72 @@
       STATE.fault.lastLongTs = STATE.fault.lastTs;
       STATE.fault.seq++;
       if (CFG.debugPopup) logEvt('DBG', 'fault_detected', { type: STATE.fault.lastType }, 'fault:' + STATE.fault.lastType, 1200);
+      try { scheduleAutoReopenFromBuffering(String(type || 'buffering')); } catch (_) { }
+    }
+  }
+
+  function inReopenCooldown(ts) {
+    ts = toInt(ts, now());
+    var until = toInt(STATE.rec.reopenCooldownUntilTs, 0);
+    return until && ts < until;
+  }
+
+  function bumpReopenCooldown(ts, why) {
+    ts = toInt(ts, now());
+    var ms = toInt(DET.autoReopenCooldownMs, 25000);
+    if (!isFinite(ms) || ms < 5000) ms = 25000;
+    var until = ts + ms;
+    STATE.rec.reopenCooldownUntilTs = Math.max(toInt(STATE.rec.reopenCooldownUntilTs, 0), until);
+    logEvt('DBG', 'reopen_cooldown', { why: String(why || ''), ms: String(ms) }, 'reopen:cooldown', 2000);
+  }
+
+  function canAutoReopenNow(ts) {
+    if (!CFG.enabled) return false;
+    if (!CFG.autoReopenFromPosition) return false;
+    if (isManualSuppressed()) return false;
+    if (isRecovering() || STATE.rec.mode === MODE_FAIL) return false;
+    if (inReopenCooldown(ts)) return false;
+    try {
+      var sessionT = toNum(STATE.session.maxTimeSec, 0);
+      if (!sessionT || sessionT < DET.minWatchTimeSec) return false;
+    } catch (_) { return false; }
+    return true;
+  }
+
+  function scheduleAutoReopenFromBuffering(type) {
+    try {
+      if (!CFG.enabled || !CFG.autoReopenFromPosition) return;
+      if (isManualSuppressed()) return;
+      if (isRecovering() || STATE.rec.mode === MODE_FAIL) return;
+      if (STATE.rec.autoTimer) return;
+      var ts = now();
+      if (inReopenCooldown(ts)) return;
+      var sessionT = toNum(STATE.session.maxTimeSec, 0);
+      if (!sessionT || sessionT < DET.minWatchTimeSec) return;
+
+      var delay = toInt(DET.autoBufferDelayMs, 1800);
+      if (!isFinite(delay) || delay < 250) delay = 1800;
+
+      STATE.rec.autoTimer = setTimeout(function () {
+        STATE.rec.autoTimer = null;
+        try {
+          var ts2 = now();
+          if (!canAutoReopenNow(ts2)) return;
+          if (!STATE.session.buffering) return;
+          reopenFromPosition('auto_buffering:' + String(type || ''), null, { auto: true, faultType: String(type || ''), reason: 'buffering' });
+        } catch (_) { }
+      }, delay);
+    } catch (_) { }
+  }
+
+  function maybeAutoReopenFromFault(type, meta) {
+    try {
+      var ts = now();
+      if (!canAutoReopenNow(ts)) return false;
+      reopenFromPosition('auto_fault:' + String(type || ''), null, { auto: true, faultType: String(type || ''), meta: meta || {} });
+      return true;
+    } catch (_) {
+      return false;
     }
   }
 
@@ -1074,6 +1271,7 @@
   function updateTruthFromTimeupdate(ts, cur, dur, video) {
     if (!CFG.enabled) return;
     if (isRecovering()) return;
+    if (STATE.rec && STATE.rec.activeReopenTransition) return;
 
     var rs = 0;
     try { rs = video && typeof video.readyState === 'number' ? video.readyState : 0; } catch (_) { rs = 0; }
@@ -1208,6 +1406,18 @@
 
     STATE.rec.stableLastCur = cur;
     STATE.rec.stableLastTs = ts;
+
+    try {
+      if (STATE.rec.activeReopenTransition) {
+        var tr = toNum(STATE.rec.reopenTransitionResumeSec, resume);
+        if (STATE.rec.stableSec >= 2.0 && cur >= tr + 1.5) {
+          STATE.rec.activeReopenTransition = false;
+          STATE.rec.reopenTransitionStartTs = 0;
+          STATE.rec.reopenTransitionResumeSec = NaN;
+          logEvt('DBG', 'reopen_transition_done', { stable: STATE.rec.stableSec.toFixed(2), cur: cur.toFixed(2) }, 'reopen:transition:done', 2500);
+        }
+      }
+    } catch (_) { }
 
     if (STATE.rec.stableSec >= DET.stableOkSec && cur >= resume + 1 && cur < dur - DET.epsilonEndSec) {
       recoverySuccess('stable', { stable: STATE.rec.stableSec.toFixed(2), cur: cur.toFixed(2) });
@@ -1356,6 +1566,9 @@
     STATE.rec.hardIntent = '';
     STATE.rec.pendingSeekSec = NaN;
     STATE.rec.pendingParams = null;
+    STATE.rec.activeReopenTransition = false;
+    STATE.rec.reopenTransitionStartTs = 0;
+    STATE.rec.reopenTransitionResumeSec = NaN;
     STATE.rec.stableSec = 0;
     STATE.rec.stableLastCur = NaN;
     STATE.rec.stableLastTs = 0;
@@ -1365,6 +1578,9 @@
   function recoveryFail(why) {
     clearTimers();
     STATE.rec.mode = MODE_FAIL;
+    STATE.rec.activeReopenTransition = false;
+    STATE.rec.reopenTransitionStartTs = 0;
+    STATE.rec.reopenTransitionResumeSec = NaN;
     var video = null;
     try { video = STATE.video || (window.Lampa && Lampa.PlayerVideo && Lampa.PlayerVideo.video ? Lampa.PlayerVideo.video() : null); } catch (_) { video = STATE.video; }
 
@@ -1396,6 +1612,9 @@
     STATE.rec.reason = '';
     STATE.rec.pendingSeekSec = NaN;
     STATE.rec.pendingParams = null;
+    STATE.rec.activeReopenTransition = false;
+    STATE.rec.reopenTransitionStartTs = 0;
+    STATE.rec.reopenTransitionResumeSec = NaN;
     STATE.session.health = 'OK';
 
     logEvt('OK', 'success', {
@@ -1566,6 +1785,7 @@
           if (low.indexOf('no supported source') >= 0) {
             faultDetected('no_supported_source', { reason: msg, where: String(why || '') });
             lockGuard('no_supported_source', { capture: true });
+            if (maybeAutoReopenFromFault('no_supported_source', { reason: msg, where: String(why || '') })) return;
             enterRecovery(MODE_HARD, 'no_supported_source', { forceHard: true, needReopen: true });
             return;
           }
@@ -1573,6 +1793,7 @@
           if (low.indexOf('interrupted') >= 0 && low.indexOf('pause') >= 0) {
             faultDetected('play_interrupted', { reason: msg, where: String(why || '') });
             lockGuard('play_interrupted', { capture: true });
+            if (maybeAutoReopenFromFault('play_interrupted', { reason: msg, where: String(why || '') })) return;
             enterRecovery(MODE_HARD, 'play_interrupted', { forceHard: true, needReopen: true });
             return;
           }
@@ -1616,6 +1837,12 @@
   function actionHardReopenPlayer(t) {
     try {
       if (!window.Lampa || !Lampa.Player || typeof Lampa.Player.play !== 'function') return false;
+
+      try {
+        STATE.rec.activeReopenTransition = true;
+        STATE.rec.reopenTransitionStartTs = now();
+        STATE.rec.reopenTransitionResumeSec = toNum(t, 0);
+      } catch (_) { }
 
       var pd = STATE.guard.lockedWork || getPlayData();
       if (!pd || typeof pd !== 'object') return false;
@@ -1782,6 +2009,7 @@
         STATE.session.health = 'SUSPECT';
         lockGuard('session_reset0', { capture: true });
         faultDetected('reset0', { reason: 't/dur reset', cur: toNum(cur, 0).toFixed(2), dur: toNum(dur, 0).toFixed(2) });
+        if (maybeAutoReopenFromFault('reset0', { cur: toNum(cur, 0), dur: toNum(dur, 0) })) return; // auto "start from position"
         enterRecovery(MODE_HARD, 'reset0', { forceHard: true, needReopen: true });
         return; // suppress bad timeupdate (avoid UI reset to 0)
       }
@@ -1790,6 +2018,7 @@
         STATE.session.health = 'SUSPECT';
         lockGuard('false_jump', { capture: true });
         faultDetected('falseended_jump', { reason: 'jump_to_end', cur: toNum(cur, 0).toFixed(2), dur: toNum(dur, 0).toFixed(2) });
+        if (maybeAutoReopenFromFault('falseended_jump', { cur: toNum(cur, 0), dur: toNum(dur, 0) })) return; // auto "start from position"
         enterRecovery(MODE_SOFT, 'jump', {});
         return; // suppress bad timeupdate (avoid seekbar 100%)
       }
@@ -1798,6 +2027,7 @@
         STATE.session.health = 'SUSPECT';
         lockGuard('srcchange', { capture: true });
         faultDetected('srcchange', { reason: 'srcSig changed', from: String(STATE.truth.srcSig || ''), to: String(STATE.srcSig || '') });
+        if (maybeAutoReopenFromFault('srcchange', { from: String(STATE.truth.srcSig || ''), to: String(STATE.srcSig || '') })) return; // auto "start from position"
         enterRecovery(MODE_HARD, 'srcchange', { forceHard: true, needReopen: true });
         return;
       }
@@ -1821,6 +2051,7 @@
         STATE.session.health = 'SUSPECT';
         lockGuard('false_ended', { capture: true });
         faultDetected('falseended', { reason: 'ended_after_fault' });
+        if (maybeAutoReopenFromFault('falseended', { reason: 'ended_after_fault' })) return; // auto "start from position"
         enterRecovery(MODE_SOFT, 'ended', {});
         return; // suppress ended => no autoplay next
       }
@@ -1894,13 +2125,14 @@
         if (code === 4 || (low && low.indexOf('no supported source') >= 0)) {
           faultDetected('no_supported_source', { reason: msg || 'MEDIA_ERR_SRC_NOT_SUPPORTED', code: String(code || '') });
           lockGuard('no_supported_source', { capture: true });
+          if (maybeAutoReopenFromFault('no_supported_source', { reason: msg || 'MEDIA_ERR_SRC_NOT_SUPPORTED', code: String(code || '') })) return;
           enterRecovery(MODE_HARD, 'no_supported_source', { forceHard: true, needReopen: true });
         }
       } catch (_) { }
     });
     on('abort', function () { try { if (!CFG.enabled) return; if (STATE.video === video) markBuffering(true, 'abort', ''); } catch (_) { } });
     on('emptied', function () { try { if (!CFG.enabled) return; if (STATE.video === video) markBuffering(true, 'emptied', ''); } catch (_) { } });
-    on('playing', function () { try { if (!CFG.enabled) return; if (STATE.video === video) STATE.session.buffering = false; } catch (_) { } });
+    on('playing', function () { try { if (!CFG.enabled) return; if (STATE.video === video) { STATE.session.buffering = false; forceTruthSnapshot(video, 'playing'); } } catch (_) { } });
     on('canplay', function () { try { if (!CFG.enabled) return; if (STATE.video === video) STATE.session.buffering = false; } catch (_) { } });
     on('loadedmetadata', function () { try { if (!CFG.enabled) return; if (STATE.video === video) applyPendingParamsAndSeek(video, 'loadedmetadata'); } catch (_) { } });
     on('loadeddata', function () { try { if (!CFG.enabled) return; if (STATE.video === video) applyPendingParamsAndSeek(video, 'loadeddata_evt'); } catch (_) { } });
@@ -2173,6 +2405,7 @@
       CFG.blockNext = parseBool(sGet(KEY_BLOCK_NEXT, '1'), true);
       CFG.debugPopup = parseBool(sGet(KEY_DEBUG_POPUP, '1'), true);
       CFG.reopenOnFault = parseBool(sGet(KEY_REOPEN, '1'), true);
+      CFG.autoReopenFromPosition = parseBool(sGet(KEY_AUTO_REOPEN_FROM_POSITION, '1'), true);
       CFG.allowSoft = parseBool(sGet(KEY_ALLOW_SOFT, '1'), true);
       CFG.allowHard = parseBool(sGet(KEY_ALLOW_HARD, '0'), false);
 
@@ -2191,6 +2424,10 @@
   }
 
   API.getConfig = function () { return CFG; };
+
+  API.reopenFromPosition = function (why, resumeOverride, meta) {
+    try { return reopenFromPosition(why, resumeOverride, meta); } catch (_) { return false; }
+  };
 
   API.refresh = function () {
     var was = !!CFG.enabled;
@@ -2236,7 +2473,7 @@
           try {
             if (!e || !e.name) return;
             var n = String(e.name);
-            if (n === KEY_ENABLED || n === KEY_STORE_POS || n === KEY_BLOCK_NEXT || n === KEY_DEBUG_POPUP || n === KEY_REOPEN || n === KEY_ALLOW_SOFT || n === KEY_ALLOW_HARD || n === KEY_SOFT_ATTEMPTS || n === KEY_ATTEMPTS_LEGACY || n === KEY_HARD_ATTEMPTS || n === KEY_DELAY_SEC || n === KEY_POPUP_MIN_SEC) API.refresh();
+            if (n === KEY_ENABLED || n === KEY_STORE_POS || n === KEY_BLOCK_NEXT || n === KEY_DEBUG_POPUP || n === KEY_REOPEN || n === KEY_AUTO_REOPEN_FROM_POSITION || n === KEY_ALLOW_SOFT || n === KEY_ALLOW_HARD || n === KEY_SOFT_ATTEMPTS || n === KEY_ATTEMPTS_LEGACY || n === KEY_HARD_ATTEMPTS || n === KEY_DELAY_SEC || n === KEY_POPUP_MIN_SEC) API.refresh();
           } catch (_) { }
         });
       }
