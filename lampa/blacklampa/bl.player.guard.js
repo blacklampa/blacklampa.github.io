@@ -48,7 +48,7 @@
     attemptEvalMs: 1200,
     manualNextAllowMs: 1500,
     budgetResetOkMs: 25000,
-    reopenBackoffSec: 1.5,
+    reopenBackoffSec: 0.5,
     autoReopenCooldownMs: 25000,
     autoBufferDelayMs: 1800,
     popupIdleMs: 3000
@@ -498,7 +498,7 @@
         + '#__bl_player_guard_popup_v2 .bl-pg-stage{font-weight:700;font-size:14px;opacity:0.98;margin:0 0 8px 0;}'
         + '#__bl_player_guard_popup_v2 .bl-pg-info{opacity:0.92;margin:0 0 6px 0;}'
         + '#__bl_player_guard_popup_v2 .bl-pg-details{opacity:0.78;margin:0;font-size:12px;white-space:pre-wrap;}'
-        + '#__bl_player_guard_popup_v2 .bl-pg-spinner{width:18px;height:18px;flex:0 0 18px;margin-top:3px;border-radius:50%;'
+        + '#__bl_player_guard_popup_v2 .bl-pg-spinner{width:18px;height:18px;flex:0 0 18px;margin-top:3px;margin-right:3px;border-radius:50%;'
         + 'border:2px solid rgba(255,255,255,0.35);border-top-color:#fff;animation:blpgspin2 0.9s linear infinite;}'
         + '@keyframes blpgspin2{from{transform:rotate(0deg);}to{transform:rotate(360deg);}}'
         + '#__bl_player_guard_popup_v2 .bl-pg-actions{display:none;margin-top:12px;gap:8px;flex-wrap:wrap;}'
@@ -900,7 +900,7 @@
     var resume = NaN;
     try { resume = (typeof resumeOverride === 'number' && isFinite(resumeOverride)) ? toNum(resumeOverride, NaN) : NaN; } catch (_) { resume = NaN; }
     if (!isFinite(resume) || resume < 0) {
-      var backoff = toNum(DET.reopenBackoffSec, 1.5);
+      var backoff = toNum(DET.reopenBackoffSec, 0.5);
       if (!isFinite(backoff) || backoff < 0) backoff = 1.5;
       var liveCand = isFinite(liveT) ? Math.max(0, liveT - backoff) : NaN;
 
@@ -1961,7 +1961,7 @@
       try { liveT = video ? toNum(video.currentTime, NaN) : NaN; } catch (_) { liveT = NaN; }
       try { dur = video ? toNum(video.duration, NaN) : NaN; } catch (_) { dur = NaN; }
 
-      var backoff = toNum(DET.reopenBackoffSec, 1.5);
+      var backoff = toNum(DET.reopenBackoffSec, 0.5);
       if (!isFinite(backoff) || backoff < 0) backoff = 1.5;
 
       var resumePinned = Math.max(0, toNum(t, 0));
