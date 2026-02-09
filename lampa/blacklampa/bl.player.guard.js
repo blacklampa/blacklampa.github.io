@@ -139,6 +139,9 @@
       allowNextTs: 0,
       suppressUntilTs: 0,
       suppressWhy: '',
+      userPaused: false,
+      pausedAtTs: 0,
+      userExitUntilTs: 0,
       lastAction: '',
       lastActionTs: 0
     },
@@ -149,6 +152,7 @@
       reason: '',
       resumeTimeSec: 0,
       resumePinnedSec: NaN,
+      keepPaused: false,
       hardIntent: '',
       softAttempt: 0,
       hardAttempt: 0,
@@ -797,6 +801,25 @@
     logEvt('INF', 'manual_exit', { why: String(why || '') }, 'manual:exit:' + String(why || ''), 1200);
   }
 
+  function stopAllRecovery(why) {
+    try { clearTimers(); } catch (_) { }
+    try { cancelAutoTimer(String(why || '')); } catch (_) { }
+    try {
+      // stop recovery/fail states and hide popup if any
+      if (STATE.rec && STATE.rec.mode !== MODE_NORMAL) recoveryStop(String(why || 'stop'));
+      else if (STATE.ui && STATE.ui.mode && STATE.ui.mode !== 'hidden') uiHide(String(why || 'stop'));
+    } catch (_) { }
+    try { if (STATE.rec) STATE.rec.keepPaused = false; } catch (_) { }
+    try { unlockGuard(String(why || 'stop')); } catch (_) { }
+    try { if (STATE.session) { STATE.session.buffering = false; STATE.session.health = 'OK'; } } catch (_) { }
+    try {
+      STATE.fault.lastTs = 0;
+      STATE.fault.lastType = '';
+      STATE.fault.lastDetails = '';
+      STATE.fault.lastLongTs = 0;
+    } catch (_) { }
+  }
+
   function uiClose(reason) {
     logEvt('INF', 'ui_close', { reason: String(reason || '') }, 'ui:close:' + String(reason || ''), 1200);
     stopGuardAndRecovery('ui_close', 15000);
@@ -879,6 +902,14 @@
     var video = null;
     try { video = STATE.video || (window.Lampa && Lampa.PlayerVideo && Lampa.PlayerVideo.video ? Lampa.PlayerVideo.video() : null); } catch (_) { video = STATE.video; }
     updateStreamContext(video, null);
+
+    try {
+      // Preserve user pause across reopen/restart (must not auto-play after recovery if user paused).
+      var wasPaused = false;
+      try { wasPaused = !!(STATE.manual && STATE.manual.userPaused); } catch (_) { wasPaused = false; }
+      try { if (!wasPaused && video && typeof video.paused !== 'undefined') wasPaused = !!video.paused; } catch (_) { }
+      STATE.rec.keepPaused = !!wasPaused;
+    } catch (_) { }
 
     var truthT = 0;
     try {
@@ -1083,6 +1114,31 @@
     return STATE.manual.suppressUntilTs && t < STATE.manual.suppressUntilTs;
   }
 
+  function isUserExitGate(ts) {
+    ts = toInt(ts, now());
+    var until = toInt(STATE.manual.userExitUntilTs, 0);
+    return until && ts < until;
+  }
+
+  function setUserExitGate(ms, why) {
+    try {
+      ms = toInt(ms, 0);
+      if (!isFinite(ms) || ms < 0) ms = 0;
+      var ts = now();
+      STATE.manual.userExitUntilTs = Math.max(toInt(STATE.manual.userExitUntilTs, 0), ts + ms);
+    } catch (_) { }
+  }
+
+  function cancelAutoTimer(why) {
+    try {
+      if (STATE.rec && STATE.rec.autoTimer) {
+        try { clearTimeout(STATE.rec.autoTimer); } catch (_) { }
+        STATE.rec.autoTimer = null;
+        if (why) logEvt('DBG', 'auto_timer_cleared', { why: String(why || '') }, 'auto:clear', 1500);
+      }
+    } catch (_) { }
+  }
+
   function clearManualSuppress() {
     STATE.manual.suppressUntilTs = 0;
     STATE.manual.suppressWhy = '';
@@ -1167,10 +1223,19 @@
   }
 
   function markBuffering(on, type, details) {
+    var ts = now();
     if (isManualSuppressed()) return;
+    if (isUserExitGate(ts)) return;
+    try {
+      if (STATE.manual && STATE.manual.userPaused) {
+        if (on) logEvt('DBG', 'buffering_ignored_paused', { type: String(type || '') }, 'buf:ign:pause:' + String(type || ''), 1500);
+        STATE.session.buffering = false;
+        return;
+      }
+    } catch (_) { }
     STATE.session.buffering = !!on;
     if (on) {
-      STATE.fault.lastTs = now();
+      STATE.fault.lastTs = ts;
       STATE.fault.lastType = String(type || 'buffering');
       STATE.fault.lastDetails = String(details || '');
       STATE.fault.lastLongTs = STATE.fault.lastTs;
@@ -1199,6 +1264,8 @@
     if (!CFG.enabled) return false;
     if (!CFG.autoReopenFromPosition) return false;
     if (isManualSuppressed()) return false;
+    if (isUserExitGate(ts)) return false;
+    try { if (STATE.manual && STATE.manual.userPaused) return false; } catch (_) { }
     if (isRecovering() || STATE.rec.mode === MODE_FAIL) return false;
     if (inReopenCooldown(ts)) return false;
     try {
@@ -1215,6 +1282,8 @@
       if (isRecovering() || STATE.rec.mode === MODE_FAIL) return;
       if (STATE.rec.autoTimer) return;
       var ts = now();
+      if (isUserExitGate(ts)) return;
+      try { if (STATE.manual && STATE.manual.userPaused) return; } catch (_) { }
       if (inReopenCooldown(ts)) return;
       var sessionT = toNum(STATE.session.maxTimeSec, 0);
       if (!sessionT || sessionT < DET.minWatchTimeSec) return;
@@ -1536,6 +1605,9 @@
   function applyPendingParamsAndSeek(video, why) {
     if (!isRecovering()) return;
 
+    var keepPaused = false;
+    try { keepPaused = !!(STATE.rec && STATE.rec.keepPaused); } catch (_) { keepPaused = false; }
+
     if (STATE.rec.pendingParams && window.Lampa && Lampa.PlayerVideo && typeof Lampa.PlayerVideo.setParams === 'function') {
       try {
         Lampa.PlayerVideo.setParams(STATE.rec.pendingParams);
@@ -1556,11 +1628,15 @@
       else if (isFinite(dur) && dur > 0 && cur >= dur - DET.epsilonEndSec) need = true;
       if (need) {
         try { video.currentTime = Math.max(0, t); } catch (_) { }
-        safePlay(video, 'force_seek:' + String(why || ''));
+        if (!keepPaused) safePlay(video, 'force_seek:' + String(why || ''));
+        else {
+          try { if (typeof video.pause === 'function') video.pause(); } catch (_) { }
+        }
         if (String(STATE.rec.hardIntent || '') === 'reopen') {
           logEvt('INF', 'reopen_ready', { why: String(why || ''), seek: t.toFixed(2) }, 'reopen:ready', 1200);
         }
         logEvt('INF', 'force_seek', { why: String(why || ''), to: t.toFixed(2) }, 'rec:seek:' + String(why || ''), 900);
+        if (keepPaused) recoverySuccess('keep_paused', { why: String(why || ''), seek: t.toFixed(2) });
       }
     } catch (_) { }
   }
@@ -1615,6 +1691,8 @@
     meta = meta || {};
     if (isManualSuppressed()) return;
     var ts = now();
+    if (isUserExitGate(ts)) return;
+    try { if (STATE.manual && STATE.manual.userPaused) return; } catch (_) { }
     STATE.fault.lastTs = ts;
     STATE.fault.lastType = String(type || '');
     STATE.fault.lastDetails = kv(meta) || '';
@@ -1673,6 +1751,7 @@
     STATE.rec.reason = '';
     STATE.rec.resumeTimeSec = 0;
     STATE.rec.resumePinnedSec = NaN;
+    STATE.rec.keepPaused = false;
     STATE.rec.hardIntent = '';
     STATE.rec.pendingSeekSec = NaN;
     STATE.rec.pendingParams = null;
@@ -1689,6 +1768,7 @@
     clearTimers();
     STATE.rec.mode = MODE_FAIL;
     STATE.rec.resumePinnedSec = NaN;
+    STATE.rec.keepPaused = false;
     STATE.rec.activeReopenTransition = false;
     STATE.rec.reopenTransitionStartTs = 0;
     STATE.rec.reopenTransitionResumeSec = NaN;
@@ -1724,6 +1804,7 @@
     STATE.rec.pendingSeekSec = NaN;
     STATE.rec.pendingParams = null;
     STATE.rec.resumePinnedSec = NaN;
+    STATE.rec.keepPaused = false;
     STATE.rec.activeReopenTransition = false;
     STATE.rec.reopenTransitionStartTs = 0;
     STATE.rec.reopenTransitionResumeSec = NaN;
@@ -1763,6 +1844,8 @@
     if (STATE.rec.mode === MODE_FAIL && !meta.manual) return;
 
     var ts = now();
+    if (isUserExitGate(ts)) return;
+    try { if (STATE.manual && STATE.manual.userPaused) return; } catch (_) { }
     var hardRequested = (String(mode || '') === MODE_HARD) || !!meta.forceHard;
     var needReopen = !!meta.needReopen || isLoopReopenRequired(ts);
 
@@ -2258,6 +2341,45 @@
       }
     }
 
+    on('pause', function () {
+      try {
+        if (!CFG.enabled) return;
+        if (STATE.video !== video) return;
+        if (isRecovering()) return; // internal pauses during recovery are not user pauses
+        var ts = now();
+        if (isUserExitGate(ts)) return;
+
+        STATE.manual.userPaused = true;
+        STATE.manual.pausedAtTs = ts;
+
+        // cancel any pending auto-buffer actions (bug: pause -> delayed auto reopen)
+        STATE.session.buffering = false;
+        cancelAutoTimer('pause');
+
+        try { forceTruthSnapshot(video, 'pause'); } catch (_) { }
+        try {
+          if (CFG.storePos && !(STATE.rec && STATE.rec.activeReopenTransition)) {
+            var ct = toNum(video.currentTime, NaN);
+            var dur = toNum(video.duration, NaN);
+            if (isFinite(ct) && ct >= 0) writeTruthLS(ct, (isFinite(dur) && dur > 0) ? dur : 0, String(STATE.srcSig || ''), 'pause');
+          }
+        } catch (_) { }
+
+        try { if (STATE.ui && STATE.ui.mode && STATE.ui.mode !== 'hidden' && !isRecovering()) uiHide('pause'); } catch (_) { }
+      } catch (_) { }
+    });
+
+    on('play', function () {
+      try {
+        if (!CFG.enabled) return;
+        if (STATE.video !== video) return;
+        // If we explicitly preserve pause during reopen, ignore auto play signals.
+        if (isRecovering() && STATE.rec && STATE.rec.keepPaused) return;
+        STATE.manual.userPaused = false;
+        STATE.manual.pausedAtTs = 0;
+      } catch (_) { }
+    });
+
     on('waiting', function () { try { if (!CFG.enabled) return; if (STATE.video === video) markBuffering(true, 'waiting', ''); } catch (_) { } });
     on('stalled', function () { try { if (!CFG.enabled) return; if (STATE.video === video) markBuffering(true, 'stalled', ''); } catch (_) { } });
     on('error', function () {
@@ -2285,7 +2407,18 @@
     });
     on('abort', function () { try { if (!CFG.enabled) return; if (STATE.video === video) markBuffering(true, 'abort', ''); } catch (_) { } });
     on('emptied', function () { try { if (!CFG.enabled) return; if (STATE.video === video) markBuffering(true, 'emptied', ''); } catch (_) { } });
-    on('playing', function () { try { if (!CFG.enabled) return; if (STATE.video === video) { STATE.session.buffering = false; forceTruthSnapshot(video, 'playing'); } } catch (_) { } });
+    on('playing', function () {
+      try {
+        if (!CFG.enabled) return;
+        if (STATE.video !== video) return;
+        STATE.session.buffering = false;
+        if (!(isRecovering() && STATE.rec && STATE.rec.keepPaused)) {
+          STATE.manual.userPaused = false;
+          STATE.manual.pausedAtTs = 0;
+        }
+        forceTruthSnapshot(video, 'playing');
+      } catch (_) { }
+    });
     on('canplay', function () { try { if (!CFG.enabled) return; if (STATE.video === video) STATE.session.buffering = false; } catch (_) { } });
     on('loadedmetadata', function () { try { if (!CFG.enabled) return; if (STATE.video === video) applyPendingParamsAndSeek(video, 'loadedmetadata'); } catch (_) { } });
     on('loadeddata', function () { try { if (!CFG.enabled) return; if (STATE.video === video) applyPendingParamsAndSeek(video, 'loadeddata_evt'); } catch (_) { } });
@@ -2525,9 +2658,16 @@
         var origBack = c.back;
         c.back = function () {
           try {
-            if (CFG.enabled && STATE.ui && STATE.ui.mode && STATE.ui.mode !== 'hidden') {
-              uiClose('back');
-              return;
+            if (CFG.enabled) {
+              var active = false;
+              try { if (STATE.video) active = true; } catch (_) { }
+              try { if (STATE.ui && STATE.ui.mode && STATE.ui.mode !== 'hidden') active = true; } catch (_) { }
+              try { if (isRecovering() || isGuardLocked() || (STATE.rec && STATE.rec.mode === MODE_FAIL)) active = true; } catch (_) { }
+              if (active) {
+                setUserExitGate(11000, 'controller_back');
+                manualSuppress(12000, 'user_exit');
+                stopAllRecovery('user_exit');
+              }
             }
           } catch (_) { }
           return origBack.apply(this, arguments);
