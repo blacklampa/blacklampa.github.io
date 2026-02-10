@@ -26,6 +26,7 @@
     { "url": "http://nb557.surge.sh/online_mod.js", "title": "Online_Mod.sh", "desc": "", "tags": ["player"] },
     { "url": "scripts/orig_title.js", "title": "orig_title.js", "desc": "", "tags": ["stats", "ui"] },
     { "url": "scripts/free_onl.js", "title": "free_onl.js", "desc": "", "tags": ["stats", "ui"] },
+    { "url": "scripts/modss.js", "title": "modss.js", "desc": "", "tags": ["stats", "ui"] },
     { "url": "https://bwa.to/cloud.js", "title": "cloud.js", "desc": "", "tags": ["cloud"] },
     { "url": "https://aviamovie.github.io/surs_quality.js", "title": "surs_quality.js", "desc": "", "tags": ["sources"] },
     { "url": "https://and7ey.github.io/lampa/noshots.js", "title": "noshots.js", "desc": "", "tags": ["ui", "tricks"] },
