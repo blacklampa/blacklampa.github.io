@@ -23,6 +23,7 @@
     { "url": "https://aviamovie.github.io/surs.js", "title": "surs.js", "desc": "", "tags": ["sources"] }
   ],
   "disabled": [
+    { "url": "scripts/club/club.js", "title": "rating.js", "desc": "", "tags": ["stats", "ui"] },
     { "url": "http://nb557.surge.sh/online_mod.js", "title": "Online_Mod.sh", "desc": "", "tags": ["player"] },
     { "url": "http://ab2024.ru/sisi.js", "title": "sisi2024", "desc": "", "tags": ["player"] },
     { "url": "scripts/orig_title.js", "title": "orig_title.js", "desc": "", "tags": ["stats", "ui"] },
