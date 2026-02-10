@@ -1,56 +1,58 @@
 (function () {
     'use strict';
 
-    // === guard: не запускать дважды ===
+    // === guard ===
     if (window.__modss_loader_running) return;
     window.__modss_loader_running = true;
 
     // === CONFIG ===
-    var CHECK_EVERY_MS = 3000;   // новая попытка каждые N мс
-    var TIMEOUT_MS     = 10000;  // таймаут сети
-    var KEEP_LAST_ERRORS = 8;    // сколько последних ошибок показывать
-    var MAX_ROUNDS     = 10;      // 0 = бесконечно; иначе кол-во полных кругов по urls
+    var CHECK_EVERY_MS = 3000;
+    var TIMEOUT_MS = 10000;
+    var KEEP_LAST_ERRORS = 8;
+    var MAX_ROUNDS = 0; // 0 = бесконечно
+
+    var FONT =
+    'font:12px/1.35 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;';
 
     function Protocol() {
         return window.location.protocol === 'https:' ? 'https://' : 'http://';
     }
 
-    var urls = [Protocol() + 'lampa.stream/modss', Protocol() + 'modss.tv', Protocol() + 'n.modss.tv'];
+    var urls = [
+        Protocol() + 'lampa.stream/modss',
+ Protocol() + 'modss.tv',
+ Protocol() + 'n.modss.tv'
+    ];
 
-    // === Реальная готовность (ПОДСТРОЙ) ===
-    // Лучше заменить на реальный признак регистрации плагина в Lampa.
     function isModssReady() {
         return window.loaded_modss === true && window.__modss_eval_ok === true;
     }
 
-    // init flags
     if (typeof window.loaded_modss !== 'boolean') window.loaded_modss = false;
     window.__modss_eval_ok = false;
 
-    // === network ===
     var network = new Lampa.Reguest();
 
-    // === sticky bottom alert (Noty) ===
-    var notyActive = false;
+    // === Noty ===
     var lastNotyText = '';
     var lastNotyAt = 0;
 
-    function showSticky(html) {
+    function showNoty(html) {
         try {
-            if (!notyActive) notyActive = true;
-            // длинный таймер, по сути sticky
-            Lampa.Noty.show(html, { time: 60 * 60 * 1000 });
+            Lampa.Noty.show(
+                '<div style="' + FONT + '">' + html + '</div>',
+                { time: 60 * 60 * 1000 }
+            );
         } catch (e) {}
     }
 
     function updateNoty(html, force) {
         var now = Date.now();
-        if (!force && now - lastNotyAt < 900) return; // анти-спам
+        if (!force && now - lastNotyAt < 900) return;
         if (!force && html === lastNotyText) return;
-
         lastNotyAt = now;
         lastNotyText = html;
-        showSticky(html);
+        showNoty(html);
     }
 
     function esc(s) {
@@ -61,56 +63,56 @@
     }
 
     // === error journal ===
-    var journal = []; // newest first
-    function pushErr(obj) {
+    var journal = [];
+    function pushErr(o) {
         journal.unshift({
             at: new Date().toISOString(),
-                        stage: obj.stage || '?',
-                        url: obj.url || '?',
-                        status: obj.status == null ? '?' : obj.status,
-                        msg: obj.msg || '',
-                        extra: obj.extra || ''
+                        stage: o.stage || '?',
+                        url: o.url || '?',
+                        status: o.status ?? '?',
+                        msg: o.msg || '',
+                        extra: o.extra || ''
         });
         if (journal.length > KEEP_LAST_ERRORS) journal.length = KEEP_LAST_ERRORS;
     }
 
-    function renderStatus(state) {
-        // state: {attempt, url, stage, rounds, maxRounds}
-        var lines = [];
-        lines.push('<b>MODSs loader</b> ' + (isModssReady() ? '✅ READY' : '⏳ LOADING'));
-        lines.push('origin: <code>' + esc(window.location.origin) + '</code>');
-        lines.push(
-            'attempt: <b>' + esc(state.attempt) + '</b>' +
-            ' | round: <b>' + esc(state.rounds) + '</b>/' + esc(state.maxRounds === 0 ? '∞' : state.maxRounds) +
-            ' | url: <code>' + esc(state.url) + '</code>'
+    function renderStatus(s) {
+        var out = [];
+        out.push('<b>MODSs loader</b> ' + (isModssReady() ? '✅ READY' : '⏳ LOADING'));
+        out.push('origin: <code>' + esc(location.origin) + '</code>');
+        out.push(
+            'attempt: <b>' + s.attempt + '</b>' +
+            ' | round: <b>' + s.rounds + '</b>/' + (s.maxRounds === 0 ? '∞' : s.maxRounds) +
+            ' | url: <code>' + esc(s.url) + '</code>'
         );
-        lines.push('stage: <b>' + esc(state.stage) + '</b> | timeout: ' + TIMEOUT_MS + 'ms | retry: ' + CHECK_EVERY_MS + 'ms');
+        out.push(
+            'stage: <b>' + esc(s.stage) + '</b>' +
+            ' | timeout: ' + TIMEOUT_MS + 'ms' +
+            ' | retry: ' + CHECK_EVERY_MS + 'ms'
+        );
 
         if (journal.length) {
-            lines.push('<hr style="opacity:.25;margin:.35em 0;">');
-            lines.push('<b>Last errors:</b>');
+            out.push('<hr style="opacity:.25;margin:.4em 0">');
+            out.push('<b>Last errors:</b>');
             for (var i = 0; i < journal.length; i++) {
                 var e = journal[i];
-                lines.push(
-                    '<div style="opacity:.95">' +
+                out.push(
+                    '<div>' +
                     '<code>' + esc(e.at.slice(11, 19)) + '</code>' +
                     ' [' + esc(e.stage) + ']' +
                     ' <code>' + esc(e.url) + '</code>' +
                     ' status:<b>' + esc(e.status) + '</b>' +
                     (e.msg ? ' — ' + esc(e.msg) : '') +
-                    (e.extra ? ' <span style="opacity:.75">(' + esc(e.extra) + ')</span>' : '') +
+                    (e.extra ? ' <span style="opacity:.7">(' + esc(e.extra) + ')</span>' : '') +
                     '</div>'
                 );
             }
         }
-
-        return lines.join('<br>');
+        return out.join('<br>');
     }
 
-    // === requestData (как у тебя) ===
     function makeRequestData() {
-        //var cashe = encodeURIComponent(Lampa.Base64.encode(window.location.origin));
-        var cashe = encodeURIComponent(Lampa.Base64.encode("yumata.github.io"));
+        var cashe = encodeURIComponent(Lampa.Base64.encode(location.origin));
         return {
             user_id: '1',
             uid: '',
@@ -118,22 +120,14 @@
             cas: cashe,
             cache: true,
             id: 'null',
-            or: 'dHJ1ZQ',
-            auth: true
+            or: 'dW5kZWZpbmVk',
+            auth: undefined
         };
     }
 
-    // === main loop ===
-    var idx = 0;
-    var attempt = 0;
-    var inFlight = false;
-
-    // rounds: считаем "полные круги по urls"
-    // round=0 пока не прошли все urls хотя бы раз
-    var rounds = 0;
-    var hitsInRound = 0;
-
-    var timer = null;
+    // === loader loop ===
+    var idx = 0, attempt = 0, rounds = 0, hits = 0;
+    var inFlight = false, timer = null;
 
     function nextUrl() {
         var u = urls[idx];
@@ -141,10 +135,9 @@
         return u;
     }
 
-    function bumpRoundCounter() {
-        hitsInRound++;
-        if (hitsInRound >= urls.length) {
-            hitsInRound = 0;
+    function bumpRound() {
+        if (++hits >= urls.length) {
+            hits = 0;
             rounds++;
         }
     }
@@ -156,90 +149,123 @@
 
         if (reason === 'max_rounds') {
             updateNoty(renderStatus({
-                attempt: attempt,
+                attempt,
                 url: '-',
-                stage: 'STOP (max rounds reached)',
-                                    rounds: rounds,
+                stage: 'STOP (max rounds)',
+                                    rounds,
                                     maxRounds: MAX_ROUNDS
             }), true);
         }
     }
 
-    function tryLoadOnce() {
+    function tryOnce() {
         if (inFlight) return;
 
         if (isModssReady()) {
-            updateNoty(renderStatus({ attempt: attempt, url: '-', stage: 'ready', rounds: rounds, maxRounds: MAX_ROUNDS }), true);
+            updateNoty(renderStatus({
+                attempt,
+                url: '-',
+                stage: 'READY',
+                rounds,
+                maxRounds: MAX_ROUNDS
+            }), true);
             stop('ready');
             return;
         }
 
-        // лимит по полным кругам
         if (MAX_ROUNDS > 0 && rounds >= MAX_ROUNDS) {
             stop('max_rounds');
             return;
         }
 
         var url = nextUrl();
-        bumpRoundCounter();
+        bumpRound();
         attempt++;
-
         inFlight = true;
-        updateNoty(renderStatus({ attempt: attempt, url: url, stage: 'request', rounds: rounds, maxRounds: MAX_ROUNDS }));
+
+        updateNoty(renderStatus({
+            attempt,
+            url,
+            stage: 'request',
+            rounds,
+            maxRounds: MAX_ROUNDS
+        }));
 
         network.timeout(TIMEOUT_MS);
-
         network.silent(
             url,
-            function onOk(txt) {
-                updateNoty(renderStatus({ attempt: attempt, url: url, stage: 'eval', rounds: rounds, maxRounds: MAX_ROUNDS }));
+            function (txt) {
+                updateNoty(renderStatus({
+                    attempt,
+                    url,
+                    stage: 'eval',
+                    rounds,
+                    maxRounds: MAX_ROUNDS
+                }));
 
                 try {
-                    eval(String(txt) + '\n//# sourceURL=' + window.location.origin + '/plugin_modss.js');
-
+                    eval(String(txt) + '\n//# sourceURL=' + location.origin + '/plugin_modss.js');
                     window.__modss_eval_ok = true;
                     window.loaded_modss = true;
 
-                    updateNoty(renderStatus({ attempt: attempt, url: url, stage: 'ok', rounds: rounds, maxRounds: MAX_ROUNDS }), true);
+                    updateNoty(renderStatus({
+                        attempt,
+                        url,
+                        stage: 'OK',
+                        rounds,
+                        maxRounds: MAX_ROUNDS
+                    }), true);
 
                     if (isModssReady()) stop('ready');
                 } catch (e) {
                     window.__modss_eval_ok = false;
                     window.loaded_modss = false;
-
                     pushErr({
                         stage: 'eval',
-                        url: url,
+                        url,
                         status: 'OK',
-                        msg: (e && e.message) ? e.message : String(e),
-                            extra: (e && e.name) ? e.name : ''
+                        msg: e.message,
+                        extra: e.name
                     });
-
-                    updateNoty(renderStatus({ attempt: attempt, url: url, stage: 'eval_error', rounds: rounds, maxRounds: MAX_ROUNDS }), true);
+                    updateNoty(renderStatus({
+                        attempt,
+                        url,
+                        stage: 'EVAL ERROR',
+                        rounds,
+                        maxRounds: MAX_ROUNDS
+                    }), true);
                 } finally {
                     inFlight = false;
                 }
             },
-            function onErr(a, c) {
-                var statusNum = (typeof a === 'number')
+            function (a, c) {
+                var status =
+                typeof a === 'number'
                 ? a
-                : (a && (a.status != null ? a.status : (a.statusCode != null ? a.statusCode : null)));
+                : a?.status ?? a?.statusCode ?? '?';
 
-                var errMsg = '';
-                try { errMsg = network.errorDecode(a, c) || ''; } catch (e) {}
+                var msg = '';
+                try { msg = network.errorDecode(a, c); } catch {}
 
                 window.__modss_eval_ok = false;
                 window.loaded_modss = false;
 
                 pushErr({
                     stage: 'net',
-                    url: url,
-                    status: (statusNum == null ? '?' : statusNum),
-                        msg: errMsg || 'request failed',
-                        extra: (c != null ? String(c) : '')
+                    url,
+                    status,
+                    msg,
+                    extra: c
                 });
 
-                updateNoty(renderStatus({ attempt: attempt, url: url, stage: 'net_error', rounds: rounds, maxRounds: MAX_ROUNDS }), true);
+                updateNoty(renderStatus({
+                    attempt,
+                    url,
+                    stage: 'NET ERROR',
+                    rounds,
+                    maxRounds: MAX_ROUNDS
+                }), true);
+
                 inFlight = false;
             },
             makeRequestData(),
@@ -247,11 +273,14 @@
         );
     }
 
-    function start() {
-        updateNoty(renderStatus({ attempt: 0, url: '-', stage: 'start', rounds: rounds, maxRounds: MAX_ROUNDS }), true);
-        tryLoadOnce();
-        timer = setInterval(tryLoadOnce, CHECK_EVERY_MS);
-    }
+    updateNoty(renderStatus({
+        attempt: 0,
+        url: '-',
+        stage: 'START',
+        rounds,
+        maxRounds: MAX_ROUNDS
+    }), true);
 
-    start();
+    tryOnce();
+    timer = setInterval(tryOnce, CHECK_EVERY_MS);
 })();
