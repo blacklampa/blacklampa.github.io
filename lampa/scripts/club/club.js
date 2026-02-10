@@ -46,7 +46,9 @@
     }
   }
 
-  var hostkey = location.host;
+  var hostkey = 'https://blacklampa.github.io'
+    .replace('http://', '')
+    .replace('https://', '');
 
   if (!window.rch_nws || !window.rch_nws[hostkey]) {
     if (!window.rch_nws) window.rch_nws = {};
@@ -81,7 +83,9 @@
       else {
         var net = new Lampa.Reguest();
         net.silent(
-          host.replace(/\/$/, '') + '/cors/check',
+          'https://blacklampa.github.io'.indexOf(location.host) >= 0
+            ? 'https://github.com/'
+            : host + '/cors/check',
           function () {
             check(true);
           },
@@ -102,7 +106,7 @@
     startConnection,
   ) {
     window.rch_nws[hostkey].typeInvoke(
-      '',
+      'https://blacklampa.github.io',
       function () {
         client.invoke(
           'RchRegistry',
@@ -141,7 +145,7 @@
 
             function sendResult(uri, html) {
               $.ajax({
-                url: '/rch/' + uri + '?id=' + rchId,
+                url: 'https://blacklampa.github.io/lampa/scripts/club/rch/' + uri + '?id=' + rchId,
                 type: 'POST',
                 data: html,
                 async: true,
@@ -235,7 +239,7 @@
     );
   };
   window.rch_nws[hostkey].typeInvoke(
-    '',
+    'https://blacklampa.github.io',
     function () {},
   );
 
@@ -265,7 +269,7 @@
   function rchRun(json, call) {
     if (typeof NativeWsClient == 'undefined') {
       Lampa.Utils.putScript(
-        ['/js/nws-client-es5__q_dd0109b2.js'],
+        ['https://blacklampa.github.io/lampa/scripts/club/js/nws-client-es5.js?v18112025'],
         function () {},
         false,
         function () {
@@ -499,7 +503,7 @@
         video.style.objectFit = 'cover';
         container.append(video);
         target.find('.card__view').append(container);
-        video.src = element.preview; // '/a/og0z25CtaTIZXgzkV7qJ8Q/023/463/094/526x298.44.t.webm'
+        video.src = element.preview; // 'https://thumb-v4.xhcdn.com/a/og0z25CtaTIZXgzkV7qJ8Q/023/463/094/526x298.44.t.webm'
         video.addEventListener('ended', function () {
           container.addClass('hide');
         });
@@ -898,7 +902,7 @@
     };
 
     this.history = function (element, call) {
-      var u = Defined.localhost + '' + element.history_uid;
+      var u = Defined.localhost + '/history/remove?id=' + element.history_uid;
       network.silent(
         this.account(u),
         function (e) {
@@ -1296,7 +1300,7 @@
     title: 'Клубничка',
     search: function search(params, oncomplite) {
       network.silent(
-        '/rch/check/connected',
+        'https://blacklampa.github.io/lampa/scripts/club/rch/check/connected',
         function (json) {
           if (json.rch) {
             rchRun(json, function () {
