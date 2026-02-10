@@ -272,9 +272,10 @@
     logs_view: { id: 'logs_view', parent: 'logs', title: 'View logs', desc: 'Открывает viewer логов BlackLampa.', screen: 'action', action: function () { try { if (window.BL && BL.Log && BL.Log.openViewer) BL.Log.openViewer(); } catch (_) { } } },
     logging: { id: 'logging', parent: 'logs', title: 'Log mode', desc: 'silent / popup (не влияет на блокировки).', screen: 'logging' },
 
-    utils: { id: 'utils', parent: 'root', title: 'Utils', desc: 'Backup/Transfer + Scanner.', children: ['backup', 'filesystem_scan'] },
+    utils: { id: 'utils', parent: 'root', title: 'Utils', desc: 'Backup/Transfer + Scanner.', children: ['backup', 'filesystem_scan', 'localstorage'] },
     backup: { id: 'backup', parent: 'utils', titleKey: 'menu.root.backup.title', descKey: 'menu.root.backup.desc', screen: 'backup' },
     filesystem_scan: { id: 'filesystem_scan', parent: 'utils', title: 'Scanner', descKey: 'menu.root.filescan.desc', screen: 'action', action: function () { try { if (window.BL && BL.FileScanner && BL.FileScanner.open) BL.FileScanner.open(); } catch (_) { } } },
+    localstorage: { id: 'localstorage', parent: 'utils', title: 'LocalStorage', desc: 'LocalStorage Manager (keys + values).', screen: 'action', action: function () { try { if (window.BL && BL.LocalStorageManager && BL.LocalStorageManager.open) BL.LocalStorageManager.open(); } catch (_) { } } },
     danger: { id: 'danger', parent: 'root', titleKey: 'menu.root.danger.title', descKey: 'menu.root.danger.desc', screen: 'danger' },
     ui: { id: 'ui', parent: 'root', titleKey: 'menu.root.ui.title', descKey: 'menu.root.ui.desc', screen: 'ui' },
     status: { id: 'status', parent: 'root', titleKey: 'menu.root.status.title', param: { name: 'bl_pi_root_status', type: 'static', values: '', default: '' }, screen: 'status', rootRender: rootStatusRender }

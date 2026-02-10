@@ -840,6 +840,7 @@
 	      loadSeq([
 	        'bl.preload.js',
 	        'bl.ui.filescanner.js',
+	        'bl.ui.localstorage.js',
 	        'bl.backup.js',
 	        'bl.ext.filters.js',
 	        'bl.player.guard.js',
