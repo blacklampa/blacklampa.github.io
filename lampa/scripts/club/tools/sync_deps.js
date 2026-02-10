@@ -27,7 +27,7 @@ const DEFAULT_MAX_TOTAL_FILES = 5_000;
 const DEFAULT_MAX_DEPTH = 6;
 const DEFAULT_MAX_TEXT_SCAN_BYTES = 5 * 1024 * 1024;
 const DEFAULT_INCLUDE_HTML_LINKS = true;
-const DEFAULT_ORIGIN = 'https://ab2024.ru';
+const DEFAULT_ORIGIN = 'https://blacklampa.github.io';
 
 const CONCURRENCY = clampInt(
   process.env.SYNC_DEPS_CONCURRENCY,
@@ -103,7 +103,7 @@ const EXCLUDED_ABSOLUTE_URLS = new Set([
 
 function isAllowedHostname(hostname) {
   const h = String(hostname || '').toLowerCase();
-  return h === 'ab2024.ru' || h.endsWith('.ab2024.ru');
+  return h === 'blacklampa.github.io' || h.endsWith('.blacklampa.github.io');
 }
 
 function makeBlockedError(code, message, extra) {
@@ -2357,8 +2357,8 @@ async function main() {
         continue;
       }
 
-      if (text.includes('ab2024.ru')) {
-        const count = text.split('ab2024.ru').length - 1;
+      if (text.includes('blacklampa.github.io')) {
+        const count = text.split('blacklampa.github.io').length - 1;
         ab2024Left.push({ file: f.rel, count });
       }
 

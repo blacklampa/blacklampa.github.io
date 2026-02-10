@@ -1,5 +1,5 @@
 {
-  "origin": "https://ab2024.ru",
+  "origin": "https://blacklampa.github.io",
   "discovered_urls": 1895,
   "max_total_files": 5000,
   "max_depth": 6,
@@ -1433,117 +1433,117 @@
   ],
   "failed_downloads": [
     {
-      "url": "https://ab2024.ru/rch/",
-      "error": "HTTP 404 (https://ab2024.ru/rch/): no body",
+      "url": "https://blacklampa.github.io/rch/",
+      "error": "HTTP 404 (https://blacklampa.github.io/rch/): no body",
       "depth": 0,
       "referrer": "club.js"
     },
     {
-      "url": "https://ab2024.ru/div",
-      "error": "HTTP 404 (https://ab2024.ru/div): no body",
+      "url": "https://blacklampa.github.io/div",
+      "error": "HTTP 404 (https://blacklampa.github.io/div): no body",
       "depth": 0,
       "referrer": "club.js"
     },
     {
-      "url": "https://ab2024.ru/small",
-      "error": "HTTP 404 (https://ab2024.ru/small): no body",
+      "url": "https://blacklampa.github.io/small",
+      "error": "HTTP 404 (https://blacklampa.github.io/small): no body",
       "depth": 0,
       "referrer": "club.js"
     },
     {
-      "url": "https://ab2024.ru/bookmark/",
-      "error": "HTTP 404 (https://ab2024.ru/bookmark/): no body",
+      "url": "https://blacklampa.github.io/bookmark/",
+      "error": "HTTP 404 (https://blacklampa.github.io/bookmark/): no body",
       "depth": 0,
       "referrer": "club.js"
     },
     {
-      "url": "https://ab2024.ru/li",
-      "error": "HTTP 404 (https://ab2024.ru/li): no body",
+      "url": "https://blacklampa.github.io/li",
+      "error": "HTTP 404 (https://blacklampa.github.io/li): no body",
       "depth": 0,
       "referrer": "club.js"
     },
     {
-      "url": "https://ab2024.ru/sisi/history/add",
-      "error": "HTTP 405 (https://ab2024.ru/sisi/history/add): no body",
+      "url": "https://blacklampa.github.io/sisi/history/add",
+      "error": "HTTP 405 (https://blacklampa.github.io/sisi/history/add): no body",
       "depth": 0,
       "referrer": "club.js"
     },
     {
-      "url": "https://ab2024.ru/bookmarks",
-      "error": "HTTP 404 (https://ab2024.ru/bookmarks): no body",
+      "url": "https://blacklampa.github.io/bookmarks",
+      "error": "HTTP 404 (https://blacklampa.github.io/bookmarks): no body",
       "depth": 0,
       "referrer": "club.js"
     },
     {
-      "url": "https://ab2024.ru/sisi/bookmark/",
-      "error": "HTTP 404 (https://ab2024.ru/sisi/bookmark/): no body",
+      "url": "https://blacklampa.github.io/sisi/bookmark/",
+      "error": "HTTP 404 (https://blacklampa.github.io/sisi/bookmark/): no body",
       "depth": 0,
       "referrer": "club.js"
     },
     {
-      "url": "https://ab2024.ru/_framework/",
-      "error": "HTTP 404 (https://ab2024.ru/_framework/): no body",
+      "url": "https://blacklampa.github.io/_framework/",
+      "error": "HTTP 404 (https://blacklampa.github.io/_framework/): no body",
       "depth": 0,
       "referrer": "club.js"
     },
     {
-      "url": "https://ab2024.ru/rect",
-      "error": "HTTP 404 (https://ab2024.ru/rect): no body",
+      "url": "https://blacklampa.github.io/rect",
+      "error": "HTTP 404 (https://blacklampa.github.io/rect): no body",
       "depth": 0,
       "referrer": "club.js"
     },
     {
-      "url": "https://ab2024.ru/_framework/blazor.webassembly.js",
-      "error": "HTTP 404 (https://ab2024.ru/_framework/blazor.webassembly.js): no body",
+      "url": "https://blacklampa.github.io/_framework/blazor.webassembly.js",
+      "error": "HTTP 404 (https://blacklampa.github.io/_framework/blazor.webassembly.js): no body",
       "depth": 0,
       "referrer": "club.js"
     },
     {
-      "url": "https://ab2024.ru/sisi/bookmarks",
-      "error": "HTTP 403 (https://ab2024.ru/sisi/bookmarks): access denied",
+      "url": "https://blacklampa.github.io/sisi/bookmarks",
+      "error": "HTTP 403 (https://blacklampa.github.io/sisi/bookmarks): access denied",
       "depth": 1,
       "referrer": "/sisi"
     },
     {
-      "url": "https://ab2024.ru/sisi/historys",
-      "error": "HTTP 403 (https://ab2024.ru/sisi/historys): access denied",
+      "url": "https://blacklampa.github.io/sisi/historys",
+      "error": "HTTP 403 (https://blacklampa.github.io/sisi/historys): access denied",
       "depth": 1,
       "referrer": "/sisi"
     },
     {
-      "url": "https://ab2024.ru/svg",
-      "error": "HTTP 404 (https://ab2024.ru/svg): no body",
+      "url": "https://blacklampa.github.io/svg",
+      "error": "HTTP 404 (https://blacklampa.github.io/svg): no body",
       "depth": 0,
       "referrer": "club.js"
     },
     {
-      "url": "https://ab2024.ru/circle",
-      "error": "HTTP 404 (https://ab2024.ru/circle): no body",
+      "url": "https://blacklampa.github.io/circle",
+      "error": "HTTP 404 (https://blacklampa.github.io/circle): no body",
       "depth": 0,
       "referrer": "club.js"
     },
     {
-      "url": "https://ab2024.ru/ws",
-      "error": "HTTP 400 (https://ab2024.ru/ws): Connection ID required",
+      "url": "https://blacklampa.github.io/ws",
+      "error": "HTTP 400 (https://blacklampa.github.io/ws): Connection ID required",
       "depth": 1,
       "referrer": "/rch/check/connected"
     },
     {
-      "url": "https://ab2024.ru/nws",
-      "error": "HTTP 400 (https://ab2024.ru/nws): no body",
+      "url": "https://blacklampa.github.io/nws",
+      "error": "HTTP 400 (https://blacklampa.github.io/nws): no body",
       "depth": 1,
       "referrer": "/rch/check/connected"
     },
     {
-      "url": "https://ab2024.ru/xnx",
-      "error": "HTTP 503 (https://ab2024.ru/xnx): {\"accsdb\":true,\"error\":true,\"msg\":\"null\"}",
+      "url": "https://blacklampa.github.io/xnx",
+      "error": "HTTP 503 (https://blacklampa.github.io/xnx): {\"accsdb\":true,\"error\":true,\"msg\":\"null\"}",
       "depth": 1,
       "referrer": "/sisi"
     }
   ],
   "top_domains": [
     {
-      "domain": "ab2024.ru",
+      "domain": "blacklampa.github.io",
       "count": 2017
     },
     {

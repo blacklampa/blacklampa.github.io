@@ -3,7 +3,7 @@
 
   var Defined = {
     use_api: 'lampac',
-    localhost: 'https://ab2024.ru/sisi',
+    localhost: 'https://blacklampa.github.io/sisi',
     framework: '',
   };
 
@@ -46,7 +46,7 @@
     }
   }
 
-  var hostkey = 'https://ab2024.ru'
+  var hostkey = 'https://blacklampa.github.io'
     .replace('http://', '')
     .replace('https://', '');
 
@@ -83,7 +83,7 @@
       else {
         var net = new Lampa.Reguest();
         net.silent(
-          'https://ab2024.ru'.indexOf(location.host) >= 0
+          'https://blacklampa.github.io'.indexOf(location.host) >= 0
             ? 'https://github.com/'
             : host + '/cors/check',
           function () {
@@ -106,7 +106,7 @@
     startConnection,
   ) {
     window.rch_nws[hostkey].typeInvoke(
-      'https://ab2024.ru',
+      'https://blacklampa.github.io',
       function () {
         client.invoke(
           'RchRegistry',
@@ -145,7 +145,7 @@
 
             function sendResult(uri, html) {
               $.ajax({
-                url: 'https://ab2024.ru/rch/' + uri + '?id=' + rchId,
+                url: 'https://blacklampa.github.io/rch/' + uri + '?id=' + rchId,
                 type: 'POST',
                 data: html,
                 async: true,
@@ -239,7 +239,7 @@
     );
   };
   window.rch_nws[hostkey].typeInvoke(
-    'https://ab2024.ru',
+    'https://blacklampa.github.io',
     function () {},
   );
 
@@ -269,7 +269,7 @@
   function rchRun(json, call) {
     if (typeof NativeWsClient == 'undefined') {
       Lampa.Utils.putScript(
-        ['https://ab2024.ru/js/nws-client-es5.js?v18112025'],
+        ['https://blacklampa.github.io/js/nws-client-es5.js?v18112025'],
         function () {},
         false,
         function () {
@@ -1300,7 +1300,7 @@
     title: 'Клубничка',
     search: function search(params, oncomplite) {
       network.silent(
-        'https://ab2024.ru/rch/check/connected',
+        'https://blacklampa.github.io/rch/check/connected',
         function (json) {
           if (json.rch) {
             rchRun(json, function () {
