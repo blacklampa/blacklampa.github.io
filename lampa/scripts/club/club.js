@@ -3,7 +3,7 @@
 
   var Defined = {
     use_api: 'lampac',
-    localhost: '/sisi',
+    localhost: 'https://blacklampa.github.io/lampa/scripts/club/sisi',
     framework: '',
   };
 
