@@ -1,15 +1,13 @@
 (function () {
     'use strict';
 
-    // === guard ===
     if (window.__modss_loader_running) return;
     window.__modss_loader_running = true;
 
-    // === CONFIG ===
     var CHECK_EVERY_MS = 3000;
     var TIMEOUT_MS = 10000;
     var KEEP_LAST_ERRORS = 8;
-    var MAX_ROUNDS = 0; // 0 = бесконечно
+    var MAX_ROUNDS = 0;
 
     var FONT =
     'font:12px/1.35 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;';
@@ -33,7 +31,6 @@
 
     var network = new Lampa.Reguest();
 
-    // === Noty ===
     var lastNotyText = '';
     var lastNotyAt = 0;
 
@@ -58,18 +55,17 @@
     function esc(s) {
         s = String(s == null ? '' : s);
         return s.replace(/[&<>"']/g, function (c) {
-            return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
+            return ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c];
         });
     }
 
-    // === error journal ===
     var journal = [];
     function pushErr(o) {
         journal.unshift({
             at: new Date().toISOString(),
                         stage: o.stage || '?',
                         url: o.url || '?',
-                        status: o.status ?? '?',
+                        status: (o.status !== undefined && o.status !== null) ? o.status : '?',
                         msg: o.msg || '',
                         extra: o.extra || ''
         });
@@ -125,7 +121,6 @@
         };
     }
 
-    // === loader loop ===
     var idx = 0, attempt = 0, rounds = 0, hits = 0;
     var inFlight = false, timer = null;
 
@@ -136,7 +131,8 @@
     }
 
     function bumpRound() {
-        if (++hits >= urls.length) {
+        hits++;
+        if (hits >= urls.length) {
             hits = 0;
             rounds++;
         }
@@ -146,16 +142,6 @@
         if (timer) clearInterval(timer);
         timer = null;
         window.__modss_loader_running = false;
-
-        if (reason === 'max_rounds') {
-            updateNoty(renderStatus({
-                attempt,
-                url: '-',
-                stage: 'STOP (max rounds)',
-                                    rounds,
-                                    maxRounds: MAX_ROUNDS
-            }), true);
-        }
     }
 
     function tryOnce() {
@@ -163,10 +149,10 @@
 
         if (isModssReady()) {
             updateNoty(renderStatus({
-                attempt,
+                attempt: attempt,
                 url: '-',
                 stage: 'READY',
-                rounds,
+                rounds: rounds,
                 maxRounds: MAX_ROUNDS
             }), true);
             stop('ready');
@@ -184,10 +170,10 @@
         inFlight = true;
 
         updateNoty(renderStatus({
-            attempt,
-            url,
+            attempt: attempt,
+            url: url,
             stage: 'request',
-            rounds,
+            rounds: rounds,
             maxRounds: MAX_ROUNDS
         }));
 
@@ -195,77 +181,30 @@
         network.silent(
             url,
             function (txt) {
-                updateNoty(renderStatus({
-                    attempt,
-                    url,
-                    stage: 'eval',
-                    rounds,
-                    maxRounds: MAX_ROUNDS
-                }));
-
                 try {
                     eval(String(txt) + '\n//# sourceURL=' + location.origin + '/plugin_modss.js');
                     window.__modss_eval_ok = true;
                     window.loaded_modss = true;
-
-                    updateNoty(renderStatus({
-                        attempt,
-                        url,
-                        stage: 'OK',
-                        rounds,
-                        maxRounds: MAX_ROUNDS
-                    }), true);
-
-                    if (isModssReady()) stop('ready');
                 } catch (e) {
                     window.__modss_eval_ok = false;
                     window.loaded_modss = false;
-                    pushErr({
-                        stage: 'eval',
-                        url,
-                        status: 'OK',
-                        msg: e.message,
-                        extra: e.name
-                    });
-                    updateNoty(renderStatus({
-                        attempt,
-                        url,
-                        stage: 'EVAL ERROR',
-                        rounds,
-                        maxRounds: MAX_ROUNDS
-                    }), true);
-                } finally {
-                    inFlight = false;
+                    pushErr({ stage:'eval', url:url, status:'OK', msg:e.message, extra:e.name });
                 }
+                inFlight = false;
             },
             function (a, c) {
                 var status =
                 typeof a === 'number'
                 ? a
-                : a?.status ?? a?.statusCode ?? '?';
+                : (a && a.status !== undefined ? a.status :
+                (a && a.statusCode !== undefined ? a.statusCode : '?'));
 
                 var msg = '';
-                try { msg = network.errorDecode(a, c); } catch {}
+                try { msg = network.errorDecode(a, c); } catch (e) {}
 
                 window.__modss_eval_ok = false;
                 window.loaded_modss = false;
-
-                pushErr({
-                    stage: 'net',
-                    url,
-                    status,
-                    msg,
-                    extra: c
-                });
-
-                updateNoty(renderStatus({
-                    attempt,
-                    url,
-                    stage: 'NET ERROR',
-                    rounds,
-                    maxRounds: MAX_ROUNDS
-                }), true);
-
+                pushErr({ stage:'net', url:url, status:status, msg:msg, extra:c });
                 inFlight = false;
             },
             makeRequestData(),
@@ -277,7 +216,7 @@
         attempt: 0,
         url: '-',
         stage: 'START',
-        rounds,
+        rounds: rounds,
         maxRounds: MAX_ROUNDS
     }), true);
 
