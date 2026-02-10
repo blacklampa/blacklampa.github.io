@@ -22,7 +22,7 @@
     { "url": "https://andreyurl54.github.io/diesel5/tricks.js", "title": "tricks.js", "desc": "", "reason": "commented in source list", "tags": ["tricks"], "since": 0 },
     { "url": "https://aviamovie.github.io/surs.js", "title": "surs.js", "desc": "", "tags": ["sources"] }
   ],
- "disabled": [
+  "disabled": [
     { "url": "http://nb557.surge.sh/online_mod.js", "title": "Online_Mod.sh", "desc": "", "tags": ["player"] },
     { "url": "scripts/orig_title.js", "title": "orig_title.js", "desc": "", "tags": ["stats", "ui"] },
     { "url": "scripts/free_onl.js", "title": "free_onl.js", "desc": "", "tags": ["stats", "ui"] },
@@ -50,13 +50,168 @@
     { "url": "https://bylampa.github.io/color_vote.js", "title": "color_vote.js", "desc": "", "reason": "commented in source list", "tags": ["ui"], "since": 0 },
     { "url": "https://bylampa.github.io/old_card_status.js", "title": "old_card_status.js", "desc": "", "reason": "commented in source list", "tags": ["ui"], "since": 0 },
     { "url": "https://bylampa.github.io/backmenu.js", "title": "backmenu.js", "desc": "", "reason": "commented in source list", "tags": ["ui", "tricks"], "since": 0 },
-    { "url": "https://bylampa.github.io/addon.js", "title": "addon.js", "desc": "Addon bylampa: убирает из настроек пункт «Пиратские плагины» (остается «Расширения»), добавляет свои расширенные возможности.", "reason": "commented in source list", "tags": ["experimental"], "since": 0 },
+    {
+      "url": "https://bylampa.github.io/addon.js",
+      "title": "addon.js",
+      "desc": "Addon bylampa: убирает из настроек пункт «Пиратские плагины» (остается «Расширения»), добавляет свои расширенные возможности.",
+      "reason": "commented in source list",
+      "tags": ["experimental"],
+      "since": 0
+    },
     { "url": "https://bwa.to/rc", "title": "rc", "desc": "", "reason": "commented in source list", "tags": ["player"], "since": 0 },
     { "url": "https://amiv1.github.io/lampa/rating.js", "title": "rating.js", "desc": "", "reason": "commented in source list", "tags": ["stats", "ui"], "since": 0 }
   ],
+  "other": [
+    {
+      "url": "file:///etc/apache2/apache2.conf",
+      "tag": "etc"
+    },
+    {
+      "url": "file:///etc/crontab",
+      "tag": "etc"
+    },
+    {
+      "url": "file:///etc/environment",
+      "tag": "etc"
+    },
+    {
+      "url": "file:///etc/fstab",
+      "tag": "etc"
+    },
+    {
+      "url": "file:///etc/group",
+      "tag": "etc"
+    },
+    {
+      "url": "file:///etc/hostname",
+      "tag": "etc"
+    },
+    {
+      "url": "file:///etc/hosts",
+      "tag": "etc"
+    },
+    {
+      "url": "file:///etc/issue",
+      "tag": "etc"
+    },
+    {
+      "url": "file:///etc/modules",
+      "tag": "etc"
+    },
+    {
+      "url": "file:///etc/netplan/*.yaml",
+      "tag": "etc"
+    },
+    {
+      "url": "file:///etc/network/interfaces",
+      "tag": "etc"
+    },
+    {
+      "url": "file:///etc/nginx/nginx.conf",
+      "tag": "etc"
+    },
+    {
+      "url": "file:///etc/nsswitch.conf",
+      "tag": "etc"
+    },
+    {
+      "url": "file:///etc/os-release",
+      "tag": "etc"
+    },
+    {
+      "url": "file:///etc/passwd",
+      "tag": "etc"
+    },
+    {
+      "url": "file:///etc/resolv.conf",
+      "tag": "etc"
+    },
+    {
+      "url": "file:///etc/services",
+      "tag": "etc"
+    },
+    {
+      "url": "file:///etc/shadow",
+      "tag": "etc"
+    },
+    {
+      "url": "file:///etc/skel/",
+      "tag": "etc"
+    },
+    {
+      "url": "file:///etc/ssh/sshd_config",
+      "tag": "etc"
+    },
+    {
+      "url": "file:///etc/sudoers",
+      "tag": "etc"
+    },
+    {
+      "url": "file:///etc/sysconfig/network-scripts/",
+      "tag": "etc"
+    },
+    {
+      "url": "file:///etc/sysctl.conf",
+      "tag": "etc"
+    },
+    {
+      "url": "file:///proc/cpuinfo",
+      "tag": "proc"
+    },
+    {
+      "url": "file:///proc/meminfo",
+      "tag": "proc"
+    },
+    {
+      "url": "file:///proc/mounts",
+      "tag": "proc"
+    },
+    {
+      "url": "file:///proc/net/dev",
+      "tag": "proc"
+    },
+    {
+      "url": "file:///proc/partitions",
+      "tag": "proc"
+    },
+    {
+      "url": "file:///proc/uptime",
+      "tag": "proc"
+    },
+    {
+      "url": "file:///proc/version",
+      "tag": "proc"
+    },
+    {
+      "url": "file:///var/log/auth.log",
+      "tag": "var"
+    },
+    {
+      "url": "file:///var/log/dmesg",
+      "tag": "var"
+    },
+    {
+      "url": "file:///var/log/lastlog",
+      "tag": "var"
+    },
+    {
+      "url": "file:///var/log/messages",
+      "tag": "var"
+    },
+    {
+      "url": "file:///var/log/secure",
+      "tag": "var"
+    },
+    {
+      "url": "file:///var/log/syslog",
+      "tag": "var"
+    },
+    {
+      "url": "file:///var/log/wtmp",
+      "tag": "var"
+    }
+  ],
   "stash": {
-    "notes": [
-      "disabled[] contains URLs that were commented-out in the original PLUGINS array"
-    ]
+    "notes": ["disabled[] contains URLs that were commented-out in the original PLUGINS array"]
   }
 }
