@@ -1,290 +1,139 @@
-if (!window.loaded_modss) {
-    //show
-    Date.now || (Date.now = function() {
-        return (new Date.getTime())
+(function () {
+    'use strict';
+
+    // === настройки ===
+    var CHECK_EVERY_MS = 3000;   // перепроверка каждые 3 сек
+    var TIMEOUT_MS     = 10000;  // таймаут сети
+    var MAX_ROUNDS     = 10;      // 0 = бесконечно; иначе кол-во полных кругов по urls
+
+    // === "реальный признак загрузки" (подстрой под свой плагин) ===
+    // ВАЖНО: лучше проверять не loaded_modss, а то, что плагин реально зарегистрировался.
+    function isModssActuallyReady() {
+        // примерные варианты (выбери/добавь свой реальный признак):
+        // return !!(window.Modss && window.Modss.init);
+        // return !!(Lampa && Lampa.Plugin && Lampa.Plugin.get && Lampa.Plugin.get('modss'));
+        // fallback:
+        return window.loaded_modss === true && window.__modss_eval_ok === true;
     }
-    ),
-    function() {
-        "use strict";
-        for (var t = ["webkit", "moz"], e = 0; e < t.length && !window.requestAnimationFrame; ++e) {
-            var i = t[e];
-            window.requestAnimationFrame = window[i + "RequestAnimationFrame"],
-            window.cancelAnimationFrame = window[i + "CancelAnimationFrame"] || window[i + "CancelRequestAnimationFrame"]
+
+    function Protocol() {
+        return window.location.protocol === 'https:' ? 'https://' : 'http://';
+    }
+
+    var urls = [Protocol() + 'lampa.stream/modss', Protocol() + 'modss.tv', Protocol() + 'n.modss.tv'];
+
+    // если уже крутится — не плодим циклы
+    if (window.__modss_loader_running) return;
+    window.__modss_loader_running = true;
+
+    // НЕ выставляем loaded_modss=true заранее
+    if (typeof window.loaded_modss !== 'boolean') window.loaded_modss = false;
+    window.__modss_eval_ok = false;
+
+    var network = new Lampa.Reguest();
+    var idx = 0;
+    var rounds = 0;
+    var inFlight = false;
+
+    function log() {
+        try { console.log.apply(console, arguments); } catch (e) {}
+    }
+
+    function attemptOnce() {
+        if (inFlight) return;
+        if (isModssActuallyReady()) {
+            stopLoop();
+            return;
         }
-        if (/iP(ad|hone|od).*OS 6/.test(window.navigator.userAgent) || !window.requestAnimationFrame || !window.cancelAnimationFrame) {
-            var s = 0;
-            window.requestAnimationFrame = function(t) {
-                var e = Date.now()
-                  , i = Math.max(s + 16, e);
-                return setTimeout(function() {
-                    t(s = i)
-                }, i - e)
-            }
-            ,
-            window.cancelAnimationFrame = clearTimeout
-        }
-    }(),
-    function(t) {
-        t.snowfall = function(e, i) {
-            function s(s, n, a, r) {
-                this.x = s,
-                this.y = n,
-                this.size = a,
-                this.speed = r,
-                this.step = 0,
-                this.stepSize = h(1, 10) / 100,
-                i.collection && (this.target = m[h(0, m.length - 1)]);
-                var p = null;
-                i.image ? (p = document.createElement("img"),
-                p.src = i.image) : (p = document.createElement("div"),
-                t(p).css({
-                    background: i.flakeColor
-                })),
-                t(p).attr({
-                    "class": "snowfall-flakes"
-                }).css({
-                    width: this.size,
-                    height: this.size,
-                    position: i.flakePosition,
-                    top: this.y,
-                    left: this.x,
-                    fontSize: 0,
-                    zIndex: i.flakeIndex
-                }),
-                t(e).get(0).tagName === t(document).get(0).tagName ? (t("body").append(t(p)),
-                e = t("body")) : t(e).append(t(p)),
-                this.element = p,
-                this.update = function() {
-                    if (this.y += this.speed,
-                    this.y > l - (this.size + 6) && this.reset(),
-                    this.element.style.top = this.y + "px",
-                    this.element.style.left = this.x + "px",
-                    this.step += this.stepSize,
-                    y === !1 ? this.x += Math.cos(this.step) : this.x += y + Math.cos(this.step),
-                    i.collection && this.x > this.target.x && this.x < this.target.width + this.target.x && this.y > this.target.y && this.y < this.target.height + this.target.y) {
-                        var t = this.target.element.getContext("2d")
-                          , e = this.x - this.target.x
-                          , s = this.y - this.target.y
-                          , n = this.target.colData;
-                        if (void 0 !== n[parseInt(e)][parseInt(s + this.speed + this.size)] || s + this.speed + this.size > this.target.height)
-                            if (s + this.speed + this.size > this.target.height) {
-                                for (; s + this.speed + this.size > this.target.height && this.speed > 0; )
-                                    this.speed *= .5;
-                                t.fillStyle = o.flakeColor,
-                                void 0 == n[parseInt(e)][parseInt(s + this.speed + this.size)] ? (n[parseInt(e)][parseInt(s + this.speed + this.size)] = 1,
-                                t.fillRect(e, s + this.speed + this.size, this.size, this.size)) : (n[parseInt(e)][parseInt(s + this.speed)] = 1,
-                                t.fillRect(e, s + this.speed, this.size, this.size)),
-                                this.reset()
-                            } else
-                                this.speed = 1,
-                                this.stepSize = 0,
-                                parseInt(e) + 1 < this.target.width && void 0 == n[parseInt(e) + 1][parseInt(s) + 1] ? this.x++ : parseInt(e) - 1 > 0 && void 0 == n[parseInt(e) - 1][parseInt(s) + 1] ? this.x-- : (t.fillStyle = o.flakeColor,
-                                t.fillRect(e, s, this.size, this.size),
-                                n[parseInt(e)][parseInt(s)] = 1,
-                                this.reset())
-                    }
-                    (this.x + this.size > d - c || this.x < c) && this.reset()
-                }
-                ,
-                this.reset = function() {
-                    this.y = 0,
-                    this.x = h(c, d - c),
-                    this.stepSize = h(1, 10) / 100,
-                    this.size = h(100 * i.minSize, 100 * i.maxSize) / 100,
-                    this.element.style.width = this.size + "px",
-                    this.element.style.height = this.size + "px",
-                    this.speed = h(i.minSpeed, i.maxSpeed)
-                }
-            }
-            function n() {
-                for (r = 0; r < a.length; r += 1)
-                    a[r].update();
-                p = requestAnimationFrame(function() {
-                    n()
-                })
-            }
-            var a = []
-              , o = {
-                flakeCount: 35,
-                flakeColor: "#ffffff",
-                flakePosition: "absolute",
-                flakeIndex: 999999,
-                minSize: 1,
-                maxSize: 2,
-                minSpeed: 1,
-                maxSpeed: 5,
-                round: !1,
-                shadow: !1,
-                collection: !1,
-                collectionHeight: 40,
-                deviceorientation: !1
-            }
-              , i = t.extend(o, i)
-              , h = function(t, e) {
-                return Math.round(t + Math.random() * (e - t))
-            };
-            t(e).data("snowfall", this);
-            var r = 0
-              , l = t(e).height()
-              , d = t(e).width()
-              , c = 0
-              , p = 0;
-            if (i.collection !== !1) {
-                var f = document.createElement("canvas");
-                if (f.getContext && f.getContext("2d"))
-                    for (var m = [], w = t(i.collection), g = i.collectionHeight, r = 0; r < w.length; r++) {
-                        var u = w[r].getBoundingClientRect()
-                          , x = t("<canvas/>", {
-                            "class": "snowfall-canvas"
-                        })
-                          , z = [];
-                        if (u.top - g > 0) {
-                            t("body").append(x),
-                            x.css({
-                                position: i.flakePosition,
-                                left: u.left + "px",
-                                top: u.top - g + "px"
-                            }).prop({
-                                width: u.width,
-                                height: g
-                            });
-                            for (var v = 0; v < u.width; v++)
-                                z[v] = [];
-                            m.push({
-                                element: x.get(0),
-                                x: u.left,
-                                y: u.top - g,
-                                width: u.width,
-                                height: g,
-                                colData: z
-                            })
-                        }
-                    }
-                else
-                    i.collection = !1
-            }
-            for (t(e).get(0).tagName === t(document).get(0).tagName && (c = 25),
-            t(window).bind("resize", function() {
-                l = t(e)[0].clientHeight,
-                d = t(e)[0].offsetWidth
-            }),
-            r = 0; r < i.flakeCount; r += 1)
-                a.push(new s(h(c, d - c),h(0, l),h(100 * i.minSize, 100 * i.maxSize) / 100,h(i.minSpeed, i.maxSpeed)));
-            i.round && t(".snowfall-flakes").css({
-                "-moz-border-radius": i.maxSize,
-                "-webkit-border-radius": i.maxSize,
-                "border-radius": i.maxSize
-            }),
-            i.shadow && t(".snowfall-flakes").css({
-                "-moz-box-shadow": "1px 1px 1px #555",
-                "-webkit-box-shadow": "1px 1px 1px #555",
-                "box-shadow": "1px 1px 1px #555"
-            });
-            var y = !1;
-            i.deviceorientation && t(window).bind("deviceorientation", function(t) {
-                y = .1 * t.originalEvent.gamma
-            }),
-            n(),
-            this.clear = function() {
-                t(".snowfall-canvas").remove(),
-                t(e).children(".snowfall-flakes").remove(),
-                cancelAnimationFrame(p)
-            }
-        }
-        ,
-        t.fn.snowfall = function(e) {
-            return "object" == typeof e || void 0 == e ? this.each(function(i) {
-                new t.snowfall(this,e)
-            }) : "string" == typeof e ? this.each(function(e) {
-                var i = t(this).data("snowfall");
-                i && i.clear()
-            }) : void 0
-        }
-    }(jQuery);
 
-    (function() {
-        'use strict';
-
-        var Protocol = function Protocol() {
-            return window.location.protocol == 'https:' ? 'https://' : 'http://';
-        }
-        var TRASH_R = ['$$$####!!!!!!!', '^^^^^^##@', '@!^^!@#@@$$$$$', '^^#@@!!@#!$', '@#!@@@##$$@@'];
-        var version_modss = '3.3', API = Protocol() + 'api.lampa.stream/', type = '', jackets = {}, cards, ping_auth, manifest, menu_list = [], vip = false, leftVipD = '', user_id = '', uid = '145e884a14a0724a6b0ea55ed', IP, logged = undefined, cashe = encodeURIComponent(Lampa.Base64.encode(window.location.origin));
-
-        var urls = [Protocol() + 'lampa.stream/modss', Protocol() + 'modss.tv', Protocol() + 'n.modss.tv'];
-
-        console.log('Modss', 'protocol:', Protocol());
-        console.log('Modss', 'origin', window.location.origin);
-        console.log('Modss', 'init', 'LOADED - EE [2a03:f480:1:12::52] - [GET] ' + urls[0]);
-        window.loaded_modss = true;
-
-        var network = new Lampa.Reguest();
-        var currentUrlIndex = 0;
-        var loadErrors = [];
-        var requestData = {
-            user_id: user_id,
-            uid: uid,
-            ips: '2a03:f480:1:12::52',
-            cas: cashe,
-            cache: false,
-            id: '',
-            or: 'dW5kZWZpbmVk',
-            auth: logged
-        };
-
-        function tryNextUrl() {
-            if (currentUrlIndex >= urls.length) {
-                var statusCodes = loadErrors.map(function(e) {
-                    return String(e.status != null ? e.status : '?');
-                }).join(', ');
-                console.log('Modss', 'init', 'EE [2a03:f480:1:12::52] - все URL недоступны. Статусы ответов:', statusCodes, loadErrors);
-                Lampa.Noty.show('EE [2a03:f480:1:12::52] - MODSs ОШИБКА ЗАГРУЗКИ ПЛАГИНА -> все серверы недоступны.<br>Статусы: ' + (statusCodes || '—') + '<br>Lampa: ' + window.location.origin, {
-                    time: 10000
-                });
-                window.loaded_modss = false;
+        var url = urls[idx];
+        idx = (idx + 1) % urls.length;
+        if (idx === 0) {
+            rounds++;
+            if (MAX_ROUNDS > 0 && rounds > MAX_ROUNDS) {
+                log('Modss', 'loader', 'stop: max rounds reached');
+                stopLoop(true);
                 return;
             }
-
-            var currentUrl = urls[currentUrlIndex];
-            var attemptNumber = currentUrlIndex + 1;
-            console.log('Modss', 'init', '[POST] Попытка ' + attemptNumber + '/' + urls.length + ' - загрузки:', currentUrl);
-            if (attemptNumber > 1)
-                Lampa.Noty.show('Modss - init [POST] Попытка ' + attemptNumber + '/' + urls.length + ' - загрузки: ' + currentUrl, {
-                    time: 6000
-                });
-
-            network.timeout(10000);
-            network.silent(currentUrl, function(json) {
-                try {
-                    console.log('Modss', 'push', 'START - ' + currentUrl);
-                    eval(json + '//# sourceURL=' + window.location.origin + '/plugin_modss.js');
-                    window.loaded_modss = true;
-                } catch (error) {
-                    Lampa.Noty.show('MODSs ОШИБКА ЗАГРУЗКИ -> ' + error.message);
-                    console.log('Modss', 'init', 'ERROR - ' + currentUrl, error.message);
-                    console.error('Ошибка выполнения кода:', error);
-                    currentUrlIndex++;
-                    tryNextUrl();
-                }
-            }, function(a, c) {
-                var errMsg = network.errorDecode(a, c);
-                var statusNum = typeof a === 'number' ? a : (a && (a.status !== undefined ? a.status : (a.statusCode !== undefined ? a.statusCode : null)));
-                if (statusNum === undefined || statusNum === null)
-                    statusNum = '?';
-                loadErrors.push({
-                    url: currentUrl,
-                    status: statusNum,
-                    message: errMsg || ''
-                });
-                console.log('Modss', 'init', 'EE [2a03:f480:1:12::52] - load get plugin error - [POST] ' + currentUrl, 'status:', statusNum, errMsg);
-                currentUrlIndex++;
-                tryNextUrl();
-            }, requestData, {
-                dataType: 'text'
-            });
         }
 
-        tryNextUrl();
+        inFlight = true;
+        network.timeout(TIMEOUT_MS);
+
+        // requestData оставил, но можно упростить если не нужно
+        var cashe = encodeURIComponent(Lampa.Base64.encode(window.location.origin));
+        var requestData = {
+            user_id: '',
+            uid: '145e884a14a0724a6b0ea55ed',
+            ips: '127.0.0.1',
+            cas: cashe,
+            cache: true,
+            id: '',
+            or: 'dW5kZWZpbmVk',
+            auth: undefined
+        };
+
+        log('Modss', 'loader', 'try', url);
+
+        network.silent(
+            url,
+            function onOk(txt) {
+                try {
+                    // ВАЖНО: ставим флаги только после успешного eval
+                    log('Modss', 'loader', 'eval', url);
+                    eval(String(txt) + '\n//# sourceURL=' + window.location.origin + '/plugin_modss.js');
+                    window.__modss_eval_ok = true;
+                    window.loaded_modss = true;
+
+                    // если после eval "реальный признак" появился — стопаемся
+                    if (isModssActuallyReady()) {
+                        log('Modss', 'loader', 'ready');
+                        stopLoop();
+                    }
+                } catch (e) {
+                    window.__modss_eval_ok = false;
+                    window.loaded_modss = false;
+                    log('Modss', 'loader', 'eval error', url, e && e.message);
+                } finally {
+                    inFlight = false;
+                }
+            },
+            function onErr(a, c) {
+                try {
+                    var errMsg = network.errorDecode(a, c);
+                    var statusNum = (typeof a === 'number')
+                    ? a
+                    : (a && (a.status != null ? a.status : (a.statusCode != null ? a.statusCode : null)));
+                    log('Modss', 'loader', 'net error', url, 'status:', statusNum, errMsg);
+                } catch (e) {}
+                inFlight = false;
+                window.__modss_eval_ok = false;
+                window.loaded_modss = false;
+            },
+            requestData,
+            { dataType: 'text' }
+        );
     }
-    )();
-}
+
+    var timer = null;
+
+    function startLoop() {
+        // сразу пробуем
+        attemptOnce();
+        // и далее каждые N сек
+        timer = setInterval(attemptOnce, CHECK_EVERY_MS);
+    }
+
+    function stopLoop(failed) {
+        if (timer) clearInterval(timer);
+        timer = null;
+        window.__modss_loader_running = false;
+        if (failed) {
+            try {
+                Lampa.Noty.show('MODSs: загрузчик остановлен (достигнут лимит попыток).', { time: 8000 });
+            } catch (e) {}
+        }
+    }
+
+    startLoop();
+})();
