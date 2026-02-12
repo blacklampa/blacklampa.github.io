@@ -278,6 +278,7 @@
     localstorage: { id: 'localstorage', parent: 'utils', title: 'LocalStorage', desc: 'LocalStorage Manager (keys + values).', screen: 'action', action: function () { try { if (window.BL && BL.LocalStorageManager && BL.LocalStorageManager.open) BL.LocalStorageManager.open(); } catch (_) { } } },
     danger: { id: 'danger', parent: 'root', titleKey: 'menu.root.danger.title', descKey: 'menu.root.danger.desc', screen: 'danger' },
     ui: { id: 'ui', parent: 'root', titleKey: 'menu.root.ui.title', descKey: 'menu.root.ui.desc', screen: 'ui' },
+    ui_playerguard: { id: 'ui_playerguard', parent: 'ui', menu: false, title: 'PlayerGuard', desc: 'PlayerGuard settings', screen: 'ui_playerguard' },
     status: { id: 'status', parent: 'root', titleKey: 'menu.root.status.title', param: { name: 'bl_pi_root_status', type: 'static', values: '', default: '' }, screen: 'status', rootRender: rootStatusRender }
   };
 
@@ -405,6 +406,7 @@
     network_status: buildNetworkStatusScreen,
     jsqp: buildJsqpScreen,
     ui: buildUiScreen,
+    ui_playerguard: buildUiPlayerGuardScreen,
     logging: buildLoggingScreen,
     ua_presets: buildUaPresetsScreen,
     ua_effective: buildUaEffectiveScreen,
@@ -984,193 +986,196 @@
     } catch (_) { }
   }
 
-		  function buildUiScreen(ctx) {
-		    try {
-		      P(ctx, {
-		        id: 'blacklampa_ui_extended_interface_sizes',
-		        type: 'toggle',
-		        values: { 0: 'OFF', 1: 'ON' },
-		        default: 1,
-		        name: 'Расширенные размеры интерфейса',
-		        desc: 'Добавляет xsmall/xxsmall (0.8/0.7) к настройке \"Размер интерфейса\".'
-		      });
+  function refreshPlayerGuardSettings() {
+    try { if (window.BL && BL.PlayerGuard && BL.PlayerGuard.refresh) BL.PlayerGuard.refresh(); } catch (_) { }
+  }
 
-				      P(ctx, {
-				        id: 'player_guard_enabled',
-				        type: 'toggle',
-				        values: { 0: 'OFF', 1: 'ON' },
-				        default: 0,
-				        name: 'Защита плеера от обрывов (PlayerGuard)',
-				        desc: 'Double-guard: защита от ложного конца/сессионных сбросов (t=0/dur=0) + анти-автопереход к следующему. По умолчанию OFF.',
-				        onChange: function () {
-				          try { if (window.BL && BL.PlayerGuard && BL.PlayerGuard.refresh) BL.PlayerGuard.refresh(); } catch (_) { }
-				        }
-				      });
+  function buildUiPlayerGuardScreen(ctx) {
+    try {
+      P(ctx, {
+        id: 'player_guard_enabled',
+        type: 'toggle',
+        values: { 0: 'OFF', 1: 'ON' },
+        default: 0,
+        name: 'Защита плеера от обрывов (PlayerGuard)',
+        desc: 'Double-guard: защита от ложного конца/сессионных сбросов (t=0/dur=0) + анти-автопереход к следующему. По умолчанию OFF.',
+        onChange: refreshPlayerGuardSettings
+      });
 
-					      P(ctx, {
-					        id: 'player_guard_reopen_on_fault',
-					        type: 'toggle',
-					        values: { 0: 'OFF', 1: 'ON' },
-					        default: 1,
-					        name: 'PlayerGuard: Перезапускать плеер при обрыве (reopen)',
-					        desc: 'Основной фикс: при цикличных/сессионных сбоях закрывает плеер и открывает текущий эпизод заново на truth позиции.',
-					        onChange: function () {
-					          try { if (window.BL && BL.PlayerGuard && BL.PlayerGuard.refresh) BL.PlayerGuard.refresh(); } catch (_) { }
-					        }
-					      });
+      P(ctx, {
+        id: 'player_guard_hard_strategy',
+        type: 'select',
+        values: { auto: 'auto (in-player -> reopen)', inplayer: 'in-player only', reopen: 'reopen only' },
+        default: 'auto',
+        name: 'PlayerGuard: Стратегия HARD recovery',
+        desc: 'auto: сначала in-player reconnect, затем reopen (если разрешён). inplayer: без закрытия UI плеера. reopen: классический close/play.',
+        onChange: refreshPlayerGuardSettings
+      });
 
-					      P(ctx, {
-					        id: 'player_guard_auto_reopen_from_position',
-					        type: 'toggle',
-					        values: { 0: 'OFF', 1: 'ON' },
-					        default: 1,
-					        name: 'PlayerGuard: Авто \"старт заново с позиции\" при обрыве',
-					        desc: 'При fault автоматически выполняет \"Старт заново с позиции\": перезапуск плеера и продолжение с последней стабильной позиции.',
-					        onChange: function () {
-					          try { if (window.BL && BL.PlayerGuard && BL.PlayerGuard.refresh) BL.PlayerGuard.refresh(); } catch (_) { }
-					        }
-					      });
+      P(ctx, {
+        id: 'player_guard_reopen_on_fault',
+        type: 'toggle',
+        values: { 0: 'OFF', 1: 'ON' },
+        default: 1,
+        name: 'PlayerGuard: Перезапускать плеер при обрыве (reopen)',
+        desc: 'Разрешает fallback через close/play. Если OFF, reopen не используется.',
+        onChange: refreshPlayerGuardSettings
+      });
 
-					      P(ctx, {
-					        id: 'player_guard_allow_soft',
-					        type: 'toggle',
-					        values: { 0: 'OFF', 1: 'ON' },
-					        default: 1,
-					        name: 'PlayerGuard: Разрешить SOFT recovery',
-				        desc: 'Быстрые попытки (seek/play/load) перед reopen. При fault-loop SOFT отключается автоматически.',
-				        onChange: function () {
-				          try { if (window.BL && BL.PlayerGuard && BL.PlayerGuard.refresh) BL.PlayerGuard.refresh(); } catch (_) { }
-				        }
-				      });
+      P(ctx, {
+        id: 'player_guard_auto_reopen_from_position',
+        type: 'toggle',
+        values: { 0: 'OFF', 1: 'ON' },
+        default: 1,
+        name: 'PlayerGuard: Автовосстановление по fault',
+        desc: 'Автоматически запускает recovery после обрыва из буфера/fault событий.',
+        onChange: refreshPlayerGuardSettings
+      });
 
-				      P(ctx, {
-				        id: 'player_guard_allow_hard',
-				        type: 'toggle',
-				        values: { 0: 'OFF', 1: 'ON' },
-				        default: 0,
-				        name: 'PlayerGuard: Разрешить HARD reset',
-				        desc: 'Разрешает тяжёлый reset PlayerVideo (destroy/url). По умолчанию OFF (предпочтительно reopen).',
-				        onChange: function () {
-				          try { if (window.BL && BL.PlayerGuard && BL.PlayerGuard.refresh) BL.PlayerGuard.refresh(); } catch (_) { }
-				        }
-				      });
+      P(ctx, {
+        id: 'player_guard_allow_soft',
+        type: 'toggle',
+        values: { 0: 'OFF', 1: 'ON' },
+        default: 1,
+        name: 'PlayerGuard: Разрешить SOFT recovery',
+        desc: 'Быстрые попытки (seek/play/load) перед HARD стратегией.',
+        onChange: refreshPlayerGuardSettings
+      });
 
-				      P(ctx, {
-				        id: 'player_guard_soft_attempts',
-				        type: 'select',
-				        values: { '0': '0', '1': '1', '2': '2', '3': '3', '4': '4', '5': '5' },
-				        default: '2',
-				        name: 'Попыток восстановления (SOFT)',
-				        desc: 'Мягкие попытки: seek/play, load, reload URL. Бюджет не сбрасывается при повторных fault в коротком окне.',
-				        onChange: function () {
-				          try { if (window.BL && BL.PlayerGuard && BL.PlayerGuard.refresh) BL.PlayerGuard.refresh(); } catch (_) { }
-				        }
-				      });
+      P(ctx, {
+        id: 'player_guard_allow_hard',
+        type: 'toggle',
+        values: { 0: 'OFF', 1: 'ON' },
+        default: 0,
+        name: 'PlayerGuard: Разрешить HARD reset',
+        desc: 'Разрешает тяжёлый reset PlayerVideo (destroy/url).',
+        onChange: refreshPlayerGuardSettings
+      });
 
-				      P(ctx, {
-				        id: 'player_guard_hard_attempts',
-				        type: 'select',
-				        values: { '0': '0', '1': '1', '2': '2' },
-				        default: '1',
-				        name: 'Попыток восстановления (HARD)',
-				        desc: 'HARD попытки: reopen плеера на truth позицию (и/или hard reset, если разрешён).',
-				        onChange: function () {
-				          try { if (window.BL && BL.PlayerGuard && BL.PlayerGuard.refresh) BL.PlayerGuard.refresh(); } catch (_) { }
-				        }
-				      });
+      P(ctx, {
+        id: 'player_guard_soft_attempts',
+        type: 'select',
+        values: { '0': '0', '1': '1', '2': '2', '3': '3', '4': '4', '5': '5' },
+        default: '2',
+        name: 'Попыток восстановления (SOFT)',
+        desc: 'Мягкие попытки: seek/play, load, reload URL. Бюджет не сбрасывается при повторных fault в коротком окне.',
+        onChange: refreshPlayerGuardSettings
+      });
 
-			      P(ctx, {
-			        id: 'player_guard_attempt_delay_sec',
-			        type: 'select',
-			        values: { '1': '1', '2': '2', '3': '3', '4': '4', '5': '5' },
-			        default: '2',
-			        name: 'Пауза между попытками (сек)',
-			        desc: 'Задержка между шагами восстановления (чтобы было видно и не дёргать плеер слишком часто).',
-			        onChange: function () {
-			          try { if (window.BL && BL.PlayerGuard && BL.PlayerGuard.refresh) BL.PlayerGuard.refresh(); } catch (_) { }
-			        }
-			      });
+      P(ctx, {
+        id: 'player_guard_hard_attempts',
+        type: 'select',
+        values: { '0': '0', '1': '1', '2': '2' },
+        default: '1',
+        name: 'Попыток восстановления (HARD)',
+        desc: 'Бюджет HARD шагов: in-player/reopen/hard-reset (зависит от стратегии).',
+        onChange: refreshPlayerGuardSettings
+      });
 
-				      P(ctx, {
-				        id: 'player_guard_popup_min_sec',
-				        type: 'select',
-				        values: { '1': '1', '2': '2', '3': '3', '4': '4', '5': '5' },
-				        default: '2',
-				        name: 'Мин. показ попапа (сек)',
-				        desc: 'Минимальное время показа каждого шага (1–5 сек).',
-				        onChange: function () {
-				          try { if (window.BL && BL.PlayerGuard && BL.PlayerGuard.refresh) BL.PlayerGuard.refresh(); } catch (_) { }
-				        }
-				      });
+      P(ctx, {
+        id: 'player_guard_attempt_delay_sec',
+        type: 'select',
+        values: { '1': '1', '2': '2', '3': '3', '4': '4', '5': '5' },
+        default: '2',
+        name: 'Пауза между попытками (сек)',
+        desc: 'Задержка между шагами восстановления (чтобы не дёргать плеер слишком часто).',
+        onChange: refreshPlayerGuardSettings
+      });
 
-				      try {
-				        var pg_ac = [];
-				        for (var pg_i = 0; pg_i <= 60; pg_i++) pg_ac.push(String(pg_i));
-				        P(ctx, {
-				          id: 'player_guard_popup_autoclose_sec',
-				          type: 'select',
-				          values: pg_ac,
-				          default: '10',
-				          name: 'PlayerGuard popup: автозакрытие (сек)',
-				          desc: 'Автозакрытие попапа при бездействии. 0 = выключено.',
-				          onChange: function () {
-				            try { if (window.BL && BL.PlayerGuard && BL.PlayerGuard.refresh) BL.PlayerGuard.refresh(); } catch (_) { }
-				          }
-				        });
-				      } catch (_) { }
+      P(ctx, {
+        id: 'player_guard_popup_min_sec',
+        type: 'select',
+        values: { '1': '1', '2': '2', '3': '3', '4': '4', '5': '5' },
+        default: '2',
+        name: 'Мин. показ попапа (сек)',
+        desc: 'Минимальное время показа каждого шага (1–5 сек).',
+        onChange: refreshPlayerGuardSettings
+      });
 
-				      P(ctx, {
-				        id: 'player_guard_block_next',
-				        type: 'toggle',
-				        values: { 0: 'OFF', 1: 'ON' },
-				        default: 1,
-			        name: 'Блокировать авто-переход к следующему',
-			        desc: 'В режиме guardLock блокирует autoplay next при ложном конце/сбросе сессии.',
-			        onChange: function () {
-			          try { if (window.BL && BL.PlayerGuard && BL.PlayerGuard.refresh) BL.PlayerGuard.refresh(); } catch (_) { }
-			        }
-			      });
+      try {
+        var pg_ac = [];
+        for (var pg_i = 0; pg_i <= 60; pg_i++) pg_ac.push(String(pg_i));
+        P(ctx, {
+          id: 'player_guard_popup_autoclose_sec',
+          type: 'select',
+          values: pg_ac,
+          default: '10',
+          name: 'PlayerGuard popup: автозакрытие (сек)',
+          desc: 'Автозакрытие попапа при бездействии. 0 = выключено.',
+          onChange: refreshPlayerGuardSettings
+        });
+      } catch (_) { }
 
-			      P(ctx, {
-			        id: 'player_guard_debug_popup',
-			        type: 'toggle',
-			        values: { 0: 'OFF', 1: 'ON' },
-			        default: 1,
-			        name: 'Отладка в попапе',
-			        desc: 'Показывает readyState/networkState/srcSig/reason.',
-			        onChange: function () {
-			          try { if (window.BL && BL.PlayerGuard && BL.PlayerGuard.refresh) BL.PlayerGuard.refresh(); } catch (_) { }
-			        }
-			      });
+      P(ctx, {
+        id: 'player_guard_block_next',
+        type: 'toggle',
+        values: { 0: 'OFF', 1: 'ON' },
+        default: 1,
+        name: 'Блокировать авто-переход к следующему',
+        desc: 'В режиме guardLock блокирует autoplay next при ложном конце/сбросе сессии.',
+        onChange: refreshPlayerGuardSettings
+      });
 
-			      P(ctx, {
-			        id: 'player_guard_store_pos',
-			        type: 'toggle',
-			        values: { 0: 'OFF', 1: 'ON' },
-			        default: 1,
-			        name: 'Сохранять позицию в localStorage',
-			        desc: 'Truth позиция (throttle) хранится как backup и используется для recovery.',
-			        onChange: function () {
-			          try { if (window.BL && BL.PlayerGuard && BL.PlayerGuard.refresh) BL.PlayerGuard.refresh(); } catch (_) { }
-			        }
-			      });
+      P(ctx, {
+        id: 'player_guard_debug_popup',
+        type: 'toggle',
+        values: { 0: 'OFF', 1: 'ON' },
+        default: 1,
+        name: 'Отладка в попапе',
+        desc: 'Показывает readyState/networkState/srcSig/reason.',
+        onChange: refreshPlayerGuardSettings
+      });
 
-			      P(ctx, {
-			        id: 'ext_filters',
-			        type: 'toggle',
-			        values: { 0: 'OFF', 1: 'ON' },
-	        default: 0,
-	        nameKey: 'ui.extfilters.title',
-	        descKey: 'ui.extfilters.desc',
-	        onChange: function () {
-	          try {
-	            if (window.BL && BL.ModuleExtFilters && BL.ModuleExtFilters.refresh) return BL.ModuleExtFilters.refresh();
-	            if (window.BL && BL.ExtFilters && BL.ExtFilters.refresh) return BL.ExtFilters.refresh();
-	          } catch (_) { }
-	        }
-	      });
-	    } catch (_) { }
-	  }
+      P(ctx, {
+        id: 'player_guard_store_pos',
+        type: 'toggle',
+        values: { 0: 'OFF', 1: 'ON' },
+        default: 1,
+        name: 'Сохранять позицию в localStorage',
+        desc: 'Truth позиция (throttle) хранится как backup и используется для recovery.',
+        onChange: refreshPlayerGuardSettings
+      });
+    } catch (_) { }
+  }
+
+  function buildUiScreen(ctx) {
+    try {
+      P(ctx, {
+        id: 'blacklampa_ui_extended_interface_sizes',
+        type: 'toggle',
+        values: { 0: 'OFF', 1: 'ON' },
+        default: 1,
+        name: 'Расширенные размеры интерфейса',
+        desc: 'Добавляет xsmall/xxsmall (0.8/0.7) к настройке \"Размер интерфейса\".'
+      });
+
+      P(ctx, {
+        id: 'bl_ui_playerguard_open',
+        type: 'button',
+        name: 'PlayerGuard',
+        desc: 'Открыть подменю PlayerGuard: recovery, попытки, popup и хранение позиции.',
+        onChange: function () {
+          try { if (ctx && ctx.push) ctx.push('ui_playerguard', null, 0); } catch (_) { }
+          return false;
+        }
+      });
+
+      P(ctx, {
+        id: 'ext_filters',
+        type: 'toggle',
+        values: { 0: 'OFF', 1: 'ON' },
+        default: 0,
+        nameKey: 'ui.extfilters.title',
+        descKey: 'ui.extfilters.desc',
+        onChange: function () {
+          try {
+            if (window.BL && BL.ModuleExtFilters && BL.ModuleExtFilters.refresh) return BL.ModuleExtFilters.refresh();
+            if (window.BL && BL.ExtFilters && BL.ExtFilters.refresh) return BL.ExtFilters.refresh();
+          } catch (_) { }
+        }
+      });
+    } catch (_) { }
+  }
 
 	  function buildLoggingScreen(ctx) {
 	    try {
