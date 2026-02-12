@@ -141,6 +141,8 @@
 
     manual: {
       allowNextTs: 0,
+      overlayCriticalUntilTs: 0,
+      overlayCriticalTags: null,
       suppressUntilTs: 0,
       suppressWhy: '',
       userPaused: false,
@@ -1528,8 +1530,83 @@
   function isManualAllowed() {
     var t = now();
     if (STATE.manual.allowNextTs && (t - STATE.manual.allowNextTs) <= DET.manualNextAllowMs) return true;
+    try {
+      if (STATE.manual.overlayCriticalUntilTs && t < toInt(STATE.manual.overlayCriticalUntilTs, 0)) return true;
+    } catch (_) { }
     try { if (document && document.body && document.body.classList && document.body.classList.contains('selectbox--open')) return true; } catch (_) { }
     return false;
+  }
+
+  function overlayCriticalRecalc(nowTs) {
+    nowTs = toInt(nowTs, now());
+    var maxTs = 0;
+    try {
+      if (!STATE.manual.overlayCriticalTags || typeof STATE.manual.overlayCriticalTags !== 'object') {
+        STATE.manual.overlayCriticalTags = {};
+      }
+      for (var k in STATE.manual.overlayCriticalTags) {
+        if (!Object.prototype.hasOwnProperty.call(STATE.manual.overlayCriticalTags, k)) continue;
+        var v = toInt(STATE.manual.overlayCriticalTags[k], 0);
+        if (!v || v <= nowTs) {
+          try { delete STATE.manual.overlayCriticalTags[k]; } catch (_) { }
+          continue;
+        }
+        if (v > maxTs) maxTs = v;
+      }
+    } catch (_) { maxTs = 0; }
+    STATE.manual.overlayCriticalUntilTs = maxTs;
+    return maxTs;
+  }
+
+  function overlayCriticalBegin(tag, ttlMs) {
+    tag = String(tag || 'overlay');
+    ttlMs = clampInt(ttlMs, 0, 30000);
+    var ts = now();
+    var untilTs = ts + ttlMs;
+
+    try {
+      if (!STATE.manual.overlayCriticalTags || typeof STATE.manual.overlayCriticalTags !== 'object') {
+        STATE.manual.overlayCriticalTags = {};
+      }
+      STATE.manual.overlayCriticalTags[tag] = untilTs;
+      STATE.manual.overlayCriticalUntilTs = Math.max(toInt(STATE.manual.overlayCriticalUntilTs, 0), untilTs);
+    } catch (_) { }
+
+    try { markManualNext('overlay:' + tag); } catch (_) { }
+
+    try {
+      var video = null;
+      try { video = STATE.video || (window.Lampa && Lampa.PlayerVideo && typeof Lampa.PlayerVideo.video === 'function' ? Lampa.PlayerVideo.video() : null); } catch (_) { video = STATE.video; }
+      var src = resolveRecoveryUrl('', video);
+      if (src) {
+        STATE.guard.lockedUrl = String(src || '');
+        STATE.guard.lockedSrcSig = buildSrcSig(String(src || ''));
+      }
+    } catch (_) { }
+
+    logEvt('DBG', 'overlay_critical_begin', { tag: String(tag || ''), ttlMs: ttlMs, untilMs: Math.max(0, untilTs - now()) }, 'overlay:critical:begin:' + String(tag || ''), 250);
+    return { tag: tag, untilTs: untilTs };
+  }
+
+  function overlayCriticalEnd(tag) {
+    var ts = now();
+    var outTag = tag;
+    try {
+      if (!STATE.manual.overlayCriticalTags || typeof STATE.manual.overlayCriticalTags !== 'object') {
+        STATE.manual.overlayCriticalTags = {};
+      }
+      if (tag === undefined || tag === null || tag === '') {
+        STATE.manual.overlayCriticalTags = {};
+        outTag = '*';
+      } else {
+        outTag = String(tag || '');
+        try { delete STATE.manual.overlayCriticalTags[outTag]; } catch (_) { }
+      }
+    } catch (_) { }
+
+    var until = overlayCriticalRecalc(ts);
+    logEvt('DBG', 'overlay_critical_end', { tag: String(outTag || ''), untilMs: Math.max(0, toInt(until, 0) - now()) }, 'overlay:critical:end:' + String(outTag || ''), 250);
+    return { tag: String(outTag || ''), untilTs: toInt(until, 0) };
   }
 
   function manualSuppress(ms, why) {
@@ -3419,7 +3496,153 @@
     return CFG;
   }
 
+  function getRuntimeSnapshot() {
+    var tsNow = now();
+    var truthT = 0;
+    try { truthT = getTruthTime(); } catch (_) { truthT = 0; }
+    return {
+      ts: tsNow,
+      cfg: {
+        enabled: !!CFG.enabled,
+        hardStrategy: String(CFG.hardStrategy || ''),
+        allowSoft: !!CFG.allowSoft,
+        allowHard: !!CFG.allowHard,
+        reopenOnFault: !!CFG.reopenOnFault,
+        debugPopup: !!CFG.debugPopup,
+        debugOnOpen: !!CFG.debugOnOpen,
+        storePos: !!CFG.storePos,
+        autoReopenFromPosition: !!CFG.autoReopenFromPosition,
+        softAttempts: toInt(CFG.softAttempts, 0),
+        hardAttempts: toInt(CFG.hardAttempts, 0),
+        attemptDelaySec: toInt(CFG.attemptDelaySec, 0),
+        blockNext: !!CFG.blockNext
+      },
+      rec: {
+        mode: String(STATE.rec.mode || ''),
+        reason: String(STATE.rec.reason || ''),
+        hardIntent: String(STATE.rec.hardIntent || ''),
+        lastHardAction: String(STATE.rec.lastHardAction || ''),
+        transitionKind: String(STATE.rec.transitionKind || ''),
+        activeReopenTransition: !!STATE.rec.activeReopenTransition,
+        reopenTransitionStartTs: toInt(STATE.rec.reopenTransitionStartTs, 0),
+        reopenTransitionResumeSec: toNum(STATE.rec.reopenTransitionResumeSec, NaN),
+        softAttempt: toInt(STATE.rec.softAttempt, 0),
+        hardAttempt: toInt(STATE.rec.hardAttempt, 0),
+        softMax: toInt(STATE.rec.softMax, 0),
+        hardMax: toInt(STATE.rec.hardMax, 0),
+        attemptStartedTs: toInt(STATE.rec.attemptStartedTs, 0),
+        lastOkTs: toInt(STATE.rec.lastOkTs, 0),
+        resumeTimeSec: toNum(STATE.rec.resumeTimeSec, 0),
+        pendingSeekSec: toNum(STATE.rec.pendingSeekSec, NaN),
+        keepPaused: !!STATE.rec.keepPaused
+      },
+      guard: {
+        lock: !!STATE.guard.lock,
+        untilTs: toInt(STATE.guard.untilTs, 0),
+        reason: String(STATE.guard.reason || ''),
+        lockedUrl: String(STATE.guard.lockedUrl || ''),
+        lockedSrcSig: String(STATE.guard.lockedSrcSig || ''),
+        lockedTruthT: toNum(STATE.guard.lockedTruthT, 0)
+      },
+      fault: {
+        lastType: String(STATE.fault.lastType || ''),
+        lastTs: toInt(STATE.fault.lastTs, 0),
+        lastDetails: String(STATE.fault.lastDetails || ''),
+        lastLongTs: toInt(STATE.fault.lastLongTs, 0)
+      },
+      session: {
+        startedTs: toInt(STATE.session.startedTs, 0),
+        truthT: toNum(truthT, 0),
+        buffering: !!STATE.session.buffering,
+        health: String(STATE.session.health || ''),
+        lastSrcSig: String(STATE.session.lastSrcSig || ''),
+        maxTimeSec: toNum(STATE.session.maxTimeSec, 0),
+        lastOkTs: toInt(STATE.rec.lastOkTs, 0)
+      }
+    };
+  }
+
+  function requestRecoverPublic(reason, opts) {
+    opts = opts || {};
+    reason = String(reason || 'external_request');
+    var prefer = '';
+    try { prefer = String(opts.prefer || 'auto').toLowerCase(); } catch (_) { prefer = 'auto'; }
+
+    readSettingsFromStorage();
+
+    if (!CFG.enabled) return { started: false, why: 'disabled', reason: reason };
+    if (isManualSuppressed()) return { started: false, why: 'suppressed', reason: reason };
+    if (isRecovering()) return { started: false, why: 'busy', mode: String(STATE.rec.mode || ''), intent: String(STATE.rec.hardIntent || ''), reason: reason };
+
+    var mode = MODE_SOFT;
+    var meta = { manual: true, fromOverlay: true };
+    var intent = '';
+
+    if (prefer === 'soft') {
+      if (!CFG.allowSoft || softLeft() <= 0) prefer = 'auto';
+    } else if (prefer !== 'inplayer' && prefer !== 'reopen' && prefer !== 'auto') {
+      prefer = 'auto';
+    }
+
+    if (prefer === 'soft') {
+      mode = MODE_SOFT;
+    } else {
+      if (hardLeft() <= 0) {
+        if (CFG.allowSoft && softLeft() > 0) {
+          mode = MODE_SOFT;
+        } else {
+          return { started: false, why: 'hard_exhausted', reason: reason };
+        }
+      } else {
+        mode = MODE_HARD;
+        meta.forceHard = true;
+        meta.manualHardNow = true;
+
+        if (prefer === 'inplayer') intent = 'inplayer';
+        else if (prefer === 'reopen') {
+          intent = 'reopen';
+          meta.needReopen = true;
+        } else {
+          intent = 'auto';
+          meta.needReopen = true;
+        }
+
+        if (intent === 'reopen' && !CFG.reopenOnFault) return { started: false, why: 'reopen_disabled', reason: reason };
+        if (intent === 'hard_reset' && !CFG.allowHard) return { started: false, why: 'hard_disabled', reason: reason };
+        meta.hardIntent = intent;
+      }
+    }
+
+    try {
+      if (mode === MODE_SOFT) enterRecovery(MODE_SOFT, reason, meta);
+      else enterRecovery(MODE_HARD, reason, meta);
+    } catch (_) {
+      return { started: false, why: 'exception', reason: reason };
+    }
+
+    if (isRecovering()) {
+      return {
+        started: true,
+        reason: reason,
+        mode: String(STATE.rec.mode || ''),
+        intent: String(STATE.rec.hardIntent || '')
+      };
+    }
+
+    var why = 'not_started';
+    try {
+      if (STATE.rec.mode === MODE_FAIL) why = 'failed';
+      else if (STATE.rec.mode === MODE_NORMAL) why = 'noop';
+    } catch (_) { }
+
+    return { started: false, why: why, reason: reason, mode: String(STATE.rec.mode || ''), intent: String(STATE.rec.hardIntent || '') };
+  }
+
   API.getConfig = function () { return CFG; };
+  API.getRuntimeSnapshot = function () { try { return getRuntimeSnapshot(); } catch (_) { return {}; } };
+  API.requestRecover = function (reason, opts) { try { return requestRecoverPublic(reason, opts); } catch (_) { return { started: false, why: 'exception' }; } };
+  API.beginOverlayCritical = function (tag, ttlMs) { try { return overlayCriticalBegin(tag, ttlMs); } catch (_) { return { tag: String(tag || ''), untilTs: 0 }; } };
+  API.endOverlayCritical = function (tag) { try { return overlayCriticalEnd(tag); } catch (_) { return { tag: String(tag || ''), untilTs: 0 }; } };
 
   API.reopenFromPosition = function (why, resumeOverride, meta) {
     try { return reopenFromPosition(why, resumeOverride, meta); } catch (_) { return false; }

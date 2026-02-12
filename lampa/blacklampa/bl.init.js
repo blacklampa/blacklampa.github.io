@@ -844,6 +844,7 @@
 	        'bl.backup.js',
 	        'bl.ext.filters.js',
 	        'bl.player.guard.js',
+	        'bl.player.overlay.js',
 	        'bl.i18n.ru.js',
 	        'bl.i18n.core.js',
 	        'bl.menu.registry.js',

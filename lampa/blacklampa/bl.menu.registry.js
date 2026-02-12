@@ -988,6 +988,7 @@
 
   function refreshPlayerGuardSettings() {
     try { if (window.BL && BL.PlayerGuard && BL.PlayerGuard.refresh) BL.PlayerGuard.refresh(); } catch (_) { }
+    try { if (window.BL && BL.PlayerOverlay && BL.PlayerOverlay.refresh) BL.PlayerOverlay.refresh(); } catch (_) { }
   }
 
   function buildUiPlayerGuardScreen(ctx) {
@@ -1133,6 +1134,46 @@
         default: 0,
         name: 'PG: Debug popup on open',
         desc: 'Автоматически открывает debug popup при старте плеера и показывает live-статус (buffer/ranges/events/recovery). Закрывается Back/Esc.',
+        onChange: refreshPlayerGuardSettings
+      });
+
+      P(ctx, {
+        id: 'player_guard_overlay_enabled',
+        type: 'toggle',
+        values: { 0: 'OFF', 1: 'ON' },
+        default: 1,
+        name: 'PG Overlay: Enable',
+        desc: 'Включает слой Player Overlay/Wrapper (watchdog hang + сериализация recovery).',
+        onChange: refreshPlayerGuardSettings
+      });
+
+      P(ctx, {
+        id: 'player_guard_overlay_debug_on_open',
+        type: 'toggle',
+        values: { 0: 'OFF', 1: 'ON' },
+        default: 0,
+        name: 'PG Overlay: Debug on open',
+        desc: 'Автоматически открывать overlay debug popup при старте плеера.',
+        onChange: refreshPlayerGuardSettings
+      });
+
+      P(ctx, {
+        id: 'player_guard_overlay_hang_time_ms',
+        type: 'select',
+        values: { '4000': '4000', '6000': '6000', '8000': '8000', '10000': '10000', '12000': '12000', '15000': '15000', '20000': '20000' },
+        default: '10000',
+        name: 'PG Overlay: Hang time (ms)',
+        desc: 'Порог зависания по currentTime (если время не движется).',
+        onChange: refreshPlayerGuardSettings
+      });
+
+      P(ctx, {
+        id: 'player_guard_overlay_hang_buf_ms',
+        type: 'select',
+        values: { '4000': '4000', '6000': '6000', '8000': '8000', '10000': '10000', '12000': '12000', '15000': '15000', '20000': '20000' },
+        default: '8000',
+        name: 'PG Overlay: Hang buffer (ms)',
+        desc: 'Порог отсутствия progress/buffer изменений для подтверждения hang.',
         onChange: refreshPlayerGuardSettings
       });
 
