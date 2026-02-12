@@ -1005,10 +1005,10 @@
       P(ctx, {
         id: 'player_guard_hard_strategy',
         type: 'select',
-        values: { auto: 'auto (in-player -> reopen)', inplayer: 'in-player only', reopen: 'reopen only' },
+        values: { off: 'OFF (disable hard strategy)', auto: 'auto (in-player -> reopen)', inplayer: 'in-player only', reopen: 'reopen only' },
         default: 'auto',
         name: 'PlayerGuard: Стратегия HARD recovery',
-        desc: 'auto: сначала in-player reconnect, затем reopen (если разрешён). inplayer: без закрытия UI плеера. reopen: классический close/play.',
+        desc: 'off: отключить новую hard-стратегию (fallback на старую логику). auto: сначала in-player reconnect, затем reopen (если разрешён). inplayer: без закрытия UI плеера. reopen: классический close/play.',
         onChange: refreshPlayerGuardSettings
       });
 
@@ -1123,6 +1123,16 @@
         default: 1,
         name: 'Отладка в попапе',
         desc: 'Показывает readyState/networkState/srcSig/reason.',
+        onChange: refreshPlayerGuardSettings
+      });
+
+      P(ctx, {
+        id: 'player_guard_debug_on_open',
+        type: 'toggle',
+        values: { 0: 'OFF', 1: 'ON' },
+        default: 0,
+        name: 'PG: Debug popup on open',
+        desc: 'Автоматически открывает debug popup при старте плеера и показывает live-статус (buffer/ranges/events/recovery). Закрывается Back/Esc.',
         onChange: refreshPlayerGuardSettings
       });
 

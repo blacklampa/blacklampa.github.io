@@ -26,6 +26,7 @@
   var KEY_AUTO_REOPEN_FROM_POSITION = LS_PREFIX + 'player_guard_auto_reopen_from_position';
   var KEY_POPUP_AUTOCLOSE_SEC = LS_PREFIX + 'player_guard_popup_autoclose_sec';
   var KEY_HARD_STRATEGY = LS_PREFIX + 'player_guard_hard_strategy';
+  var KEY_DEBUG_ON_OPEN = LS_PREFIX + 'player_guard_debug_on_open';
 
   var DET = {
     epsilonEndSec: 2.0,
@@ -67,6 +68,7 @@
     popupMinSec: 2,
     blockNext: true,
     debugPopup: true,
+    debugOnOpen: false,
     storePos: true,
     autoReopenFromPosition: true,
     popupAutoCloseSec: 10
@@ -157,6 +159,7 @@
       keepPaused: false,
       hardIntent: '',
       lastHardAction: '',
+      transitionKind: '',
       softAttempt: 0,
       hardAttempt: 0,
       softMax: 4,
@@ -200,6 +203,37 @@
       autoCloseIdleTimer: null,
       autoCloseLastActTs: 0,
       keyHandler: null
+    },
+
+    dbg: {
+      enabled: false,
+      open: false,
+      timer: null,
+      seq: 0,
+      lastShowTs: 0,
+      inplayerFailCount: 0,
+      lastInplayerFailReason: '',
+      recentLogs: [],
+      counters: {
+        waiting: 0,
+        stalled: 0,
+        error: 0,
+        pause: 0,
+        play: 0,
+        loadeddata: 0,
+        canplay: 0,
+        timeupdate: 0,
+        progress: 0
+      },
+      last: {
+        waitingTs: 0,
+        stalledTs: 0,
+        progressTs: 0,
+        canplayTs: 0,
+        errorTs: 0,
+        bufferedStr: '',
+        bufAheadSec: 0
+      }
     },
 
     log: {
@@ -345,6 +379,260 @@
 
   function logEvt(level, name, fields, dedupKey, dedupMs) {
     logLine(level, String(name || ''), kv(fields), dedupKey || String(name || ''), dedupMs);
+    try { dbgRememberLog(level, name, fields); } catch (_) { }
+  }
+
+  function dbgRememberLog(level, name, fields) {
+    try {
+      if (!STATE.dbg || !STATE.dbg.open) return;
+      var arr = STATE.dbg.recentLogs || (STATE.dbg.recentLogs = []);
+      var line = '[' + String(level || 'INF') + '] ' + String(name || '');
+      var extra = kv(fields);
+      if (extra) line += ' | ' + String(extra);
+      arr.push(line);
+      if (arr.length > 20) arr.splice(0, arr.length - 20);
+    } catch (_) { }
+  }
+
+  function dbgBumpCounter(name) {
+    try {
+      if (!STATE.dbg || !name) return;
+      var c = STATE.dbg.counters || (STATE.dbg.counters = {});
+      var key = String(name || '');
+      c[key] = toInt(c[key], 0) + 1;
+      var ts = now();
+      var l = STATE.dbg.last || (STATE.dbg.last = {});
+      if (key === 'waiting') l.waitingTs = ts;
+      if (key === 'stalled') l.stalledTs = ts;
+      if (key === 'progress' || key === 'timeupdate' || key === 'play' || key === 'playing') l.progressTs = ts;
+      if (key === 'canplay') l.canplayTs = ts;
+      if (key === 'error') l.errorTs = ts;
+    } catch (_) { }
+  }
+
+  function dbgAgeMs(ts) {
+    try {
+      ts = toInt(ts, 0);
+      if (!ts) return '';
+      var a = now() - ts;
+      if (!isFinite(a) || a < 0) a = 0;
+      return String(toInt(a, 0));
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function fmtBuffered(video) {
+    var out = { rangesCount: 0, ranges: '', aheadSec: 0, totalBufferedSec: 0, text: 'ranges=0 ahead=0.0 total=0.0' };
+    try {
+      if (!video || !video.buffered || typeof video.buffered.length !== 'number') return out;
+      var b = video.buffered;
+      var cur = toNum(video.currentTime, 0);
+      var count = 0;
+      var total = 0;
+      var maxEnd = NaN;
+      var parts = [];
+      for (var i = 0; i < b.length; i++) {
+        var s = toNum(b.start(i), NaN);
+        var e = toNum(b.end(i), NaN);
+        if (!isFinite(s) || !isFinite(e) || e < s) continue;
+        count++;
+        total += Math.max(0, e - s);
+        if (!isFinite(maxEnd) || e > maxEnd) maxEnd = e;
+        parts.push('[' + s.toFixed(1) + '-' + e.toFixed(1) + ']');
+      }
+      var ahead = 0;
+      if (isFinite(maxEnd)) ahead = Math.max(0, maxEnd - Math.max(0, cur));
+      out.rangesCount = count;
+      out.ranges = parts.join(' ');
+      out.aheadSec = ahead;
+      out.totalBufferedSec = total;
+      out.text = 'ranges=' + String(count) + ' ahead=' + ahead.toFixed(1) + ' total=' + total.toFixed(1) + (out.ranges ? (' ' + out.ranges) : '');
+      return out;
+    } catch (_) {
+      return out;
+    }
+  }
+
+  function dbgTailText() {
+    try {
+      if (!STATE.dbg || !STATE.dbg.recentLogs || !STATE.dbg.recentLogs.length) return '';
+      return STATE.dbg.recentLogs.join('\n');
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function dbgCollect(video) {
+    var c = {};
+    var l = {};
+    try { c = STATE.dbg && STATE.dbg.counters ? STATE.dbg.counters : {}; } catch (_) { c = {}; }
+    try { l = STATE.dbg && STATE.dbg.last ? STATE.dbg.last : {}; } catch (_) { l = {}; }
+
+    var b = fmtBuffered(video);
+    try {
+      if (STATE.dbg && STATE.dbg.last) {
+        STATE.dbg.last.bufferedStr = b.text;
+        STATE.dbg.last.bufAheadSec = b.aheadSec;
+      }
+    } catch (_) { }
+
+    var stage = 'strategy=' + String(CFG.hardStrategy || '')
+      + ' | rec=' + String(STATE.rec.mode || '')
+      + ' | intent=' + String(STATE.rec.hardIntent || '')
+      + ' | action=' + String(STATE.rec.lastHardAction || '')
+      + ' | buffering=' + (STATE.session.buffering ? '1' : '0');
+
+    var info = 't=' + fmtTime(video ? video.currentTime : 0)
+      + ' | dur=' + fmtTime(video ? video.duration : 0)
+      + ' | ahead=' + toNum(b.aheadSec, 0).toFixed(1) + 's'
+      + ' | wait=' + toInt(c.waiting, 0)
+      + ' | stall=' + toInt(c.stalled, 0)
+      + ' | err=' + toInt(c.error, 0)
+      + ' | prog=' + toInt(c.progress, 0)
+      + ' | tu=' + toInt(c.timeupdate, 0);
+
+    var faultAge = dbgAgeMs(STATE.fault.lastTs);
+    var details = ''
+      + 'media: ' + mediaState(video) + '\n'
+      + 'buffered: ' + b.text + '\n'
+      + 'events: waiting=' + toInt(c.waiting, 0)
+      + ' stalled=' + toInt(c.stalled, 0)
+      + ' error=' + toInt(c.error, 0)
+      + ' play=' + toInt(c.play, 0)
+      + ' pause=' + toInt(c.pause, 0)
+      + ' canplay=' + toInt(c.canplay, 0)
+      + ' loadeddata=' + toInt(c.loadeddata, 0)
+      + ' progress=' + toInt(c.progress, 0)
+      + ' timeupdate=' + toInt(c.timeupdate, 0) + '\n'
+      + 'agesMs: waiting=' + dbgAgeMs(l.waitingTs)
+      + ' stalled=' + dbgAgeMs(l.stalledTs)
+      + ' progress=' + dbgAgeMs(l.progressTs)
+      + ' canplay=' + dbgAgeMs(l.canplayTs)
+      + ' error=' + dbgAgeMs(l.errorTs) + '\n'
+      + 'fault: type=' + String(STATE.fault.lastType || '')
+      + ' ageMs=' + String(faultAge || '')
+      + ' details=' + String(STATE.fault.lastDetails || '') + '\n'
+      + 'recovery: mode=' + String(STATE.rec.mode || '')
+      + ' intent=' + String(STATE.rec.hardIntent || '')
+      + ' action=' + String(STATE.rec.lastHardAction || '')
+      + ' transition=' + (STATE.rec.activeReopenTransition ? 1 : 0)
+      + ' kind=' + String(STATE.rec.transitionKind || '')
+      + ' trStartAgeMs=' + dbgAgeMs(STATE.rec.reopenTransitionStartTs)
+      + ' trResume=' + (isFinite(toNum(STATE.rec.reopenTransitionResumeSec, NaN)) ? toNum(STATE.rec.reopenTransitionResumeSec, 0).toFixed(2) : '')
+      + ' resume=' + toNum(STATE.rec.pendingSeekSec, toNum(STATE.rec.resumeTimeSec, 0)).toFixed(2) + '\n'
+      + 'guard: lock=' + (STATE.guard.lock ? 1 : 0)
+      + ' reason=' + String(STATE.guard.reason || '')
+      + ' locked=' + shortUrl(STATE.guard.lockedUrl || '') + '\n'
+      + 'flags: reopen=' + (CFG.reopenOnFault ? 1 : 0)
+      + ' allowSoft=' + (CFG.allowSoft ? 1 : 0)
+      + ' allowHard=' + (CFG.allowHard ? 1 : 0)
+      + ' debugOnOpen=' + (CFG.debugOnOpen ? 1 : 0) + '\n'
+      + 'inplayerFail: count=' + toInt(STATE.dbg ? STATE.dbg.inplayerFailCount : 0, 0)
+      + ' lastReason=' + String(STATE.dbg ? STATE.dbg.lastInplayerFailReason : '');
+
+    var tail = dbgTailText();
+    if (tail) details += '\nrecent:\n' + tail;
+
+    return { stage: stage, info: info, details: details };
+  }
+
+  function dbgShow(video, reason) {
+    try {
+      if (!CFG.enabled || !CFG.debugOnOpen) return false;
+      if (!STATE.dbg || !STATE.dbg.enabled) return false;
+      if (isRecovering() || STATE.rec.mode === MODE_FAIL) return false;
+      var snap = dbgCollect(video);
+      uiInstallFailKeyHandler();
+      uiSetMode('recover');
+      uiUpdate('PlayerGuard DEBUG', snap.stage, snap.info, snap.details);
+      STATE.dbg.open = true;
+      STATE.dbg.lastShowTs = now();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function dbgClose(why, keepPopup, keepEnabled) {
+    try { if (STATE.dbg && STATE.dbg.timer) clearTimeout(STATE.dbg.timer); } catch (_) { }
+    if (STATE.dbg) STATE.dbg.timer = null;
+    if (STATE.dbg && !keepEnabled) STATE.dbg.enabled = false;
+    var wasOpen = false;
+    try { wasOpen = !!(STATE.dbg && STATE.dbg.open); } catch (_) { wasOpen = false; }
+    if (STATE.dbg) STATE.dbg.open = false;
+    if (wasOpen && !keepPopup) {
+      try {
+        if (!(isRecovering() || STATE.rec.mode === MODE_FAIL)) uiHide('dbg_close:' + String(why || ''));
+      } catch (_) { }
+    }
+  }
+
+  function dbgTick(why) {
+    try {
+      if (!STATE.dbg || !STATE.dbg.enabled) return;
+      if (!CFG.enabled || !CFG.debugOnOpen) return dbgClose('disabled', false, false);
+      if (isRecovering() || STATE.rec.mode === MODE_FAIL) return;
+      var v = null;
+      try { v = STATE.video || (window.Lampa && Lampa.PlayerVideo && typeof Lampa.PlayerVideo.video === 'function' ? Lampa.PlayerVideo.video() : null); } catch (_) { v = STATE.video; }
+      dbgShow(v, why || 'tick');
+    } catch (_) { }
+  }
+
+  function dbgArmTimer(why) {
+    try {
+      if (!STATE.dbg) return;
+      STATE.dbg.enabled = true;
+      try { if (STATE.dbg.timer) clearTimeout(STATE.dbg.timer); } catch (_) { }
+      STATE.dbg.timer = null;
+      STATE.dbg.seq = toInt(STATE.dbg.seq, 0) + 1;
+      var seq = STATE.dbg.seq;
+      function loop() {
+        try {
+          if (!STATE.dbg || !STATE.dbg.enabled) return;
+          if (seq !== toInt(STATE.dbg.seq, 0)) return;
+          dbgTick('timer:' + String(why || ''));
+          STATE.dbg.timer = setTimeout(loop, 400);
+        } catch (_) { }
+      }
+      loop();
+    } catch (_) { }
+  }
+
+  function dbgOpen(why) {
+    try {
+      if (!CFG.enabled || !CFG.debugOnOpen) return false;
+      if (!STATE.dbg) return false;
+      STATE.dbg.enabled = true;
+      STATE.dbg.open = true;
+      STATE.dbg.seq = toInt(STATE.dbg.seq, 0) + 1;
+      STATE.dbg.lastShowTs = 0;
+      STATE.dbg.inplayerFailCount = 0;
+      STATE.dbg.lastInplayerFailReason = '';
+      STATE.dbg.recentLogs = [];
+      var c = STATE.dbg.counters || {};
+      var l = STATE.dbg.last || {};
+      for (var k in c) if (Object.prototype.hasOwnProperty.call(c, k)) c[k] = 0;
+      l.waitingTs = 0;
+      l.stalledTs = 0;
+      l.progressTs = 0;
+      l.canplayTs = 0;
+      l.errorTs = 0;
+      l.bufferedStr = '';
+      l.bufAheadSec = 0;
+      logEvt('DBG', 'dbg_open', { why: String(why || '') }, 'dbg:open:' + String(why || ''), 300);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function dbgMarkInplayerFail(reason) {
+    try {
+      if (!STATE.dbg) return;
+      STATE.dbg.inplayerFailCount = toInt(STATE.dbg.inplayerFailCount, 0) + 1;
+      STATE.dbg.lastInplayerFailReason = String(reason || '');
+    } catch (_) { }
   }
 
   function getPlayData() {
@@ -476,6 +764,8 @@
 
   function mediaState(video) {
     var out = {};
+    var b = null;
+    try { b = fmtBuffered(video); } catch (_) { b = null; }
     try { out.mode = STATE.rec.mode; } catch (_) { }
     try { out.guard = isGuardLocked() ? 1 : 0; } catch (_) { }
     try { out.truth = fmtTime(getTruthTime()); } catch (_) { }
@@ -484,6 +774,21 @@
     try { if (video && typeof video.readyState !== 'undefined') out.rs = String(video.readyState); } catch (_) { }
     try { if (video && typeof video.networkState !== 'undefined') out.ns = String(video.networkState); } catch (_) { }
     try { if (video && typeof video.paused !== 'undefined') out.paused = video.paused ? 1 : 0; } catch (_) { }
+    try { out.bufOn = STATE.session && STATE.session.buffering ? 1 : 0; } catch (_) { }
+    try { if (b) out.buf = 'r=' + String(toInt(b.rangesCount, 0)) + ' a=' + toNum(b.aheadSec, 0).toFixed(1) + ' t=' + toNum(b.totalBufferedSec, 0).toFixed(1); } catch (_) { }
+    try {
+      var fa = STATE.fault && STATE.fault.lastTs ? (now() - toInt(STATE.fault.lastTs, 0)) : 0;
+      if (!isFinite(fa) || fa < 0) fa = 0;
+      out.faultAgeMs = toInt(fa, 0);
+    } catch (_) { }
+    try { out.recIntent = String(STATE.rec.hardIntent || ''); } catch (_) { }
+    try { out.recAction = String(STATE.rec.lastHardAction || ''); } catch (_) { }
+    try { out.transition = STATE.rec && STATE.rec.activeReopenTransition ? 1 : 0; } catch (_) { }
+    try {
+      var pa = STATE.dbg && STATE.dbg.last && STATE.dbg.last.progressTs ? (now() - toInt(STATE.dbg.last.progressTs, 0)) : 0;
+      if (!isFinite(pa) || pa < 0) pa = 0;
+      out.lastProgressAgeMs = toInt(pa, 0);
+    } catch (_) { }
     try { out.srcSig = String(STATE.srcSig || ''); } catch (_) { }
     return kv(out);
   }
@@ -924,6 +1229,7 @@
   }
 
   function stopAllRecovery(why) {
+    try { dbgClose('stop_all:' + String(why || ''), false, false); } catch (_) { }
     try { clearTimers(); } catch (_) { }
     try { cancelAutoTimer(String(why || '')); } catch (_) { }
     try {
@@ -944,6 +1250,12 @@
 
   function uiClose(reason) {
     logEvt('INF', 'ui_close', { reason: String(reason || '') }, 'ui:close:' + String(reason || ''), 1200);
+    try {
+      if (STATE.dbg && STATE.dbg.open && !isRecovering() && STATE.rec.mode !== MODE_FAIL) {
+        dbgClose('ui_close:' + String(reason || ''), false, false);
+        return;
+      }
+    } catch (_) { }
     stopGuardAndRecovery('ui_close', 15000);
   }
 
@@ -1681,6 +1993,7 @@
   function normalizeHardStrategy(v) {
     var s = '';
     try { s = String(v || '').toLowerCase(); } catch (_) { s = ''; }
+    if (s === 'off' || s === 'disabled' || s === '0') return 'off';
     if (s === 'inplayer' || s === 'in_player' || s === 'in-player') return 'inplayer';
     if (s === 'reopen') return 'reopen';
     return 'auto';
@@ -1689,6 +2002,7 @@
   function normalizeHardIntent(v) {
     var s = '';
     try { s = String(v || '').toLowerCase(); } catch (_) { s = ''; }
+    if (s === 'off' || s === 'disabled' || s === '0') return 'off';
     if (s === 'hard_reset' || s === 'hardreset') return 'hard_reset';
     if (s === 'inplayer' || s === 'in_player' || s === 'in-player') return 'inplayer';
     if (s === 'reopen') return 'reopen';
@@ -1698,6 +2012,7 @@
 
   function hardIntentModeLabel(intent) {
     intent = String(intent || '');
+    if (intent === 'off') return 'OFF';
     if (intent === 'reopen') return 'REOPEN';
     if (intent === 'inplayer') return 'INPLAYER';
     if (intent === 'auto') return 'AUTO';
@@ -1712,6 +2027,11 @@
     } catch (_) { }
 
     var strategy = normalizeHardStrategy(CFG.hardStrategy);
+    if (strategy === 'off') {
+      if (CFG.reopenOnFault) return 'reopen';
+      if (CFG.allowHard) return 'hard_reset';
+      return '';
+    }
 
     try {
       if (meta && meta.needReopen) {
@@ -1944,6 +2264,7 @@
     STATE.rec.keepPaused = false;
     STATE.rec.hardIntent = '';
     STATE.rec.lastHardAction = '';
+    STATE.rec.transitionKind = '';
     STATE.rec.pendingSeekSec = NaN;
     STATE.rec.pendingParams = null;
     STATE.rec.activeReopenTransition = false;
@@ -1961,6 +2282,7 @@
     STATE.rec.resumePinnedSec = NaN;
     STATE.rec.keepPaused = false;
     STATE.rec.lastHardAction = '';
+    STATE.rec.transitionKind = '';
     STATE.rec.activeReopenTransition = false;
     STATE.rec.reopenTransitionStartTs = 0;
     STATE.rec.reopenTransitionResumeSec = NaN;
@@ -2000,6 +2322,7 @@
     STATE.rec.resumePinnedSec = NaN;
     STATE.rec.keepPaused = false;
     STATE.rec.lastHardAction = '';
+    STATE.rec.transitionKind = '';
     STATE.rec.activeReopenTransition = false;
     STATE.rec.reopenTransitionStartTs = 0;
     STATE.rec.reopenTransitionResumeSec = NaN;
@@ -2109,6 +2432,7 @@
     STATE.rec.reason = String(reason || '');
     STATE.rec.hardIntent = hardIntent || STATE.rec.hardIntent || '';
     STATE.rec.lastHardAction = '';
+    STATE.rec.transitionKind = '';
     STATE.rec.stableSec = 0;
     STATE.rec.stableLastCur = NaN;
     STATE.rec.stableLastTs = 0;
@@ -2152,6 +2476,11 @@
 
   function hardActionName(n) {
     var intent = String(STATE.rec.hardIntent || '');
+    if (intent === 'off') {
+      if (CFG.reopenOnFault) return 'reopen_player';
+      if (CFG.allowHard) return 'hard_reset_video';
+      return 'reopen_player';
+    }
     if (intent === 'hard_reset') return 'hard_reset_video';
     if (intent === 'inplayer') return 'inplayer_reconnect';
     if (intent === 'auto') {
@@ -2168,6 +2497,7 @@
       STATE.rec.activeReopenTransition = true;
       STATE.rec.reopenTransitionStartTs = now();
       STATE.rec.reopenTransitionResumeSec = toNum(resume, NaN);
+      STATE.rec.transitionKind = String(kind || '');
       logEvt('DBG', 'stream_transition_start', {
         kind: String(kind || ''),
         resume: isFinite(toNum(resume, NaN)) ? toNum(resume, 0).toFixed(2) : ''
@@ -2286,37 +2616,50 @@
       if (!video) video = STATE.video;
 
       var src = resolveRecoveryUrl(url, video);
-      if (!src) return false;
+      if (!src) {
+        dbgMarkInplayerFail('empty_src');
+        return false;
+      }
 
       var params = null;
       try { if (typeof pv.saveParams === 'function') params = pv.saveParams(); } catch (_) { params = null; }
       if (params) STATE.rec.pendingParams = params;
       STATE.rec.pendingSeekSec = t;
       captureKeepPaused(video);
-      startRecoveryTransition('inplayer', t);
+
+      function prep(kind) {
+        try { STATE.manual.allowNextTs = now(); } catch (_) { }
+        try { lockGuard('inplayer_rebind', { capture: true }); } catch (_) { }
+        try { STATE.guard.lockedUrl = String(src || ''); } catch (_) { }
+        try { STATE.guard.lockedSrcSig = buildSrcSig(String(src || '')); } catch (_) { }
+        startRecoveryTransition(String(kind || 'inplayer'), t);
+      }
 
       function viaUrl() {
         if (typeof pv.url !== 'function') return false;
-        pv.url(String(src || ''), true);
+        prep('inplayer:url');
+        try { pv.url(String(src || ''), true); } catch (_) { dbgMarkInplayerFail('url_failed'); return false; }
         logEvt('INF', 'inplayer_rebind', { via: 'url', resume: toNum(t, 0).toFixed(2), srcSig: String(STATE.srcSig || '') }, 'inplayer:rebind:url', 900);
         return true;
       }
 
       function viaDestroyUrl() {
         if (typeof pv.destroy !== 'function' || typeof pv.url !== 'function') return false;
+        prep('inplayer:destroy_url');
         try { pv.destroy(true); } catch (_) { }
-        pv.url(String(src || ''), true);
+        try { pv.url(String(src || ''), true); } catch (_) { dbgMarkInplayerFail('destroy_url_failed'); return false; }
         logEvt('INF', 'inplayer_rebind', { via: 'destroy_url', resume: toNum(t, 0).toFixed(2), srcSig: String(STATE.srcSig || '') }, 'inplayer:rebind:destroy', 900);
         return true;
       }
 
       function viaVideoRebind() {
         if (!video) return false;
+        prep('inplayer:video_src');
         try { if (typeof video.pause === 'function') video.pause(); } catch (_) { }
         try { if (typeof video.removeAttribute === 'function') video.removeAttribute('src'); } catch (_) { }
         try { video.src = ''; } catch (_) { }
         try { if (typeof video.load === 'function') video.load(); } catch (_) { }
-        try { video.src = String(src || ''); } catch (_) { return false; }
+        try { video.src = String(src || ''); } catch (_) { dbgMarkInplayerFail('video_src_failed'); return false; }
         try { if (typeof video.load === 'function') video.load(); } catch (_) { }
         try { if (!STATE.rec.keepPaused) safePlay(video, 'inplayer_lowlevel'); } catch (_) { }
         logEvt('WRN', 'inplayer_rebind', { via: 'video_rebind', resume: toNum(t, 0).toFixed(2), srcSig: String(STATE.srcSig || '') }, 'inplayer:rebind:video', 900);
@@ -2337,8 +2680,10 @@
         } catch (_) { }
       }
 
+      dbgMarkInplayerFail('all_steps_failed');
       return false;
     } catch (_) {
+      dbgMarkInplayerFail('exception');
       return false;
     }
   }
@@ -2486,7 +2831,14 @@
         ok = actionHardReloadVideo(url2, resume);
       } else if (action === 'inplayer_reconnect') {
         ok = actionInPlayerRecreateStream(url2, resume);
+        if (!ok) {
+          logEvt('WRN', 'inplayer_failed', {
+            attempt: STATE.rec.hardAttempt,
+            reason: String(STATE.dbg && STATE.dbg.lastInplayerFailReason ? STATE.dbg.lastInplayerFailReason : '')
+          }, 'inplayer:failed', 300);
+        }
         if (!ok && String(STATE.rec.hardIntent || '') === 'auto' && CFG.reopenOnFault) {
+          logEvt('WRN', 'inplayer_fallback_reopen', { attempt: STATE.rec.hardAttempt, resume: toNum(resume, 0).toFixed(2) }, 'inplayer:fallback:reopen', 300);
           action = 'reopen_player';
           STATE.rec.lastHardAction = action;
           ok = actionHardReopenPlayer(resume);
@@ -2542,6 +2894,16 @@
     var type = (args && args.length) ? args[0] : '';
     var data = (args && args.length > 1) ? args[1] : undefined;
     var t = String(type || '');
+
+    try {
+      if (t === 'timeupdate') dbgBumpCounter('timeupdate');
+      else if (t === 'progress') dbgBumpCounter('progress');
+      else if (t === 'canplay') dbgBumpCounter('canplay');
+      else if (t === 'loadeddata') dbgBumpCounter('loadeddata');
+      else if (t === 'play') dbgBumpCounter('play');
+      else if (t === 'pause') dbgBumpCounter('pause');
+      else if (t === 'error') dbgBumpCounter('error');
+    } catch (_) { }
 
     var video = null;
     try { video = STATE.video || (window.Lampa && Lampa.PlayerVideo && Lampa.PlayerVideo.video ? Lampa.PlayerVideo.video() : null); } catch (_) { video = STATE.video; }
@@ -2666,6 +3028,7 @@
       try {
         if (!CFG.enabled) return;
         if (STATE.video !== video) return;
+        dbgBumpCounter('pause');
         if (isRecovering()) return; // internal pauses during recovery are not user pauses
         var ts = now();
         if (isUserExitGate(ts)) return;
@@ -2694,6 +3057,7 @@
       try {
         if (!CFG.enabled) return;
         if (STATE.video !== video) return;
+        dbgBumpCounter('play');
         // If we explicitly preserve pause during reopen, ignore auto play signals.
         if (isRecovering() && STATE.rec && STATE.rec.keepPaused) return;
         STATE.manual.userPaused = false;
@@ -2701,12 +3065,13 @@
       } catch (_) { }
     });
 
-    on('waiting', function () { try { if (!CFG.enabled) return; if (STATE.video === video) markBuffering(true, 'waiting', ''); } catch (_) { } });
-    on('stalled', function () { try { if (!CFG.enabled) return; if (STATE.video === video) markBuffering(true, 'stalled', ''); } catch (_) { } });
+    on('waiting', function () { try { if (!CFG.enabled) return; if (STATE.video === video) { dbgBumpCounter('waiting'); markBuffering(true, 'waiting', ''); } } catch (_) { } });
+    on('stalled', function () { try { if (!CFG.enabled) return; if (STATE.video === video) { dbgBumpCounter('stalled'); markBuffering(true, 'stalled', ''); } } catch (_) { } });
     on('error', function () {
       try {
         if (!CFG.enabled) return;
         if (STATE.video !== video) return;
+        dbgBumpCounter('error');
 
         var code = 0;
         var msg = '';
@@ -2732,6 +3097,7 @@
       try {
         if (!CFG.enabled) return;
         if (STATE.video !== video) return;
+        dbgBumpCounter('progress');
         STATE.session.buffering = false;
         if (!(isRecovering() && STATE.rec && STATE.rec.keepPaused)) {
           STATE.manual.userPaused = false;
@@ -2740,9 +3106,11 @@
         forceTruthSnapshot(video, 'playing');
       } catch (_) { }
     });
-    on('canplay', function () { try { if (!CFG.enabled) return; if (STATE.video === video) STATE.session.buffering = false; } catch (_) { } });
+    on('canplay', function () { try { if (!CFG.enabled) return; if (STATE.video === video) { dbgBumpCounter('canplay'); STATE.session.buffering = false; } } catch (_) { } });
     on('loadedmetadata', function () { try { if (!CFG.enabled) return; if (STATE.video === video) applyPendingParamsAndSeek(video, 'loadedmetadata'); } catch (_) { } });
-    on('loadeddata', function () { try { if (!CFG.enabled) return; if (STATE.video === video) applyPendingParamsAndSeek(video, 'loadeddata_evt'); } catch (_) { } });
+    on('loadeddata', function () { try { if (!CFG.enabled) return; if (STATE.video === video) { dbgBumpCounter('loadeddata'); applyPendingParamsAndSeek(video, 'loadeddata_evt'); } } catch (_) { } });
+    on('progress', function () { try { if (!CFG.enabled) return; if (STATE.video === video) dbgBumpCounter('progress'); } catch (_) { } });
+    on('timeupdate', function () { try { if (!CFG.enabled) return; if (STATE.video === video) dbgBumpCounter('timeupdate'); } catch (_) { } });
     on('seeking', function () { try { if (!CFG.enabled) return; if (STATE.video === video) markSeek(); } catch (_) { } });
     on('seeked', function () { try { if (!CFG.enabled) return; if (STATE.video === video) markSeek(); } catch (_) { } });
 
@@ -2939,9 +3307,18 @@
 	                try { if (STATE.loop) { STATE.loop.reopenRequiredTs = 0; STATE.loop.reopenBucket = null; STATE.loop.reopenCount = 0; } } catch (_) { }
 	              }
 
-              updateStreamContext(STATE.video, payload.url || '');
-            } catch (_) { }
-          }
+	              updateStreamContext(STATE.video, payload.url || '');
+
+              try {
+                if (CFG.enabled && CFG.debugOnOpen) {
+                  dbgOpen('player_start');
+                  dbgArmTimer('player_start');
+                } else if (STATE.dbg && STATE.dbg.open) {
+                  dbgClose('player_start_cfg', false, false);
+                }
+              } catch (_) { }
+	            } catch (_) { }
+	          }
 
           if (t === 'destroy') {
             try {
@@ -3018,6 +3395,7 @@
       CFG.storePos = parseBool(sGet(KEY_STORE_POS, '1'), true);
       CFG.blockNext = parseBool(sGet(KEY_BLOCK_NEXT, '1'), true);
       CFG.debugPopup = parseBool(sGet(KEY_DEBUG_POPUP, '1'), true);
+      CFG.debugOnOpen = parseBool(sGet(KEY_DEBUG_ON_OPEN, '0'), false);
       CFG.reopenOnFault = parseBool(sGet(KEY_REOPEN, '1'), true);
       CFG.autoReopenFromPosition = parseBool(sGet(KEY_AUTO_REOPEN_FROM_POSITION, '1'), true);
       CFG.allowSoft = parseBool(sGet(KEY_ALLOW_SOFT, '1'), true);
@@ -3052,6 +3430,18 @@
     readSettingsFromStorage();
 
     try {
+      if (!CFG.enabled || !CFG.debugOnOpen) dbgClose('refresh_cfg', false, false);
+      else {
+        var vDbg = null;
+        try { vDbg = STATE.video || (window.Lampa && Lampa.PlayerVideo && typeof Lampa.PlayerVideo.video === 'function' ? Lampa.PlayerVideo.video() : null); } catch (_) { vDbg = STATE.video; }
+        if (vDbg) {
+          if (!STATE.dbg || !STATE.dbg.enabled) dbgOpen('refresh');
+          dbgArmTimer('refresh');
+        }
+      }
+    } catch (_) { }
+
+    try {
       // apply popup autoclose setting without restart
       if (STATE.ui && STATE.ui.mode === 'fail') {
         if (!clampInt(CFG.popupAutoCloseSec, 0, 60)) uiAutoCloseClear('cfg');
@@ -3073,7 +3463,7 @@
           attachToVideo(Lampa.PlayerVideo.video(), null);
         }
       } catch (_) { }
-      logEvt('INF', 'enabled', { soft: CFG.softAttempts, hard: CFG.hardAttempts, hardMax: STATE.rec.hardMax, strategy: CFG.hardStrategy, delay: CFG.attemptDelaySec, reopen: CFG.reopenOnFault ? 1 : 0, allowSoft: CFG.allowSoft ? 1 : 0, allowHard: CFG.allowHard ? 1 : 0, blockNext: CFG.blockNext ? 1 : 0 }, 'pg:enabled', 1500);
+      logEvt('INF', 'enabled', { soft: CFG.softAttempts, hard: CFG.hardAttempts, hardMax: STATE.rec.hardMax, strategy: CFG.hardStrategy, debugOnOpen: CFG.debugOnOpen ? 1 : 0, delay: CFG.attemptDelaySec, reopen: CFG.reopenOnFault ? 1 : 0, allowSoft: CFG.allowSoft ? 1 : 0, allowHard: CFG.allowHard ? 1 : 0, blockNext: CFG.blockNext ? 1 : 0 }, 'pg:enabled', 1500);
     }
 
     return CFG;
@@ -3101,7 +3491,7 @@
           try {
             if (!e || !e.name) return;
             var n = String(e.name);
-            if (n === KEY_ENABLED || n === KEY_STORE_POS || n === KEY_BLOCK_NEXT || n === KEY_DEBUG_POPUP || n === KEY_REOPEN || n === KEY_AUTO_REOPEN_FROM_POSITION || n === KEY_ALLOW_SOFT || n === KEY_ALLOW_HARD || n === KEY_HARD_STRATEGY || n === KEY_SOFT_ATTEMPTS || n === KEY_ATTEMPTS_LEGACY || n === KEY_HARD_ATTEMPTS || n === KEY_DELAY_SEC || n === KEY_POPUP_MIN_SEC || n === KEY_POPUP_AUTOCLOSE_SEC) API.refresh();
+            if (n === KEY_ENABLED || n === KEY_STORE_POS || n === KEY_BLOCK_NEXT || n === KEY_DEBUG_POPUP || n === KEY_DEBUG_ON_OPEN || n === KEY_REOPEN || n === KEY_AUTO_REOPEN_FROM_POSITION || n === KEY_ALLOW_SOFT || n === KEY_ALLOW_HARD || n === KEY_HARD_STRATEGY || n === KEY_SOFT_ATTEMPTS || n === KEY_ATTEMPTS_LEGACY || n === KEY_HARD_ATTEMPTS || n === KEY_DELAY_SEC || n === KEY_POPUP_MIN_SEC || n === KEY_POPUP_AUTOCLOSE_SEC) API.refresh();
           } catch (_) { }
         });
       }
