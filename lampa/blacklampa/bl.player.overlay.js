@@ -264,6 +264,10 @@
       ticket: null,
       lastTicket: null,
       unfreezeTimer: null,
+      lastApplyStage: '',
+      lastApplyTs: 0,
+      lastVerifyOk: 0,
+      lastVerifyDelta: NaN,
       lastSeekSec: NaN,
       lastSeekTs: 0,
       lastSeekOk: 0,
@@ -296,6 +300,16 @@
       aheadSec: 0,
       src: '',
       srcSig: ''
+    },
+
+    flags: {
+      fakeFull: { on: 0, ts: 0, count: 0, details: '', lastStartTs: 0 },
+      underrun: { on: 0, ts: 0, count: 0, details: '', lastStartTs: 0 },
+      playingStuck: { on: 0, ts: 0, count: 0, details: '', lastStartTs: 0 }
+    },
+
+    trace: {
+      lastTs: 0
     },
 
     log: {
@@ -578,7 +592,23 @@
     return false;
   }
 
+  function detectAllowedInfo() {
+    var reason = 'ok';
+    if (!CFG.enabled) reason = 'disabled';
+    else if (!toInt(STATE.life.active, 0)) reason = 'inactive';
+    else if (toInt(STATE.life.exitIntent, 0)) reason = 'exit_intent';
+    else if (!(STATE.tick && STATE.tick.hasVideo)) reason = 'no_video';
+    return { ok: reason === 'ok', reason: reason };
+  }
+
   function detectorsAllowedInfo() {
+    var d = detectAllowedInfo();
+    if (!d.ok) {
+      STATE.life.detectorsAllowed = 0;
+      STATE.life.detectorsReason = String(d.reason || 'blocked');
+      return d;
+    }
+
     var holdLeft = Math.max(0, toInt(STATE.user.pauseHoldUntilTs, 0) - nowMs());
     if (holdLeft > 0) {
       STATE.life.detectorsAllowed = 0;
@@ -587,10 +617,7 @@
     }
 
     var reason = 'ok';
-    if (!CFG.enabled) reason = 'disabled';
-    else if (!toInt(STATE.life.active, 0)) reason = 'inactive';
-    else if (toInt(STATE.life.exitIntent, 0)) reason = 'exit_intent';
-    else if (STATE.tick && STATE.tick.hasVideo && STATE.tick.paused) reason = 'media_paused';
+    if (STATE.tick && STATE.tick.hasVideo && STATE.tick.paused) reason = 'media_paused';
     else if (isUserPauseIntent()) reason = 'paused_by_user';
     else if (toInt(STATE.life.suspendDetectors, 0)) reason = 'suspended';
     else if (String(STATE.phase || '') === ST.IDLE) reason = 'idle';
@@ -620,6 +647,47 @@
       return false;
     }
     return true;
+  }
+
+  function flagSet(name, on, details) {
+    name = String(name || '');
+    if (!name || !STATE.flags || !STATE.flags[name]) return;
+    var f = STATE.flags[name];
+    if (on) {
+      f.on = 1;
+      f.ts = nowMs();
+      f.count = toInt(f.count, 0) + 1;
+      f.details = String(details || '');
+      return;
+    }
+    f.on = 0;
+    f.details = '';
+  }
+
+  function maybeTraceDetectors() {
+    if (!CFG.debugOnOpen) return;
+    var ts = nowMs();
+    if ((ts - toInt(STATE.trace.lastTs, 0)) < 2000) return;
+    STATE.trace.lastTs = ts;
+
+    var t = STATE.tick || {};
+    var dDetect = detectAllowedInfo();
+    var dRecover = detectorsAllowedInfo();
+    var ba = bufferAges();
+    logLine('DBG', 'TRACE', {
+      detect: dDetect.ok ? 1 : 0,
+      detectReason: String(dDetect.reason || ''),
+      recover: dRecover.ok ? 1 : 0,
+      recoverReason: String(dRecover.reason || ''),
+      phase: String(STATE.phase || ''),
+      paused: t.paused ? 1 : 0,
+      ct: isFinite(toNum(t.ct, NaN)) ? toNum(t.ct, 0).toFixed(2) : '',
+      dur: isFinite(toNum(t.dur, NaN)) ? toNum(t.dur, 0).toFixed(2) : '',
+      ranges: toInt(t.rangesCount, 0),
+      r0: (isFinite(toNum(t.firstRangeStart, NaN)) ? toNum(t.firstRangeStart, 0).toFixed(1) : '') + '-' + (isFinite(toNum(t.firstRangeEnd, NaN)) ? toNum(t.firstRangeEnd, 0).toFixed(1) : ''),
+      progAge: toInt(ba.progAge, 0),
+      bufMoveAge: toInt(ba.bufEndMoveAge, 0)
+    });
   }
 
   function readSettingsFromStorage() {
@@ -1369,6 +1437,12 @@
       + ' underrun=' + String(underrunFlag)
       + ' underrunAge=' + String(ageMs(STATE.buf.underrunTs))
       + ' underrunCount=' + String(toInt(STATE.buf.underrunCount, 0)));
+    lines.push('faultFlags: playingStuck=' + String(toInt(STATE.flags.playingStuck.on, 0))
+      + ' age=' + String(ageMs(toInt(STATE.flags.playingStuck.ts, 0)))
+      + ' fakeFull=' + String(toInt(STATE.flags.fakeFull.on, 0))
+      + ' age=' + String(ageMs(toInt(STATE.flags.fakeFull.ts, 0)))
+      + ' underrun=' + String(toInt(STATE.flags.underrun.on, 0))
+      + ' age=' + String(ageMs(toInt(STATE.flags.underrun.ts, 0))));
 
     lines.push('events: waiting=' + toInt(STATE.events.count.waiting, 0)
       + ' stalled=' + toInt(STATE.events.count.stalled, 0)
@@ -1407,9 +1481,14 @@
       + ' lastFalseEndTs=' + String(toInt(STATE.guard.lastFalseEndTs, 0)));
 
     var ticket = STATE.resume.ticket || STATE.resume.lastTicket || null;
-    lines.push('resumeTicket: sec=' + (ticket && isFinite(toNum(ticket.sec, NaN)) ? toNum(ticket.sec, 0).toFixed(2) : '')
+    lines.push('resumeTicket: id=' + String(ticket && ticket.id ? ticket.id : '')
+      + ' recToken=' + String(ticket ? toInt(ticket.recToken, 0) : 0)
+      + ' sec=' + (ticket && isFinite(toNum(ticket.sec, NaN)) ? toNum(ticket.sec, 0).toFixed(2) : '')
       + ' srcSig=' + String(ticket && ticket.srcSig ? ticket.srcSig : '')
       + ' age=' + String(resumeTicketAgeMs())
+      + ' applied=' + String(ticket ? toInt(ticket.applied, 0) : 0)
+      + ' verifyOk=' + String(ticket ? toInt(ticket.verifyOk, 0) : 0)
+      + ' verifyDelta=' + (ticket && isFinite(toNum(ticket.verifyDelta, NaN)) ? toNum(ticket.verifyDelta, 0).toFixed(2) : '')
       + ' frozen=' + (STATE.truth.frozen ? '1' : '0'));
     lines.push('lastSeek: sec=' + (isFinite(toNum(STATE.resume.lastSeekSec, NaN)) ? toNum(STATE.resume.lastSeekSec, 0).toFixed(2) : '')
       + ' ts=' + String(toInt(STATE.resume.lastSeekTs, 0))
@@ -1641,6 +1720,25 @@
     return ageMs(toInt(ticket.createdTs, 0));
   }
 
+  function syncResumeTicket(ticket) {
+    if (!ticket || typeof ticket !== 'object') return;
+    STATE.resume.lastTicket = {
+      id: String(ticket.id || ''),
+      recToken: toInt(ticket.recToken, 0),
+      sec: isFinite(toNum(ticket.sec, NaN)) ? toNum(ticket.sec, 0) : null,
+      srcSig: String(ticket.srcSig || ''),
+      createdTs: toInt(ticket.createdTs, 0),
+      reason: String(ticket.reason || ''),
+      kind: String(ticket.kind || ''),
+      source: String(ticket.source || ''),
+      applied: toInt(ticket.applied, 0),
+      applyTs: toInt(ticket.applyTs, 0),
+      lastApplyErr: String(ticket.lastApplyErr || ''),
+      verifyOk: toInt(ticket.verifyOk, 0),
+      verifyDelta: isFinite(toNum(ticket.verifyDelta, NaN)) ? toNum(ticket.verifyDelta, 0) : NaN
+    };
+  }
+
   function resumeSecFromTicketOrTruth(preferTicket) {
     if (preferTicket !== false) {
       var ticket = STATE.resume.ticket || null;
@@ -1677,34 +1775,174 @@
       try { sig = srcSig(getCurrentSrc(v)); } catch (_) { sig = ''; }
     }
 
-    var sec = resumeSecFromTicketOrTruth(false);
-    var dur = toNum(v ? v.duration : NaN, NaN);
-    if (isFinite(dur) && dur > 0) sec = Math.min(Math.max(0, sec), Math.max(0, dur - 0.5));
-    sec = Math.max(0, toNum(sec, 0));
+    var curTicket = STATE.resume.ticket || null;
+    if (
+      STATE.rec.active
+      && curTicket
+      && toInt(curTicket.recToken, 0) === toInt(STATE.rec.token, 0)
+      && isFinite(toNum(curTicket.sec, NaN))
+      && (String(curTicket.srcSig || '') === String(sig || '') || !sig || !curTicket.srcSig)
+    ) {
+      logLine('DBG', 'TICKET keep', {
+        id: String(curTicket.id || ''),
+        recToken: toInt(curTicket.recToken, 0),
+        sec: toNum(curTicket.sec, 0).toFixed(2),
+        srcSig: String(curTicket.srcSig || ''),
+        reason: reason
+      });
+      return curTicket;
+    }
 
-    STATE.resume.ticket = {
-      sec: sec,
+    var ct = toNum(STATE.tick && STATE.tick.ct, NaN);
+    var dur = toNum(v ? v.duration : (STATE.tick && STATE.tick.dur), NaN);
+    var tr = toNum(STATE.truth && STATE.truth.lastGoodSec, NaN);
+    var sec = NaN;
+    var source = '';
+
+    if (isFinite(tr) && tr >= 2) {
+      sec = tr;
+      source = 'truth';
+    } else if (isFinite(ct) && ct > 2 && isFinite(dur) && dur > 10) {
+      sec = Math.max(0, ct - 1.0);
+      source = 'ct_backoff';
+    } else if (isFinite(ct) && ct >= 2) {
+      sec = ct;
+      source = 'ct';
+    }
+
+    if (isFinite(sec) && isFinite(dur) && dur > 0) sec = Math.min(Math.max(0, sec), Math.max(0, dur - 0.75));
+    if (isFinite(sec) && sec < 2) sec = NaN;
+
+    var ticket = {
+      id: String(nowMs()) + '_' + Math.random().toString(16).slice(2),
+      recToken: toInt(STATE.rec.token, 0),
+      sec: isFinite(sec) ? sec : null,
       srcSig: String(sig || ''),
       createdTs: nowMs(),
       reason: reason,
-      kind: kind
+      kind: kind,
+      source: source || (isFinite(sec) ? 'unknown' : 'none'),
+      applied: 0,
+      applyTs: 0,
+      lastApplyErr: '',
+      verifyOk: 0,
+      verifyDelta: NaN
     };
-    STATE.resume.lastTicket = {
-      sec: sec,
-      srcSig: String(sig || ''),
-      createdTs: nowMs(),
-      reason: reason,
-      kind: kind
-    };
+
+    STATE.resume.ticket = ticket;
+    syncResumeTicket(ticket);
 
     logLine('INF', 'TICKET create', {
-      sec: sec.toFixed(2),
-      srcSig: String(sig || ''),
+      id: ticket.id,
+      recToken: ticket.recToken,
+      sec: ticket.sec === null ? 'null' : toNum(ticket.sec, 0).toFixed(2),
+      srcSig: ticket.srcSig,
       reason: reason,
-      kind: kind
+      kind: kind,
+      src: ticket.source
+    });
+    if (ticket.sec === null) logLine('WRN', 'TICKET sec_null fallback', { id: ticket.id, ct: isFinite(ct) ? ct.toFixed(2) : '', dur: isFinite(dur) ? dur.toFixed(2) : '', truth: isFinite(tr) ? tr.toFixed(2) : '' });
+
+    return ticket;
+  }
+
+  function applyResumeTicket(video, stage, cb) {
+    var ticket = STATE.resume.ticket || STATE.resume.lastTicket || null;
+    stage = String(stage || 'unknown');
+
+    if (!video) {
+      if (cb) cb(false, 'no_video');
+      return false;
+    }
+    if (!ticket) {
+      logLine('WRN', 'TICKET apply', { stage: stage, ok: 0, err: 'ticket_missing' });
+      if (cb) cb(false, 'ticket_missing');
+      return false;
+    }
+    if (!isFinite(toNum(ticket.sec, NaN)) || toNum(ticket.sec, NaN) < 0) {
+      ticket.lastApplyErr = 'ticket_sec_null';
+      ticket.verifyOk = 0;
+      syncResumeTicket(ticket);
+      logLine('WRN', 'TICKET apply', { stage: stage, id: String(ticket.id || ''), ok: 0, err: 'ticket_sec_null' });
+      if (cb) cb(false, 'ticket_sec_null');
+      return false;
+    }
+
+    var sec = Math.max(0, toNum(ticket.sec, 0));
+    var ctBefore = toNum(video.currentTime, NaN);
+    STATE.resume.lastApplyStage = stage;
+    STATE.resume.lastApplyTs = nowMs();
+
+    logLine('INF', 'TICKET apply', {
+      stage: stage,
+      id: String(ticket.id || ''),
+      sec: sec.toFixed(2),
+      ctBefore: isFinite(ctBefore) ? ctBefore.toFixed(2) : ''
     });
 
-    return STATE.resume.ticket;
+    function verify(retry) {
+      setTimeout(function () {
+        var ctAfter = toNum(video.currentTime, NaN);
+        var delta = isFinite(ctAfter) ? Math.abs(ctAfter - sec) : 999999;
+        var ok = isFinite(ctAfter) && delta <= 3.0;
+
+        ticket.verifyOk = ok ? 1 : 0;
+        ticket.verifyDelta = isFinite(delta) ? delta : NaN;
+        STATE.resume.lastVerifyOk = ticket.verifyOk;
+        STATE.resume.lastVerifyDelta = ticket.verifyDelta;
+        syncResumeTicket(ticket);
+
+        logLine(ok ? 'INF' : 'WRN', 'TICKET verify', {
+          stage: stage,
+          id: String(ticket.id || ''),
+          ok: ok ? 1 : 0,
+          delta: isFinite(delta) ? delta.toFixed(2) : '',
+          ctAfter: isFinite(ctAfter) ? ctAfter.toFixed(2) : ''
+        });
+
+        if (ok) {
+          ticket.applied = 1;
+          ticket.applyTs = nowMs();
+          ticket.lastApplyErr = '';
+          ticket.sec = sec;
+          syncResumeTicket(ticket);
+          STATE.guard.blockNextUntilTs = Math.max(toInt(STATE.guard.blockNextUntilTs, 0), now() + 1200);
+          if (cb) cb(true, 'ok');
+          return;
+        }
+
+        if (retry < 1) {
+          seekAfterReady(video, sec, 'ticket_retry:' + stage, function (ok2, err2) {
+            if (!ok2) {
+              ticket.lastApplyErr = String(err2 || 'retry_seek_failed');
+              syncResumeTicket(ticket);
+              if (cb) cb(false, ticket.lastApplyErr);
+              return;
+            }
+            verify(1);
+          });
+          return;
+        }
+
+        ticket.lastApplyErr = 'verify_delta';
+        syncResumeTicket(ticket);
+        armBlockNext(4000, 'ticket_verify_fail');
+        if (cb) cb(false, ticket.lastApplyErr);
+      }, 1000);
+    }
+
+    seekAfterReady(video, sec, 'ticket:' + stage, function (ok, err) {
+      if (!ok) {
+        ticket.lastApplyErr = String(err || 'seek_failed');
+        ticket.verifyOk = 0;
+        syncResumeTicket(ticket);
+        if (cb) cb(false, ticket.lastApplyErr);
+        return;
+      }
+      verify(0);
+    });
+
+    return true;
   }
 
   function seekAfterReady(video, sec, why, cb) {
@@ -1828,8 +2066,35 @@
   }
 
   function waitForProgress(token, timeoutMs, cb) {
-    var started = now();
+    var started = nowMs();
     var startCt = toNum(STATE.tick.ct, NaN);
+    var ticket = STATE.resume.ticket || STATE.resume.lastTicket || null;
+    var resumeSec = NaN;
+    if (ticket && isFinite(toNum(ticket.sec, NaN)) && toNum(ticket.sec, NaN) >= 2) resumeSec = Math.max(0, toNum(ticket.sec, 0));
+    var lastRealignTs = 0;
+
+    function resumeAligned(ct) {
+      if (!isFinite(resumeSec)) return true;
+      if (!isFinite(ct)) return false;
+      if (Math.abs(ct - resumeSec) <= 3.2) return true;
+      if (ct >= (resumeSec - 1.2)) return true;
+      return false;
+    }
+
+    function maybeRealign(v, why) {
+      if (!v || !isFinite(resumeSec)) return;
+      var ts = nowMs();
+      if ((ts - toInt(lastRealignTs, 0)) < 900) return;
+      if ((ts - toInt(STATE.resume.lastApplyTs, 0)) < 900) return;
+      lastRealignTs = ts;
+      logLine('WRN', 'TICKET realign', {
+        why: String(why || ''),
+        sec: toNum(resumeSec, 0).toFixed(2)
+      });
+      applyResumeTicket(v, 'wait:' + String(why || 'progress'), function (ok, err) {
+        if (!ok && err) STATE.rec.lastErr = String(err || '');
+      });
+    }
 
     function loop() {
       if (token !== toInt(STATE.rec.token, 0)) return cb(false, 'canceled');
@@ -1839,14 +2104,21 @@
       if (v) {
         var ct = toNum(v.currentTime, NaN);
         var ctMoved = isFinite(startCt) && isFinite(ct) && (ct - startCt) > 0.35;
-        if (ctMoved) return cb(true, 'ct_moved');
+        if (ctMoved && resumeAligned(ct)) return cb(true, 'ct_moved');
+        if (ctMoved && !resumeAligned(ct)) maybeRealign(v, 'ct_moved_mismatch');
       }
 
       var ctAge = ageMs(STATE.monitor.lastCtChangeTs);
       var progAge = ageMs(STATE.monitor.lastProgressSignalTs);
-      if (ctAge < 1400 && progAge < 1400) return cb(true, 'signal_ok');
+      if (ctAge < 1400 && progAge < 1400) {
+        if (!isFinite(resumeSec)) return cb(true, 'signal_ok');
+        var v2 = STATE.video || getVideo();
+        var cur = toNum(v2 ? v2.currentTime : NaN, NaN);
+        if (resumeAligned(cur)) return cb(true, 'signal_ok');
+        maybeRealign(v2, 'signal_mismatch');
+      }
 
-      if ((now() - started) >= timeoutMs) return cb(false, 'timeout');
+      if ((nowMs() - started) >= timeoutMs) return cb(false, 'timeout');
       setTimeout(loop, DET.waitLoopMs);
     }
 
@@ -1970,16 +2242,21 @@
     }
 
     if (ok) {
-      var resumeSec = resumeSecFromTicketOrTruth();
-      logLine('INF', 'INPLAYER set src ok', { mode: mode, seek: toNum(resumeSec, 0).toFixed(2) });
-      seekAfterReady(v, resumeSec, 'inplayer_resume', function (seekOk, seekErr) {
-        if (!seekOk) {
-          setTimeout(function () {
-            try { seekAfterReady(STATE.video || getVideo(), resumeSec, 'inplayer_resume_retry', function () { }); } catch (_) { }
-          }, 450);
-          if (seekErr) STATE.rec.lastErr = String(seekErr || '');
-        }
-      });
+      var ticketSec = resumeSecFromTicketOrTruth();
+      logLine('INF', 'INPLAYER set src ok', { mode: mode, seek: isFinite(ticketSec) ? toNum(ticketSec, 0).toFixed(2) : '' });
+      var applyDone = false;
+      function tryApply(tag) {
+        if (!STATE.rec.active || !toInt(STATE.life.active, 0) || toInt(STATE.life.exitIntent, 0)) return;
+        var curVideo = STATE.video || getVideo() || v;
+        if (!curVideo) return;
+        applyResumeTicket(curVideo, 'inplayer:' + String(tag || 'direct'), function (seekOk, seekErr) {
+          if (seekOk) applyDone = true;
+          if (!seekOk && seekErr) STATE.rec.lastErr = String(seekErr || '');
+        });
+      }
+      tryApply('direct');
+      setTimeout(function () { if (!applyDone) tryApply('rebind_1'); }, 260);
+      setTimeout(function () { if (!applyDone) tryApply('rebind_2'); }, 720);
     }
 
     setTimeout(function () {
@@ -2013,7 +2290,16 @@
     }
 
     STATE.rec.lastReopenTs = t;
-    var sec = Math.max(0, toNum(resumeSecFromTicketOrTruth(), 0));
+    var ticket = STATE.resume.ticket || makeResumeTicket('reopen', 'recovery');
+    var sec = NaN;
+    if (ticket && isFinite(toNum(ticket.sec, NaN)) && toNum(ticket.sec, NaN) >= 0) sec = Math.max(0, toNum(ticket.sec, 0));
+    if (!isFinite(sec)) sec = toNum(resumeSecFromTicketOrTruth(), NaN);
+    if (!isFinite(sec)) {
+      STATE.rec.lastErr = 'ticket_sec_null';
+      logLine('WRN', 'REOPEN requested', { sec: 'null', why: 'ticket_sec_null' });
+      return false;
+    }
+
     STATE.resume.reopenRequestedSec = sec;
     STATE.resume.reopenRequestedTs = nowMs();
     STATE.resume.reopenAppliedSec = NaN;
@@ -2225,9 +2511,9 @@
     STATE.rec.lastErr = '';
     STATE.rec.startedTs = now();
     clearResumeUnfreezeTimer();
-    makeResumeTicket(reason, 'recovery');
+    var ticket = makeResumeTicket(reason, 'recovery');
     truthFreeze(true, 'recover:' + reason);
-    if (CFG.protectNext) armBlockNext(6000, 'recover:' + reason);
+    if (CFG.protectNext) armBlockNext(10000, 'recover:' + reason);
 
     logLine('WRN', 'recover_begin', {
       reason: reason,
@@ -2235,7 +2521,8 @@
       inplayer: STATE.rec.inpMax,
       mode: CFG.inplayerMode,
       reopen: CFG.escalateToReopen ? 1 : 0,
-      resume: toNum(resumeSecFromTicketOrTruth(), 0).toFixed(2)
+      ticketId: String(ticket && ticket.id ? ticket.id : ''),
+      resume: (ticket && isFinite(toNum(ticket.sec, NaN))) ? toNum(ticket.sec, 0).toFixed(2) : 'null'
     });
 
     var token = toInt(STATE.rec.token, 0);
@@ -2645,9 +2932,10 @@
   }
 
   function maybeDetectHang() {
-    var det = detectorsAllowedInfo();
+    var det = detectAllowedInfo();
     if (!det.ok) {
       hangUpdate(false, String(det.reason || 'blocked'), { ctAge: 0, timeupdateAge: 0, progAge: 0, aheadAge: 0, waitingAge: 0, resumeAge: 0 });
+      flagSet('playingStuck', false, '');
       return false;
     }
     if (STATE.rec.active) {
@@ -2690,10 +2978,12 @@
       if (ctStuckMs < hangTimeMs) why = 'ct_not_stuck';
       else if (!(noTimeupdate || noProgress || noAhead || lowReady)) why = 'signals_alive';
       hangUpdate(false, why, ages);
+      flagSet('playingStuck', false, '');
       return false;
     }
 
     hangUpdate(true, 'playing_stuck', ages);
+    flagSet('playingStuck', true, 'ctStuckMs=' + String(ctStuckMs));
     setPhase(ST.HUNG, 'playing_stuck');
     logLine('WRN', 'DETECT playing_stuck', {
       ctStuckMs: ctStuckMs,
@@ -2707,7 +2997,10 @@
       ahead: toNum(t.aheadSec, 0).toFixed(1)
     });
 
-    var started = startRecovery('playing_stuck');
+    var rec = detectorsAllowedInfo();
+    var started = false;
+    if (rec.ok) started = startRecovery('playing_stuck');
+    else logLine('DBG', 'DETECT blocked', { kind: 'playing_stuck', why: String(rec.reason || '') });
     if (!started) {
       hangUpdate(true, 'playing_stuck_no_recover', ages);
       armBlockNext(DET.manualNextBlockMs + 2000, 'hang_no_recover');
@@ -2729,7 +3022,7 @@
   function maybeDetectFakeFullBuffer() {
     if (!CFG.enabled || !CFG.fakeFullEnabled) return false;
     if (STATE.rec.active) return false;
-    if (!detectorsAllowed()) return false;
+    if (!detectAllowedInfo().ok) return false;
 
     var t = STATE.tick || {};
     if (!t.hasVideo) return false;
@@ -2747,12 +3040,16 @@
     var noMove = ba.bufEndMoveAge >= toInt(CFG.fakeFullNoMoveMs, 6000);
     var noProg = ba.progAge >= toInt(CFG.fakeFullNoProgMs, 6000);
     var stuck = toInt(STATE.ct.stuckMs, 0) >= Math.max(1500, Math.floor(toInt(CFG.hangTimeMs, 10000) * 0.75));
-    if (!(noMove && noProg && (stuck || ba.timeupdateAge >= toInt(CFG.hangTimeMs, 10000)))) return false;
+    if (!(noMove && noProg && (stuck || ba.timeupdateAge >= toInt(CFG.hangTimeMs, 10000)))) {
+      flagSet('fakeFull', false, '');
+      return false;
+    }
 
     var ts = nowMs();
     if ((ts - toInt(STATE.buf.fakeFullTs, 0)) < 1200) return false;
     STATE.buf.fakeFullTs = ts;
     STATE.buf.fakeFullCount = toInt(STATE.buf.fakeFullCount, 0) + 1;
+    flagSet('fakeFull', true, 'dur=' + dur.toFixed(2) + ' range=' + fs.toFixed(2) + '-' + fe.toFixed(2));
 
     setPhase(ST.HUNG, 'fake_full');
     if (CFG.protectNext) armBlockNext(6000, 'fake_full');
@@ -2765,7 +3062,10 @@
       cnt: toInt(STATE.buf.fakeFullCount, 0)
     });
 
-    var started = startRecovery('fake_full_buffer');
+    var rec = detectorsAllowedInfo();
+    var started = false;
+    if (rec.ok) started = startRecovery('fake_full_buffer');
+    else logLine('DBG', 'DETECT blocked', { kind: 'fake_full', why: String(rec.reason || '') });
     if (!started && CFG.protectNext) armBlockNext(8000, 'fake_full_busy');
     return started;
   }
@@ -2773,7 +3073,7 @@
   function maybeDetectBufferUnderrun() {
     if (!CFG.enabled) return false;
     if (STATE.rec.active) return false;
-    if (!detectorsAllowed()) return false;
+    if (!detectAllowedInfo().ok) return false;
     if (!isPlayingLike(STATE.tick)) return false;
 
     var t = STATE.tick || {};
@@ -2784,12 +3084,16 @@
     var ba = bufferAges();
     var noProg = ba.progAge >= toInt(CFG.underrunNoProgMs, 4000);
     var noAheadMove = ba.aheadMoveAge >= toInt(CFG.underrunNoAheadMoveMs, 4000);
-    if (!(noProg && noAheadMove)) return false;
+    if (!(noProg && noAheadMove)) {
+      flagSet('underrun', false, '');
+      return false;
+    }
 
     var ts = nowMs();
     if ((ts - toInt(STATE.buf.underrunTs, 0)) < 1200) return false;
     STATE.buf.underrunTs = ts;
     STATE.buf.underrunCount = toInt(STATE.buf.underrunCount, 0) + 1;
+    flagSet('underrun', true, 'ahead=' + ahead.toFixed(2) + ' progAge=' + String(toInt(ba.progAge, 0)));
 
     setPhase(ST.HUNG, 'underrun');
     if (CFG.protectNext) armBlockNext(6000, 'underrun');
@@ -2800,9 +3104,37 @@
       cnt: toInt(STATE.buf.underrunCount, 0)
     });
 
-    var started = startRecovery('buffer_underrun');
+    var rec = detectorsAllowedInfo();
+    var started = false;
+    if (rec.ok) started = startRecovery('buffer_underrun');
+    else logLine('DBG', 'DETECT blocked', { kind: 'underrun', why: String(rec.reason || '') });
     if (!started && CFG.protectNext) armBlockNext(8000, 'underrun_busy');
     return started;
+  }
+
+  function maybeStartRecoveryFromFlags() {
+    if (STATE.rec.active) return false;
+    var rec = detectorsAllowedInfo();
+    if (!rec.ok) return false;
+
+    var ts = nowMs();
+    var order = [
+      { key: 'playingStuck', reason: 'playing_stuck' },
+      { key: 'fakeFull', reason: 'fake_full_buffer' },
+      { key: 'underrun', reason: 'buffer_underrun' }
+    ];
+
+    for (var i = 0; i < order.length; i++) {
+      var it = order[i];
+      var f = STATE.flags && STATE.flags[it.key] ? STATE.flags[it.key] : null;
+      if (!f || !toInt(f.on, 0)) continue;
+      if (ageMs(toInt(f.ts, 0)) > 15000) continue;
+      if ((ts - toInt(f.lastStartTs, 0)) < 2000) continue;
+      f.lastStartTs = ts;
+      logLine('WRN', 'FLAG recovery_start', { flag: it.key, reason: it.reason, age: ageMs(toInt(f.ts, 0)) });
+      if (startRecovery(it.reason)) return true;
+    }
+    return false;
   }
 
   function trackReopenApply() {
@@ -2817,24 +3149,6 @@
       return;
     }
 
-    var t = STATE.tick || {};
-    var ct = toNum(t.ct, NaN);
-    if (isFinite(ct)) {
-      var delta = ct - req;
-      STATE.resume.reopenDeltaSec = delta;
-      if (!STATE.resume.reopenAppliedTs && Math.abs(delta) <= 2.0) {
-        STATE.resume.reopenAppliedTs = nowMs();
-        STATE.resume.reopenAppliedSec = ct;
-        logLine('INF', 'REOPEN applied', {
-          requestedSec: req.toFixed(2),
-          applied: ct.toFixed(2),
-          delta: delta.toFixed(2),
-          ok: 1
-        });
-        return;
-      }
-    }
-
     var ts = nowMs();
     if ((ts - toInt(STATE.resume.reopenRequestedTs, 0)) < 1400) return;
     if ((ts - toInt(STATE.resume.reopenSeekTs, 0)) < 2800) return;
@@ -2843,7 +3157,7 @@
     if (!v) return;
 
     STATE.resume.reopenSeekTs = ts;
-    seekAfterReady(v, req, 'reopen_apply', function (ok, err) {
+    applyResumeTicket(v, 'reopen', function (ok, err) {
       if (ok) {
         var cur = toNum(v.currentTime, NaN);
         STATE.resume.reopenAppliedTs = nowMs();
@@ -2878,6 +3192,7 @@
       }
 
       updatePhaseByTick();
+      maybeTraceDetectors();
 
       var wasActive = toInt(STATE.life.active, 0) === 1;
       var active = detectPlayerActive();
@@ -2891,9 +3206,9 @@
         return;
       }
 
-      var det = detectorsAllowedInfo();
-      if (!det.ok) {
-        hangUpdate(false, String(det.reason || 'blocked'), runtimeAges());
+      var detDetect = detectAllowedInfo();
+      if (!detDetect.ok) {
+        hangUpdate(false, String(detDetect.reason || 'blocked'), runtimeAges());
         if (STATE.ui.open) uiRender('tick');
         return;
       }
@@ -2901,7 +3216,8 @@
       maybeDetectHang();
       maybeDetectFakeFullBuffer();
       maybeDetectBufferUnderrun();
-      maybeHandleFalseEnd('tick_check');
+      maybeStartRecoveryFromFlags();
+      if (detectorsAllowedInfo().ok) maybeHandleFalseEnd('tick_check');
       trackReopenApply();
 
       if (STATE.ui.open) uiRender('tick');
@@ -2911,6 +3227,7 @@
   }
 
   API.state = function () {
+    var ticket = STATE.resume.ticket || STATE.resume.lastTicket || null;
     return {
       cfg: {
         enabled: !!CFG.enabled,
@@ -2977,16 +3294,46 @@
         resumeAge: ageMs(STATE.pause.lastResumeTs)
       },
       resume: {
-        ticketSec: toNum(STATE.resume.ticket && STATE.resume.ticket.sec, NaN),
-        ticketSrcSig: String(STATE.resume.ticket && STATE.resume.ticket.srcSig ? STATE.resume.ticket.srcSig : ''),
+        ticketId: String(ticket && ticket.id ? ticket.id : ''),
+        ticketRecToken: toInt(ticket && ticket.recToken, 0),
+        ticketSec: toNum(ticket && ticket.sec, NaN),
+        ticketSrcSig: String(ticket && ticket.srcSig ? ticket.srcSig : ''),
         ticketAge: resumeTicketAgeMs(),
+        ticketApplied: toInt(ticket && ticket.applied, 0),
+        ticketVerifyOk: toInt(ticket && ticket.verifyOk, 0),
+        ticketVerifyDelta: toNum(ticket && ticket.verifyDelta, NaN),
         frozen: !!STATE.truth.frozen,
+        lastApplyStage: String(STATE.resume.lastApplyStage || ''),
+        lastApplyTs: toInt(STATE.resume.lastApplyTs, 0),
+        lastVerifyOk: toInt(STATE.resume.lastVerifyOk, 0),
+        lastVerifyDelta: toNum(STATE.resume.lastVerifyDelta, NaN),
         lastSeekSec: toNum(STATE.resume.lastSeekSec, NaN),
         lastSeekTs: toInt(STATE.resume.lastSeekTs, 0),
         lastSeekOk: toInt(STATE.resume.lastSeekOk, 0),
+        lastSeekErr: String(STATE.resume.lastSeekErr || ''),
         reopenRequestedSec: toNum(STATE.resume.reopenRequestedSec, NaN),
         reopenAppliedSec: toNum(STATE.resume.reopenAppliedSec, NaN),
         reopenDeltaSec: toNum(STATE.resume.reopenDeltaSec, NaN)
+      },
+      flags: {
+        playingStuck: {
+          on: toInt(STATE.flags.playingStuck.on, 0),
+          ts: toInt(STATE.flags.playingStuck.ts, 0),
+          count: toInt(STATE.flags.playingStuck.count, 0),
+          details: String(STATE.flags.playingStuck.details || '')
+        },
+        fakeFull: {
+          on: toInt(STATE.flags.fakeFull.on, 0),
+          ts: toInt(STATE.flags.fakeFull.ts, 0),
+          count: toInt(STATE.flags.fakeFull.count, 0),
+          details: String(STATE.flags.fakeFull.details || '')
+        },
+        underrun: {
+          on: toInt(STATE.flags.underrun.on, 0),
+          ts: toInt(STATE.flags.underrun.ts, 0),
+          count: toInt(STATE.flags.underrun.count, 0),
+          details: String(STATE.flags.underrun.details || '')
+        }
       },
       protect: {
         blockNextUntilTs: toInt(STATE.guard.blockNextUntilTs, 0),
