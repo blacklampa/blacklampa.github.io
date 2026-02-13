@@ -100,7 +100,10 @@
     inplayerAttempts: 3,
     inplayerMode: 'refresh_src',
     escalateToReopen: true,
-    reopenCooldownMs: 8000
+    reopenCooldownMs: 8000,
+    frameHangMs: 3200,
+    frameCtDeltaSec: 1.0,
+    frameGraceMs: 6000
   };
 
   var STATE = {
@@ -259,6 +262,19 @@
       waitingAge: 0,
       resumeAge: 0,
       evalTs: 0
+    },
+
+    frames: {
+      supported: 0,
+      lastFrames: -1,
+      lastFrameTs: 0,
+      lastFrameCt: NaN,
+      frameStuckMs: 0,
+      ctDeltaSinceFrame: 0,
+      graceUntilTs: 0,
+      lastWhy: '',
+      lastDetectTs: 0,
+      detectCount: 0
     },
 
     truth: {
@@ -705,7 +721,12 @@
       ranges: toInt(t.rangesCount, 0),
       r0: (isFinite(toNum(t.firstRangeStart, NaN)) ? toNum(t.firstRangeStart, 0).toFixed(1) : '') + '-' + (isFinite(toNum(t.firstRangeEnd, NaN)) ? toNum(t.firstRangeEnd, 0).toFixed(1) : ''),
       progAge: toInt(ba.progAge, 0),
-      bufMoveAge: toInt(ba.bufEndMoveAge, 0)
+      bufMoveAge: toInt(ba.bufEndMoveAge, 0),
+      frames: toInt(STATE.frames.supported, 0),
+      fc: toNum(STATE.frames.lastFrames, -1),
+      frameStuckMs: toInt(STATE.frames.frameStuckMs, 0),
+      frameCtDelta: toNum(STATE.frames.ctDeltaSinceFrame, 0).toFixed(2),
+      frameGraceLeftMs: frameGraceLeftMs()
     });
   }
 
@@ -744,6 +765,9 @@
     CFG.inplayerMode = normalizeInplayerMode(sGet(K.inplayerMode, 'refresh_src'));
     CFG.escalateToReopen = parseBool(sGet(K.escalateToReopen, '1'), true);
     CFG.reopenCooldownMs = clampInt(sGet(K.reopenCooldownMs, '8000'), 1000, 60000);
+    CFG.frameHangMs = clampInt(toInt(CFG.frameHangMs, 3200), 1200, 15000);
+    CFG.frameCtDeltaSec = Math.max(0.2, Math.min(5, toNum(CFG.frameCtDeltaSec, 1.0)));
+    CFG.frameGraceMs = clampInt(toInt(CFG.frameGraceMs, 6000), 1000, 20000);
 
     STATE.lastCfgReadTs = now();
     return CFG;
@@ -1072,7 +1096,10 @@
               var sec = NaN;
               if (STATE.pos && isFinite(toNum(STATE.pos.lastStableSec, NaN)) && toNum(STATE.pos.lastStableSec, NaN) >= 2) sec = toNum(STATE.pos.lastStableSec, NaN);
               else if (isFinite(toNum(STATE.truth.lastGoodSec, NaN)) && toNum(STATE.truth.lastGoodSec, NaN) >= 2) sec = toNum(STATE.truth.lastGoodSec, NaN);
-              if (v && isFinite(sec)) v.currentTime = sec;
+              if (v && isFinite(sec)) {
+                v.currentTime = sec;
+                armFrameGrace(CFG.frameGraceMs, 'ended_block_seek');
+              }
             } catch (_) { }
 
             armFalseEndCritical(30000, 'ended_blocked');
@@ -1834,6 +1861,17 @@
         + ' srcSig=' + String(STATE.truth.srcSig || t.srcSig || '')
     ];
 
+    var frameLines = [
+      'framesSupported=' + String(toInt(STATE.frames.supported, 0))
+        + ' fc=' + String(toNum(STATE.frames.lastFrames, -1)),
+      'frameStuckMs=' + String(toInt(STATE.frames.frameStuckMs, 0))
+        + ' ctDeltaSinceFrame=' + toNum(STATE.frames.ctDeltaSinceFrame, 0).toFixed(2),
+      'frameGraceLeftMs=' + String(frameGraceLeftMs())
+        + ' graceWhy=' + String(STATE.frames.lastWhy || ''),
+      'renderFreezeDetections=' + String(toInt(STATE.frames.detectCount, 0))
+        + ' lastDetectAgeMs=' + String(ageMs(toInt(STATE.frames.lastDetectTs, 0)))
+    ];
+
     var logs = [];
     try {
       var tail = logRowsTail(DET.logLimit);
@@ -1851,6 +1889,7 @@
     html += buildSectionHtml('DETECTORS', detectorLines);
     html += buildSectionHtml('RECOVERY', recoveryLines);
     html += buildSectionHtml('TRUTH', truthLines);
+    html += buildSectionHtml('FRAMES', frameLines);
     html += buildSectionHtml('LOGS', logs.length ? logs : ['(empty)'], 'logs');
     return html;
   }
@@ -2072,9 +2111,68 @@
     reason = String(reason || '');
     if (!reason) return 0;
     if (reason === 'fake_full_buffer' || reason === 'false_end' || reason === 'forced_next' || reason === 'ended_blocked') return 30000;
-    if (reason === 'buffer_underrun' || reason === 'playing_stuck') return 20000;
+    if (reason === 'buffer_underrun' || reason === 'playing_stuck' || reason === 'render_freeze' || reason === 'tail_jump' || reason === 'tail_jump_seek') return 20000;
     if (reason.indexOf('stalled') >= 0 || reason.indexOf('waiting') >= 0) return 20000;
     return 0;
+  }
+
+  function armFrameGrace(ms, why) {
+    ms = clampInt(isFinite(toNum(ms, NaN)) ? toNum(ms, 0) : toInt(CFG.frameGraceMs, 6000), 500, 30000);
+    STATE.frames.graceUntilTs = Math.max(toInt(STATE.frames.graceUntilTs, 0), nowMs() + ms);
+    STATE.frames.lastWhy = String(why || '');
+  }
+
+  function frameGraceLeftMs() {
+    return Math.max(0, toInt(STATE.frames.graceUntilTs, 0) - nowMs());
+  }
+
+  function readFrameCount(v) {
+    try {
+      if (!v) return null;
+      if (typeof v.getVideoPlaybackQuality === 'function') {
+        var q = v.getVideoPlaybackQuality();
+        if (q && isFinite(toNum(q.totalVideoFrames, NaN))) return toNum(q.totalVideoFrames, NaN);
+      }
+      if (isFinite(toNum(v.webkitDecodedFrameCount, NaN))) return toNum(v.webkitDecodedFrameCount, NaN);
+      if (isFinite(toNum(v.webkitPresentedFrameCount, NaN))) return toNum(v.webkitPresentedFrameCount, NaN);
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function frameUpdate(v, t) {
+    t = t || STATE.tick || {};
+    var ts = nowMs();
+    var fc = readFrameCount(v);
+    if (fc === null) return;
+
+    STATE.frames.supported = 1;
+
+    if (toNum(STATE.frames.lastFrames, -1) < 0) {
+      STATE.frames.lastFrames = fc;
+      STATE.frames.lastFrameTs = ts;
+      STATE.frames.lastFrameCt = isFinite(toNum(t.ct, NaN)) ? toNum(t.ct, NaN) : NaN;
+      STATE.frames.frameStuckMs = 0;
+      STATE.frames.ctDeltaSinceFrame = 0;
+      return;
+    }
+
+    if (fc !== toNum(STATE.frames.lastFrames, -1)) {
+      STATE.frames.lastFrames = fc;
+      STATE.frames.lastFrameTs = ts;
+      STATE.frames.lastFrameCt = isFinite(toNum(t.ct, NaN)) ? toNum(t.ct, NaN) : NaN;
+      STATE.frames.frameStuckMs = 0;
+      STATE.frames.ctDeltaSinceFrame = 0;
+      return;
+    }
+
+    STATE.frames.frameStuckMs = Math.max(0, ts - toInt(STATE.frames.lastFrameTs, ts));
+    if (isFinite(toNum(t.ct, NaN)) && isFinite(toNum(STATE.frames.lastFrameCt, NaN))) {
+      STATE.frames.ctDeltaSinceFrame = Math.max(0, toNum(t.ct, 0) - toNum(STATE.frames.lastFrameCt, 0));
+    } else {
+      STATE.frames.ctDeltaSinceFrame = 0;
+    }
   }
 
   function isTail(ct, dur) {
@@ -2125,7 +2223,10 @@
     armFalseEndCritical(30000, source === 'seeking' ? 'tail_jump_seek' : 'tail_jump');
     try { if (e && e.stopImmediatePropagation) e.stopImmediatePropagation(); } catch (_) { }
     try { if (e && e.preventDefault) e.preventDefault(); } catch (_) { }
-    try { video.currentTime = stable; } catch (_) { }
+    try {
+      video.currentTime = stable;
+      armFrameGrace(CFG.frameGraceMs, source === 'seeking' ? 'tail_jump_seek' : 'tail_jump');
+    } catch (_) { }
 
     STATE.guard.lastTailClampTs = ts;
     STATE.guard.lastTailClampKind = String(source || 'timeupdate');
@@ -2451,6 +2552,7 @@
       try {
         var dur = toNum(video.duration, NaN);
         if (isFinite(dur) && dur > 0) target = Math.min(Math.max(0, sec), Math.max(0, dur - 0.5));
+        armFrameGrace(CFG.frameGraceMs, 'seek_after_ready:' + String(why || ''));
         video.currentTime = target;
       } catch (e) {
         ok = false;
@@ -2506,7 +2608,10 @@
     if (!v) return false;
 
     var target = Math.max(0, toNum(resumeSecFromTicketOrTruth(), 0));
-    try { v.currentTime = target; } catch (_) { }
+    try {
+      armFrameGrace(CFG.frameGraceMs, String(tag || 'seek_truth'));
+      v.currentTime = target;
+    } catch (_) { }
 
     if (shouldAutoPlay(String(tag || 'seek_truth'))) {
       try {
@@ -2596,7 +2701,10 @@
 
     var target = resumeSecFromTicketOrTruth();
     if (idx <= 1) {
-      try { v.currentTime = Math.max(0, target); } catch (_) { }
+      try {
+        armFrameGrace(CFG.frameGraceMs, 'soft_attempt_1');
+        v.currentTime = Math.max(0, target);
+      } catch (_) { }
       if (shouldAutoPlay('soft_attempt_1')) {
         try {
           var p1 = v.play ? v.play() : null;
@@ -2611,7 +2719,10 @@
     try { if (typeof v.load === 'function') v.load(); } catch (_) { }
     setTimeout(function () {
       if (!STATE.rec.active || !toInt(STATE.life.active, 0) || toInt(STATE.life.exitIntent, 0)) return;
-      try { v.currentTime = Math.max(0, target); } catch (_) { }
+      try {
+        armFrameGrace(CFG.frameGraceMs, 'soft_attempt_2');
+        v.currentTime = Math.max(0, target);
+      } catch (_) { }
       if (shouldAutoPlay('soft_attempt_2')) {
         try {
           var p2 = v.play ? v.play() : null;
@@ -2698,6 +2809,7 @@
     }
 
     if (ok) {
+      armFrameGrace(CFG.frameGraceMs, 'inplayer_rebuild:' + String(mode || ''));
       var ticketSec = resumeSecFromTicketOrTruth();
       logLine('INF', 'INPLAYER set src ok', { mode: mode, seek: isFinite(ticketSec) ? toNum(ticketSec, 0).toFixed(2) : '' });
       var applyDone = false;
@@ -2942,6 +3054,7 @@
     STATE.rec.active = false;
     STATE.rec.step = '';
     STATE.rec.reason = '';
+    armFrameGrace(CFG.frameGraceMs, 'recover_finish:' + String(ok ? 'ok' : 'fail'));
     if (ok) {
       setPhase(ST.PLAYING, 'recovered:' + String(why || 'ok'));
       logLine('OK', 'recover_done', { why: String(why || 'ok') });
@@ -3119,6 +3232,7 @@
     clearResumeUnfreezeTimer();
     var ticket = makeResumeTicket(reason, 'recovery');
     truthFreeze(true, 'recover:' + reason);
+    armFrameGrace(CFG.frameGraceMs, 'recover_start:' + reason);
     if (CFG.protectNext) {
       var criticalMs = criticalMsForReason(reason);
       if (criticalMs > 0) armFalseEndCritical(criticalMs, 'recover:' + reason);
@@ -3269,7 +3383,12 @@
 
     var v = STATE.video || getVideo();
     var target = Math.max(0, toNum(STATE.truth.lastGoodSec, 0) - 0.7);
-    try { if (v) v.currentTime = target; } catch (_) { }
+    try {
+      if (v) {
+        armFrameGrace(CFG.frameGraceMs, 'false_end_prevented');
+        v.currentTime = target;
+      }
+    } catch (_) { }
     if (shouldAutoPlay('false_end_prevented')) {
       try {
         if (v && typeof v.play === 'function') {
@@ -3326,7 +3445,12 @@
 
     var v = STATE.video || getVideo();
     var target = Math.max(0, toNum(STATE.truth.lastGoodSec, 0) - 0.7);
-    try { if (v) v.currentTime = target; } catch (_) { }
+    try {
+      if (v) {
+        armFrameGrace(CFG.frameGraceMs, 'forced_next_prevented');
+        v.currentTime = target;
+      }
+    } catch (_) { }
     if (shouldAutoPlay('forced_next_prevented')) {
       try {
         if (v && typeof v.play === 'function') {
@@ -3645,6 +3769,50 @@
     return started;
   }
 
+  function maybeDetectRenderFreeze() {
+    if (!CFG.enabled) return false;
+    if (STATE.rec.active) return false;
+
+    var det = detectAllowedInfo();
+    if (!det.ok) return false;
+
+    var t = STATE.tick || {};
+    if (!t.hasVideo) return false;
+    if (t.paused || isUserPauseIntent()) return false;
+    if (String(STATE.phase || '') !== ST.PLAYING && !isPlayingLike(t)) return false;
+    if (!toInt(STATE.frames.supported, 0)) return false;
+    if (frameGraceLeftMs() > 0) return false;
+
+    var frameStuckMs = toInt(STATE.frames.frameStuckMs, 0);
+    var ctDelta = toNum(STATE.frames.ctDeltaSinceFrame, 0);
+    if (frameStuckMs < toInt(CFG.frameHangMs, 3200)) return false;
+    if (ctDelta < toNum(CFG.frameCtDeltaSec, 1.0)) return false;
+
+    var ts = nowMs();
+    if ((ts - toInt(STATE.frames.lastDetectTs, 0)) < 1200) return false;
+    STATE.frames.lastDetectTs = ts;
+    STATE.frames.detectCount = toInt(STATE.frames.detectCount, 0) + 1;
+
+    setPhase(ST.HUNG, 'render_freeze');
+    if (CFG.protectNext) armFalseEndCritical(20000, 'render_freeze');
+    logLine('WRN', 'DETECT render_freeze', {
+      frameStuckMs: frameStuckMs,
+      ctDeltaSinceFrame: ctDelta.toFixed(2),
+      fc: toNum(STATE.frames.lastFrames, -1),
+      ct: isFinite(toNum(t.ct, NaN)) ? toNum(t.ct, 0).toFixed(2) : '',
+      dur: isFinite(toNum(t.dur, NaN)) ? toNum(t.dur, 0).toFixed(2) : '',
+      graceLeftMs: frameGraceLeftMs(),
+      cnt: toInt(STATE.frames.detectCount, 0)
+    });
+
+    var rec = detectorsAllowedInfo();
+    var started = false;
+    if (rec.ok) started = startRecovery('render_freeze');
+    else logLine('DBG', 'DETECT blocked', { kind: 'render_freeze', why: String(rec.reason || '') });
+    if (!started && CFG.protectNext) armFalseEndCritical(20000, 'render_freeze_busy');
+    return started;
+  }
+
   function bufferAges() {
     return {
       progAge: ageMs(STATE.buf.lastProgTs || STATE.ev.lastProgressTs || STATE.monitor.lastProgressSignalTs),
@@ -3821,6 +3989,7 @@
       patchAll();
       rebindVideoListeners();
       collectTick(STATE.video);
+      frameUpdate(STATE.video || getVideo(), STATE.tick);
 
       if (!CFG.enabled) {
         shutdownOverlay('disabled', false);
@@ -3850,6 +4019,7 @@
       }
 
       maybeDetectHang();
+      maybeDetectRenderFreeze();
       maybeDetectFakeFullBuffer();
       maybeDetectBufferUnderrun();
       maybeStartRecoveryFromFlags();
@@ -3886,7 +4056,10 @@
         inplayerAttempts: toInt(CFG.inplayerAttempts, 0),
         inplayerMode: String(CFG.inplayerMode || ''),
         escalateToReopen: !!CFG.escalateToReopen,
-        reopenCooldownMs: toInt(CFG.reopenCooldownMs, 0)
+        reopenCooldownMs: toInt(CFG.reopenCooldownMs, 0),
+        frameHangMs: toInt(CFG.frameHangMs, 0),
+        frameCtDeltaSec: toNum(CFG.frameCtDeltaSec, 0),
+        frameGraceMs: toInt(CFG.frameGraceMs, 0)
       },
       phase: String(STATE.phase || ''),
       phaseReason: String(STATE.phaseReason || ''),
@@ -4012,6 +4185,17 @@
         aheadSec: toNum(STATE.tick.aheadSec, 0),
         rangesCount: toInt(STATE.tick.rangesCount, 0)
       },
+      frames: {
+        supported: toInt(STATE.frames.supported, 0),
+        lastFrames: toNum(STATE.frames.lastFrames, -1),
+        lastFrameTs: toInt(STATE.frames.lastFrameTs, 0),
+        frameStuckMs: toInt(STATE.frames.frameStuckMs, 0),
+        ctDeltaSinceFrame: toNum(STATE.frames.ctDeltaSinceFrame, 0),
+        graceLeftMs: frameGraceLeftMs(),
+        graceWhy: String(STATE.frames.lastWhy || ''),
+        detectCount: toInt(STATE.frames.detectCount, 0),
+        lastDetectTs: toInt(STATE.frames.lastDetectTs, 0)
+      },
       events: {
         count: safe(function () { return JSON.parse(JSON.stringify(STATE.events.count)); }, {}),
         last: safe(function () { return JSON.parse(JSON.stringify(STATE.events.last)); }, {})
@@ -4076,7 +4260,12 @@
     if (cmd === 'seek') {
       var sec = 0;
       try { sec = toNum(payload && payload.sec !== undefined ? payload.sec : payload, 0); } catch (_) { sec = 0; }
-      try { if (v && isFinite(sec) && sec >= 0) v.currentTime = sec; } catch (_) { }
+      try {
+        if (v && isFinite(sec) && sec >= 0) {
+          armFrameGrace(CFG.frameGraceMs, 'api_seek');
+          v.currentTime = sec;
+        }
+      } catch (_) { }
       return true;
     }
 
