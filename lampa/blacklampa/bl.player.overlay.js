@@ -260,6 +260,13 @@
       frozen: false
     },
 
+    pos: {
+      lastStableSec: NaN,
+      lastStableTs: 0,
+      lastStableSrcSig: '',
+      lastStableReason: ''
+    },
+
     resume: {
       ticket: null,
       lastTicket: null,
@@ -923,6 +930,45 @@
     }
   }
 
+  function stablePosUpdate(video, reason) {
+    if (!video) return;
+    if (STATE.rec.active || STATE.truth.frozen) return;
+    if (STATE.media && STATE.media.paused) return;
+
+    var t = STATE.tick || {};
+    if (!t.hasVideo || t.paused) return;
+
+    var sig = '';
+    try { sig = String(t.srcSig || ''); } catch (_) { sig = ''; }
+    if (!sig) {
+      try { sig = srcSig(getCurrentSrc(video)); } catch (_) { sig = ''; }
+    }
+    if (!sig) return;
+
+    var ct = toNum(video.currentTime, NaN);
+    var dur = toNum(video.duration, NaN);
+    if (!isFinite(ct) || ct < 2) return;
+    if (!isFinite(dur) || dur <= 30) return;
+    if (ct >= dur - 1) return;
+
+    var prev = toNum(STATE.pos.lastStableSec, NaN);
+    if (!isFinite(prev)) {
+      STATE.pos.lastStableSec = ct;
+      STATE.pos.lastStableTs = nowMs();
+      STATE.pos.lastStableSrcSig = sig;
+      STATE.pos.lastStableReason = String(reason || 'ct_move');
+      return;
+    }
+
+    var d = ct - prev;
+    if (d < 0.08) return;
+
+    STATE.pos.lastStableSec = ct;
+    STATE.pos.lastStableTs = nowMs();
+    STATE.pos.lastStableSrcSig = sig;
+    STATE.pos.lastStableReason = String(reason || 'ct_move');
+  }
+
   function attachVideoListeners(video) {
     detachVideoListeners();
 
@@ -1185,6 +1231,7 @@
       }
 
       if (CFG.storeTruth) truthUpdate(video, 'tick');
+      stablePosUpdate(video, 'tick');
     }
 
     STATE.tick = s;
@@ -1481,9 +1528,14 @@
       + ' lastFalseEndTs=' + String(toInt(STATE.guard.lastFalseEndTs, 0)));
 
     var ticket = STATE.resume.ticket || STATE.resume.lastTicket || null;
+    lines.push('stablePos: sec=' + (isFinite(toNum(STATE.pos.lastStableSec, NaN)) ? toNum(STATE.pos.lastStableSec, 0).toFixed(2) : '')
+      + ' ageMs=' + String(ageMs(STATE.pos.lastStableTs))
+      + ' srcSig=' + String(STATE.pos.lastStableSrcSig || '')
+      + ' why=' + String(STATE.pos.lastStableReason || ''));
     lines.push('resumeTicket: id=' + String(ticket && ticket.id ? ticket.id : '')
       + ' recToken=' + String(ticket ? toInt(ticket.recToken, 0) : 0)
       + ' sec=' + (ticket && isFinite(toNum(ticket.sec, NaN)) ? toNum(ticket.sec, 0).toFixed(2) : '')
+      + ' source=' + String(ticket && ticket.source ? ticket.source : 'none')
       + ' srcSig=' + String(ticket && ticket.srcSig ? ticket.srcSig : '')
       + ' age=' + String(resumeTicketAgeMs())
       + ' applied=' + String(ticket ? toInt(ticket.applied, 0) : 0)
@@ -1796,10 +1848,18 @@
     var ct = toNum(STATE.tick && STATE.tick.ct, NaN);
     var dur = toNum(v ? v.duration : (STATE.tick && STATE.tick.dur), NaN);
     var tr = toNum(STATE.truth && STATE.truth.lastGoodSec, NaN);
+    var stableSec = toNum(STATE.pos && STATE.pos.lastStableSec, NaN);
+    var stableSig = '';
+    try { stableSig = String(STATE.pos && STATE.pos.lastStableSrcSig ? STATE.pos.lastStableSrcSig : ''); } catch (_) { stableSig = ''; }
+    var stableAge = ageMs(STATE.pos && STATE.pos.lastStableTs);
     var sec = NaN;
     var source = '';
+    var stableSigOk = (!sig || !stableSig || sig === stableSig);
 
-    if (isFinite(tr) && tr >= 2) {
+    if (isFinite(stableSec) && stableSec >= 2 && stableSigOk && stableAge < 12 * 60 * 60 * 1000) {
+      sec = stableSec;
+      source = 'stable';
+    } else if (isFinite(tr) && tr >= 2) {
       sec = tr;
       source = 'truth';
     } else if (isFinite(ct) && ct > 2 && isFinite(dur) && dur > 10) {
@@ -1841,7 +1901,7 @@
       kind: kind,
       src: ticket.source
     });
-    if (ticket.sec === null) logLine('WRN', 'TICKET sec_null fallback', { id: ticket.id, ct: isFinite(ct) ? ct.toFixed(2) : '', dur: isFinite(dur) ? dur.toFixed(2) : '', truth: isFinite(tr) ? tr.toFixed(2) : '' });
+    if (ticket.sec === null) logLine('WRN', 'TICKET sec_null fallback', { id: ticket.id, ct: isFinite(ct) ? ct.toFixed(2) : '', dur: isFinite(dur) ? dur.toFixed(2) : '', truth: isFinite(tr) ? tr.toFixed(2) : '', stable: isFinite(stableSec) ? stableSec.toFixed(2) : '', stableAge: toInt(stableAge, 0) });
 
     return ticket;
   }
@@ -2293,10 +2353,9 @@
     var ticket = STATE.resume.ticket || makeResumeTicket('reopen', 'recovery');
     var sec = NaN;
     if (ticket && isFinite(toNum(ticket.sec, NaN)) && toNum(ticket.sec, NaN) >= 0) sec = Math.max(0, toNum(ticket.sec, 0));
-    if (!isFinite(sec)) sec = toNum(resumeSecFromTicketOrTruth(), NaN);
     if (!isFinite(sec)) {
-      STATE.rec.lastErr = 'ticket_sec_null';
-      logLine('WRN', 'REOPEN requested', { sec: 'null', why: 'ticket_sec_null' });
+      STATE.rec.lastErr = 'no_ticket_sec';
+      logLine('WRN', 'REOPEN skipped', { sec: 'null', why: 'no_ticket_sec' });
       return false;
     }
 
@@ -2306,7 +2365,12 @@
     STATE.resume.reopenAppliedTs = 0;
     STATE.resume.reopenDeltaSec = NaN;
     STATE.resume.reopenSeekTs = 0;
-    logLine('INF', 'REOPEN requested', { sec: sec.toFixed(2), age: resumeTicketAgeMs() });
+    logLine('INF', 'REOPEN requested', {
+      sec: sec.toFixed(2),
+      age: resumeTicketAgeMs(),
+      source: String(ticket && ticket.source ? ticket.source : ''),
+      ticketId: String(ticket && ticket.id ? ticket.id : '')
+    });
 
     beginCritical('overlay_recover', 2500);
     var r = null;
@@ -3297,6 +3361,7 @@
         ticketId: String(ticket && ticket.id ? ticket.id : ''),
         ticketRecToken: toInt(ticket && ticket.recToken, 0),
         ticketSec: toNum(ticket && ticket.sec, NaN),
+        ticketSource: String(ticket && ticket.source ? ticket.source : ''),
         ticketSrcSig: String(ticket && ticket.srcSig ? ticket.srcSig : ''),
         ticketAge: resumeTicketAgeMs(),
         ticketApplied: toInt(ticket && ticket.applied, 0),
@@ -3343,6 +3408,13 @@
         sec: toNum(STATE.truth.lastGoodSec, 0),
         ts: toInt(STATE.truth.lastGoodTs, 0),
         srcSig: String(STATE.truth.srcSig || '')
+      },
+      pos: {
+        stableSec: toNum(STATE.pos.lastStableSec, NaN),
+        stableTs: toInt(STATE.pos.lastStableTs, 0),
+        stableAge: ageMs(STATE.pos.lastStableTs),
+        stableSrcSig: String(STATE.pos.lastStableSrcSig || ''),
+        stableReason: String(STATE.pos.lastStableReason || '')
       },
       tick: {
         ts: toInt(STATE.tick.ts, 0),

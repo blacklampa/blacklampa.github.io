@@ -54,7 +54,10 @@
     reopenBackoffSec: 0.5,
     autoReopenCooldownMs: 25000,
     autoBufferDelayMs: 1800,
-    popupIdleMs: 3000
+    popupIdleMs: 3000,
+    seekDeltaSec: 3.0,
+    forceSeekWindowMs: 15000,
+    seekVerifyDelayMs: 1000
   };
 
   var CFG = {
@@ -175,6 +178,9 @@
       lastRecoveryMode: '',
       lastOkTs: 0,
       pendingSeekSec: NaN,
+      pendingSeekSetTs: 0,
+      pendingSeekRetry: 0,
+      pendingSeekVerifyTimer: null,
       pendingParams: null,
       autoTimer: null,
       reopenCooldownUntilTs: 0,
@@ -1352,7 +1358,7 @@
 
     var resume = pickResumeTime(video);
     STATE.rec.resumeTimeSec = resume;
-    STATE.rec.pendingSeekSec = resume;
+    setPendingSeek(resume);
 
     lockGuard('manual_soft', { capture: true });
 
@@ -1424,7 +1430,14 @@
     try { dur = video ? toNum(video.duration, NaN) : NaN; } catch (_) { dur = NaN; }
 
     var resume = NaN;
-    try { resume = (typeof resumeOverride === 'number' && isFinite(resumeOverride)) ? toNum(resumeOverride, NaN) : NaN; } catch (_) { resume = NaN; }
+    var hasOverride = false;
+    try {
+      hasOverride = (typeof resumeOverride === 'number' && isFinite(resumeOverride) && toNum(resumeOverride, NaN) >= 2);
+      resume = hasOverride ? toNum(resumeOverride, NaN) : NaN;
+    } catch (_) {
+      hasOverride = false;
+      resume = NaN;
+    }
     if (!isFinite(resume) || resume < 0) {
       var backoff = toNum(DET.reopenBackoffSec, 0.5);
       if (!isFinite(backoff) || backoff < 0) backoff = 1.5;
@@ -1444,7 +1457,7 @@
 
     STATE.rec.resumeTimeSec = resume;
     STATE.rec.resumePinnedSec = resume;
-    STATE.rec.pendingSeekSec = resume;
+    setPendingSeek(resume);
 
     // Transition window: avoid truth/LS corruption by t=0/dur=0 while reopening.
     startRecoveryTransition('reopen', resume);
@@ -1464,6 +1477,13 @@
       srcSig: String(STATE.srcSig || ''),
       auto: isAuto ? 1 : 0
     }, 'reopenFromPos:start', 1200);
+    logEvt('INF', 'reopen_override', {
+      override: hasOverride ? toNum(resumeOverride, 0).toFixed(2) : '',
+      pinned: toNum(resume, 0).toFixed(2),
+      truth: toNum(truthT, 0).toFixed(2),
+      live: isFinite(liveT) ? liveT.toFixed(2) : '',
+      auto: isAuto ? 1 : 0
+    }, 'reopen:override', 1200);
 
     var stage = 'REOPEN ' + (isAuto ? 'auto' : 'manual');
     var info = 'truth=' + fmtTime(truthT) + ' | live=' + fmtTime(isFinite(liveT) ? liveT : 0) + ' | resume=' + fmtTime(resume) + (isFinite(dur) && dur > 0 ? (' | dur=' + fmtTime(dur)) : '');
@@ -1517,10 +1537,13 @@
     safe(function () { if (STATE.rec.evalTimer) clearTimeout(STATE.rec.evalTimer); });
     safe(function () { if (STATE.rec.okTimer) clearTimeout(STATE.rec.okTimer); });
     safe(function () { if (STATE.rec.autoTimer) clearTimeout(STATE.rec.autoTimer); });
+    safe(function () { if (STATE.rec.pendingSeekVerifyTimer) clearTimeout(STATE.rec.pendingSeekVerifyTimer); });
     STATE.rec.nextTimer = null;
     STATE.rec.evalTimer = null;
     STATE.rec.okTimer = null;
     STATE.rec.autoTimer = null;
+    STATE.rec.pendingSeekVerifyTimer = null;
+    STATE.rec.pendingSeekRetry = 0;
   }
 
   function detachVideoListeners() {
@@ -2203,7 +2226,7 @@
     if (paused) return;
     if (STATE.session.buffering) return;
 
-    if (!isFinite(STATE.rec.pendingSeekSec)) STATE.rec.pendingSeekSec = STATE.rec.resumeTimeSec;
+    if (!isFinite(STATE.rec.pendingSeekSec)) setPendingSeek(STATE.rec.resumeTimeSec);
     var resume = toNum(STATE.rec.pendingSeekSec, toNum(STATE.rec.resumeTimeSec, 0));
     if (cur < resume - 1.5) return;
 
@@ -2246,6 +2269,7 @@
 
   function applyPendingParamsAndSeek(video, why) {
     if (!isRecovering()) return;
+    if (!video) return;
 
     var keepPaused = false;
     try { keepPaused = !!(STATE.rec && STATE.rec.keepPaused); } catch (_) { keepPaused = false; }
@@ -2261,29 +2285,95 @@
     var t = toNum(STATE.rec.pendingSeekSec, NaN);
     if (!isFinite(t) || t < 0) return;
 
+    var ts = now();
+    if (!STATE.rec.pendingSeekSetTs) STATE.rec.pendingSeekSetTs = ts;
+
+    var cur = toNum(video.currentTime, NaN);
+    var dur = toNum(video.duration, NaN);
+    var target = Math.max(0, t);
+    if (isFinite(dur) && dur > 0) target = Math.min(target, Math.max(0, dur - DET.epsilonEndSec));
+
+    var delta = isFinite(cur) ? Math.abs(cur - target) : 999999;
+    var windowStart = Math.max(toInt(STATE.rec.reopenTransitionStartTs, 0), toInt(STATE.rec.pendingSeekSetTs, 0));
+    var inForceWindow = !!windowStart && (ts - windowStart) >= 0 && (ts - windowStart) <= toInt(DET.forceSeekWindowMs, 15000);
+    var need = false;
+
+    if (!isFinite(cur) || cur < 0) need = true;
+    else if (delta > toNum(DET.seekDeltaSec, 3.0) && inForceWindow) need = true;
+    else if (!inForceWindow && cur <= 1.0) need = true;
+    else if (!inForceWindow && isFinite(dur) && dur > 0 && cur >= dur - DET.epsilonEndSec) need = true;
+
     try {
-      // Only force seek if we're at the beginning or at the tail
-      var cur = toNum(video.currentTime, NaN);
-      var dur = toNum(video.duration, NaN);
-      var need = false;
-      if (!isFinite(cur) || cur <= 1.0) need = true;
-      else if (isFinite(dur) && dur > 0 && cur >= dur - DET.epsilonEndSec) need = true;
-      if (need) {
-        try { video.currentTime = Math.max(0, t); } catch (_) { }
-        if (!keepPaused) safePlay(video, 'force_seek:' + String(why || ''));
-        else {
-          try { if (typeof video.pause === 'function') video.pause(); } catch (_) { }
+      if (!need) {
+        if (delta <= toNum(DET.seekDeltaSec, 3.0)) {
+          STATE.rec.pendingSeekSec = NaN;
+          STATE.rec.pendingSeekSetTs = 0;
+          STATE.rec.pendingSeekRetry = 0;
+          safe(function () { if (STATE.rec.pendingSeekVerifyTimer) clearTimeout(STATE.rec.pendingSeekVerifyTimer); });
+          STATE.rec.pendingSeekVerifyTimer = null;
+          logEvt('INF', 'seek_verified', { why: String(why || ''), target: target.toFixed(2), cur: isFinite(cur) ? cur.toFixed(2) : '', delta: delta.toFixed(2) }, 'seek:verified:' + String(why || ''), 1200);
+          if (keepPaused) recoverySuccess('keep_paused', { why: String(why || ''), seek: target.toFixed(2) });
         }
-        var hardIntent = String(STATE.rec.hardIntent || '');
-        var hardAction = String(STATE.rec.lastHardAction || '');
-        if (hardIntent === 'reopen' || hardAction === 'reopen_player') {
-          logEvt('INF', 'reopen_ready', { why: String(why || ''), seek: t.toFixed(2) }, 'reopen:ready', 1200);
-        } else if (hardIntent === 'inplayer' || hardIntent === 'auto' || hardAction === 'inplayer_reconnect') {
-          logEvt('INF', 'inplayer_ready', { why: String(why || ''), seek: t.toFixed(2) }, 'inplayer:ready', 1200);
-        }
-        logEvt('INF', 'force_seek', { why: String(why || ''), to: t.toFixed(2) }, 'rec:seek:' + String(why || ''), 900);
-        if (keepPaused) recoverySuccess('keep_paused', { why: String(why || ''), seek: t.toFixed(2) });
+        return;
       }
+
+      try { video.currentTime = target; } catch (_) { }
+      if (!keepPaused) safePlay(video, 'force_seek:' + String(why || ''));
+      else {
+        try { if (typeof video.pause === 'function') video.pause(); } catch (_) { }
+      }
+
+      var hardIntent = String(STATE.rec.hardIntent || '');
+      var hardAction = String(STATE.rec.lastHardAction || '');
+      if (hardIntent === 'reopen' || hardAction === 'reopen_player') {
+        logEvt('INF', 'reopen_ready', { why: String(why || ''), seek: target.toFixed(2), delta: delta.toFixed(2), forceWindow: inForceWindow ? 1 : 0 }, 'reopen:ready', 1200);
+      } else if (hardIntent === 'inplayer' || hardIntent === 'auto' || hardAction === 'inplayer_reconnect') {
+        logEvt('INF', 'inplayer_ready', { why: String(why || ''), seek: target.toFixed(2), delta: delta.toFixed(2), forceWindow: inForceWindow ? 1 : 0 }, 'inplayer:ready', 1200);
+      }
+      logEvt('INF', 'force_seek', {
+        why: String(why || ''),
+        to: target.toFixed(2),
+        cur: isFinite(cur) ? cur.toFixed(2) : '',
+        delta: delta.toFixed(2),
+        forceWindow: inForceWindow ? 1 : 0
+      }, 'rec:seek:' + String(why || ''), 900);
+
+      safe(function () { if (STATE.rec.pendingSeekVerifyTimer) clearTimeout(STATE.rec.pendingSeekVerifyTimer); });
+      STATE.rec.pendingSeekVerifyTimer = setTimeout(function () {
+        STATE.rec.pendingSeekVerifyTimer = null;
+        try {
+          if (!CFG.enabled) return;
+          if (!isRecovering()) return;
+          var vv = null;
+          try { vv = STATE.video || (window.Lampa && Lampa.PlayerVideo && Lampa.PlayerVideo.video ? Lampa.PlayerVideo.video() : null); } catch (_) { vv = STATE.video; }
+          if (!vv) return;
+          var cur2 = toNum(vv.currentTime, NaN);
+          var d2 = isFinite(cur2) ? Math.abs(cur2 - target) : 999999;
+          if (d2 <= toNum(DET.seekDeltaSec, 3.0)) {
+            STATE.rec.pendingSeekSec = NaN;
+            STATE.rec.pendingSeekSetTs = 0;
+            STATE.rec.pendingSeekRetry = 0;
+            logEvt('INF', 'seek_verified', { why: String(why || ''), target: target.toFixed(2), cur: isFinite(cur2) ? cur2.toFixed(2) : '', delta: d2.toFixed(2) }, 'seek:verified', 1200);
+            if (keepPaused) recoverySuccess('keep_paused', { why: String(why || ''), seek: target.toFixed(2) });
+            return;
+          }
+
+          if (toInt(STATE.rec.pendingSeekRetry, 0) < 1) {
+            STATE.rec.pendingSeekRetry = toInt(STATE.rec.pendingSeekRetry, 0) + 1;
+            logEvt('WRN', 'seek_retry', { why: String(why || ''), target: target.toFixed(2), cur: isFinite(cur2) ? cur2.toFixed(2) : '', delta: d2.toFixed(2), retry: STATE.rec.pendingSeekRetry }, 'seek:retry', 1200);
+            try { vv.currentTime = target; } catch (_) { }
+            if (!keepPaused) safePlay(vv, 'force_seek_retry:' + String(why || ''));
+            else {
+              try { if (typeof vv.pause === 'function') vv.pause(); } catch (_) { }
+            }
+            applyPendingParamsAndSeek(vv, String(why || '') + ':verify_retry');
+            return;
+          }
+
+          logEvt('ERR', 'seek_not_applied', { why: String(why || ''), target: target.toFixed(2), cur: isFinite(cur2) ? cur2.toFixed(2) : '', delta: d2.toFixed(2) }, 'seek:not_applied', 2000);
+          recoveryFail('seek_not_applied');
+        } catch (_) { }
+      }, Math.max(600, toInt(DET.seekVerifyDelayMs, 1000)));
     } catch (_) { }
   }
 
@@ -2402,6 +2492,9 @@
     STATE.rec.lastHardAction = '';
     STATE.rec.transitionKind = '';
     STATE.rec.pendingSeekSec = NaN;
+    STATE.rec.pendingSeekSetTs = 0;
+    STATE.rec.pendingSeekRetry = 0;
+    STATE.rec.pendingSeekVerifyTimer = null;
     STATE.rec.pendingParams = null;
     STATE.rec.activeReopenTransition = false;
     STATE.rec.reopenTransitionStartTs = 0;
@@ -2419,6 +2512,10 @@
     STATE.rec.keepPaused = false;
     STATE.rec.lastHardAction = '';
     STATE.rec.transitionKind = '';
+    STATE.rec.pendingSeekSec = NaN;
+    STATE.rec.pendingSeekSetTs = 0;
+    STATE.rec.pendingSeekRetry = 0;
+    STATE.rec.pendingSeekVerifyTimer = null;
     STATE.rec.activeReopenTransition = false;
     STATE.rec.reopenTransitionStartTs = 0;
     STATE.rec.reopenTransitionResumeSec = NaN;
@@ -2454,6 +2551,9 @@
     STATE.rec.mode = MODE_NORMAL;
     STATE.rec.reason = '';
     STATE.rec.pendingSeekSec = NaN;
+    STATE.rec.pendingSeekSetTs = 0;
+    STATE.rec.pendingSeekRetry = 0;
+    STATE.rec.pendingSeekVerifyTimer = null;
     STATE.rec.pendingParams = null;
     STATE.rec.resumePinnedSec = NaN;
     STATE.rec.keepPaused = false;
@@ -2575,7 +2675,7 @@
 
     var resume = pickResumeTime(video);
     STATE.rec.resumeTimeSec = resume;
-    STATE.rec.pendingSeekSec = resume;
+    setPendingSeek(resume);
 
     if (CFG.storePos) writeTruthLS(resume, safe(function () { return video ? video.duration : 0; }, 0), String(STATE.srcSig || ''), 'recovery_enter');
 
@@ -2649,6 +2749,17 @@
     return !!keepPaused;
   }
 
+  function setPendingSeek(sec) {
+    sec = toNum(sec, NaN);
+    if (!isFinite(sec) || sec < 0) return false;
+    STATE.rec.pendingSeekSec = sec;
+    STATE.rec.pendingSeekSetTs = now();
+    STATE.rec.pendingSeekRetry = 0;
+    safe(function () { if (STATE.rec.pendingSeekVerifyTimer) clearTimeout(STATE.rec.pendingSeekVerifyTimer); });
+    STATE.rec.pendingSeekVerifyTimer = null;
+    return true;
+  }
+
   function actionSeekPlay(video, t) {
     try { if (!video) return; } catch (_) { return; }
     try { video.currentTime = Math.max(0, t); } catch (_) { }
@@ -2707,7 +2818,7 @@
       var params = null;
       try { if (typeof Lampa.PlayerVideo.saveParams === 'function') params = Lampa.PlayerVideo.saveParams(); } catch (_) { params = null; }
       if (params) STATE.rec.pendingParams = params;
-      STATE.rec.pendingSeekSec = t;
+      setPendingSeek(t);
       Lampa.PlayerVideo.url(String(url || ''), true);
       return true;
     } catch (_) {
@@ -2721,7 +2832,7 @@
       var params = null;
       try { if (typeof Lampa.PlayerVideo.saveParams === 'function') params = Lampa.PlayerVideo.saveParams(); } catch (_) { params = null; }
       if (params) STATE.rec.pendingParams = params;
-      STATE.rec.pendingSeekSec = t;
+      setPendingSeek(t);
       startRecoveryTransition('hard_reset_video', t);
       try { if (typeof Lampa.PlayerVideo.destroy === 'function') Lampa.PlayerVideo.destroy(true); } catch (_) { }
       try { if (typeof Lampa.PlayerVideo.url === 'function') Lampa.PlayerVideo.url(String(url || ''), true); } catch (_) { return false; }
@@ -2760,7 +2871,7 @@
       var params = null;
       try { if (typeof pv.saveParams === 'function') params = pv.saveParams(); } catch (_) { params = null; }
       if (params) STATE.rec.pendingParams = params;
-      STATE.rec.pendingSeekSec = t;
+      setPendingSeek(t);
       captureKeepPaused(video);
 
       function prep(kind) {
@@ -2827,6 +2938,7 @@
   function actionHardReopenPlayer(t) {
     try {
       if (!window.Lampa || !Lampa.Player || typeof Lampa.Player.play !== 'function') return false;
+      var requestedResume = toNum(t, NaN);
 
       // forced snapshot right before close (resumePinned)
       var video = null;
@@ -2844,6 +2956,7 @@
 
       var resumePinned = Math.max(0, toNum(t, 0));
       try {
+        if (isFinite(requestedResume) && requestedResume >= 2) resumePinned = Math.max(resumePinned, requestedResume);
         resumePinned = Math.max(resumePinned, Math.max(0, truthT));
 
         if (isFinite(liveT) && liveT >= 0) {
@@ -2863,11 +2976,17 @@
 
       STATE.rec.resumeTimeSec = resumePinned;
       STATE.rec.resumePinnedSec = resumePinned;
-      STATE.rec.pendingSeekSec = resumePinned;
+      setPendingSeek(resumePinned);
       t = resumePinned;
 
       try { if (CFG.storePos) writeTruthLS(resumePinned, isFinite(dur) && dur > 0 ? dur : 0, String(STATE.srcSig || ''), 'snapshotNow'); } catch (_) { }
       logEvt('INF', 'snapshotNow', { truth: toNum(truthT, 0).toFixed(2), live: isFinite(liveT) ? liveT.toFixed(2) : '', resumePinned: resumePinned.toFixed(2) }, 'snap:now', 1200);
+      logEvt('INF', 'reopen_override', {
+        override: isFinite(requestedResume) ? requestedResume.toFixed(2) : '',
+        pinned: resumePinned.toFixed(2),
+        truth: toNum(truthT, 0).toFixed(2),
+        live: isFinite(liveT) ? liveT.toFixed(2) : ''
+      }, 'reopen:override:snapshot', 1200);
 
       startRecoveryTransition('reopen', resumePinned);
 
@@ -2891,7 +3010,7 @@
       var params = null;
       try { if (window.Lampa && Lampa.PlayerVideo && typeof Lampa.PlayerVideo.saveParams === 'function') params = Lampa.PlayerVideo.saveParams(); } catch (_) { params = null; }
       if (params) STATE.rec.pendingParams = params;
-      STATE.rec.pendingSeekSec = t;
+      setPendingSeek(t);
 
       try { if (typeof Lampa.Player.close === 'function') Lampa.Player.close(); } catch (_) { }
 
@@ -2922,7 +3041,7 @@
     var delayMs = clampInt(CFG.attemptDelaySec, 1, 5) * 1000;
     var resume = pickResumeTime(video);
     STATE.rec.resumeTimeSec = resume;
-    STATE.rec.pendingSeekSec = resume;
+    setPendingSeek(resume);
 
     var action = '';
     var ok = false;
@@ -3593,6 +3712,8 @@
         lastOkTs: toInt(STATE.rec.lastOkTs, 0),
         resumeTimeSec: toNum(STATE.rec.resumeTimeSec, 0),
         pendingSeekSec: toNum(STATE.rec.pendingSeekSec, NaN),
+        pendingSeekSetTs: toInt(STATE.rec.pendingSeekSetTs, 0),
+        pendingSeekRetry: toInt(STATE.rec.pendingSeekRetry, 0),
         keepPaused: !!STATE.rec.keepPaused
       },
       guard: {
