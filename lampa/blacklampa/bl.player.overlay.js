@@ -51,6 +51,7 @@
     IDLE: 'IDLE',
     PLAYING: 'PLAYING',
     PAUSED_BY_USER: 'PAUSED_BY_USER',
+    PAUSED_MEDIA: 'PAUSED_MEDIA',
     BUFFERING: 'BUFFERING',
     STALLED: 'STALLED',
     HUNG: 'HUNG',
@@ -118,6 +119,8 @@
     userPausedIntent: false,
     user: {
       pauseIntent: 0,
+      pauseHoldUntilTs: 0,
+      pauseHoldWhy: '',
       lastCmdTs: 0,
       lastCmd: '',
       lastCmdRaw: '',
@@ -520,7 +523,7 @@
     if (phase === ST.PLAYING) return '#67c27a';
     if (phase === ST.BUFFERING || phase === ST.RECOVERING_SOFT || phase === ST.RECOVERING_INPLAYER || phase === ST.RECOVERING_REOPEN) return '#d9b24c';
     if (phase === ST.HUNG || phase === ST.FAILED) return '#e06b6b';
-    if (phase === ST.PAUSED_BY_USER) return '#8eb4ff';
+    if (phase === ST.PAUSED_BY_USER || phase === ST.PAUSED_MEDIA) return '#8eb4ff';
     return '#b7bec7';
   }
 
@@ -576,10 +579,18 @@
   }
 
   function detectorsAllowedInfo() {
+    var holdLeft = Math.max(0, toInt(STATE.user.pauseHoldUntilTs, 0) - nowMs());
+    if (holdLeft > 0) {
+      STATE.life.detectorsAllowed = 0;
+      STATE.life.detectorsReason = 'pause_hold';
+      return { ok: false, reason: 'pause_hold' };
+    }
+
     var reason = 'ok';
     if (!CFG.enabled) reason = 'disabled';
     else if (!toInt(STATE.life.active, 0)) reason = 'inactive';
     else if (toInt(STATE.life.exitIntent, 0)) reason = 'exit_intent';
+    else if (STATE.tick && STATE.tick.hasVideo && STATE.tick.paused) reason = 'media_paused';
     else if (isUserPauseIntent()) reason = 'paused_by_user';
     else if (toInt(STATE.life.suspendDetectors, 0)) reason = 'suspended';
     else if (String(STATE.phase || '') === ST.IDLE) reason = 'idle';
@@ -595,6 +606,12 @@
   }
 
   function shouldAutoPlay(reason) {
+    if (STATE.tick && STATE.tick.hasVideo && STATE.tick.paused) {
+      STATE.life.lastAutoPlaySuppressed = String(reason || 'media_paused');
+      STATE.life.lastAutoPlaySuppressedTs = nowMs();
+      logLine('DBG', 'SUPPRESS play', { reason: 'media_paused', ctx: String(reason || '') });
+      return false;
+    }
     var st = detectorsAllowedInfo();
     if (!st.ok) {
       STATE.life.lastAutoPlaySuppressed = String(reason || st.reason || 'blocked');
@@ -746,12 +763,12 @@
   }
 
   function isValidTruthFrame(video, ct, dur) {
-    if (!isFinite(ct) || ct < 0) return false;
-    if (!isFinite(dur) || dur <= 5) return false;
-    if (ct > dur - 0.25) return false;
+    if (!isFinite(ct) || ct < 2) return false;
+    if (!isFinite(dur) || dur < 10) return false;
+    if (ct >= dur - 0.75) return false;
     if (STATE.rec.active || STATE.truth.frozen) return false;
     try {
-      if (video && video.paused && !isUserPauseIntent()) return false;
+      if (video && video.paused) return false;
     } catch (_) { }
     return true;
   }
@@ -759,8 +776,20 @@
   function truthCommit(reason) {
     if (!CFG.storeTruth) return;
     if (STATE.truth.frozen || STATE.rec.active) return;
+    if (STATE.media && STATE.media.paused) return;
+
+    var tk = STATE.tick || {};
+    if (tk && tk.hasVideo && tk.paused) return;
+    if (tk && tk.hasVideo) {
+      var tct = toNum(tk.ct, NaN);
+      var tdur = toNum(tk.dur, NaN);
+      if (!isFinite(tct) || tct < 2) return;
+      if (!isFinite(tdur) || tdur < 10) return;
+      if (tct >= tdur - 0.75) return;
+    }
+
     var t = STATE.truth;
-    if (!isFinite(toNum(t.lastGoodSec, NaN))) return;
+    if (!isFinite(toNum(t.lastGoodSec, NaN)) || toNum(t.lastGoodSec, 0) < 2) return;
     if (!t.lastGoodTs) return;
 
     try {
@@ -852,6 +881,8 @@
       STATE.pause.lastResumeTs = now();
       STATE.media.paused = false;
       STATE.media.lastPlayTs = nowMs();
+      STATE.user.pauseHoldUntilTs = 0;
+      STATE.user.pauseHoldWhy = '';
       if (!toInt(STATE.life.exitIntent, 0)) STATE.life.suspendDetectors = 0;
       if (!STATE.rec.active && isUserPauseIntent()) setUserPauseIntent(false, 'media_play');
     });
@@ -860,6 +891,8 @@
       STATE.pause.lastResumeTs = now();
       STATE.media.paused = false;
       STATE.media.lastPlayTs = nowMs();
+      STATE.user.pauseHoldUntilTs = 0;
+      STATE.user.pauseHoldWhy = '';
       if (!toInt(STATE.life.exitIntent, 0)) STATE.life.suspendDetectors = 0;
       if (!STATE.rec.active && isUserPauseIntent()) setUserPauseIntent(false, 'media_playing');
     });
@@ -869,7 +902,9 @@
       STATE.media.paused = true;
       STATE.media.lastPauseTs = nowMs();
       if (STATE.rec.active) return;
-      try { truthCommit('pause'); } catch (_) { }
+      STATE.user.pauseHoldUntilTs = nowMs() + 15000;
+      STATE.user.pauseHoldWhy = 'video_onpause';
+      logLine('DBG', 'pause_hold', { ms: 15000, why: 'video_onpause' });
     });
     on('canplay', function () { bumpEvent('canplay'); });
     on('loadeddata', function () { bumpEvent('loadeddata'); });
@@ -1284,6 +1319,8 @@
       + ' reason=' + String(det.reason || '')
       + ' pauseIntent(user)=' + (isUserPauseIntent() ? '1' : '0')
       + ' mediaPaused=' + (t.paused ? '1' : '0'));
+    lines.push('pauseHoldLeftMs=' + String(Math.max(0, toInt(STATE.user.pauseHoldUntilTs, 0) - nowMs()))
+      + ' pauseHoldWhy=' + String(STATE.user.pauseHoldWhy || ''));
     lines.push('lastCmdRaw=' + String(STATE.user.lastCmdRaw || '')
       + ' lastCmdNorm=' + String(STATE.user.lastCmdNorm || '')
       + ' lastCmd=' + String(STATE.user.lastCmd || '')
@@ -1821,6 +1858,10 @@
       STATE.rec.lastErr = 'inactive';
       return false;
     }
+    if (STATE.tick && STATE.tick.hasVideo && STATE.tick.paused) {
+      STATE.rec.lastErr = 'media_paused';
+      return false;
+    }
 
     var v = STATE.video || getVideo();
     if (!v) return false;
@@ -1858,6 +1899,10 @@
   function actionInplayerRebuild(mode) {
     if (!toInt(STATE.life.active, 0) || toInt(STATE.life.exitIntent, 0)) {
       STATE.rec.lastErr = 'inactive';
+      return false;
+    }
+    if (STATE.tick && STATE.tick.hasVideo && STATE.tick.paused) {
+      STATE.rec.lastErr = 'media_paused';
       return false;
     }
 
@@ -2144,6 +2189,16 @@
       logLine('DBG', 'REC skip', { reason: reason, why: 'inactive' });
       return false;
     }
+    if (STATE.tick && STATE.tick.hasVideo && STATE.tick.paused) {
+      STATE.rec.lastErr = 'media_paused';
+      logLine('WRN', 'REC skip: media_paused', { reason: String(reason || '') });
+      return false;
+    }
+    if (toInt(STATE.user.pauseHoldUntilTs, 0) > nowMs()) {
+      STATE.rec.lastErr = 'pause_hold';
+      logLine('DBG', 'REC skip', { reason: reason, why: 'pause_hold' });
+      return false;
+    }
     if (isUserPauseIntent() || toInt(STATE.life.suspendDetectors, 0)) {
       STATE.rec.lastErr = 'user_paused';
       logLine('DBG', 'REC skip', { reason: reason, why: 'user_paused' });
@@ -2211,12 +2266,16 @@
     if (norm === 'pause') {
       setUserPauseIntent(true, 'cmd_pause');
       STATE.pause.lastPauseTs = now();
+      STATE.user.pauseHoldUntilTs = nowMs() + 15000;
+      STATE.user.pauseHoldWhy = 'cmd_pause';
       STATE.life.suspendDetectors = 1;
       setPhase(ST.PAUSED_BY_USER, 'cmd_pause');
     }
     else if (norm === 'play') {
       setUserPauseIntent(false, 'cmd_play');
       STATE.pause.lastResumeTs = now();
+      STATE.user.pauseHoldUntilTs = 0;
+      STATE.user.pauseHoldWhy = '';
       if (!toInt(STATE.life.exitIntent, 0)) {
         STATE.life.suspendDetectors = 0;
         markLifeOpen('cmd_play');
@@ -2565,7 +2624,7 @@
       return;
     }
     if (t.paused) {
-      setPhase(ST.BUFFERING, 'media_paused');
+      setPhase(ST.PAUSED_MEDIA, 'media_paused');
       return;
     }
 
@@ -2892,6 +2951,9 @@
         lastCmdRaw: String(STATE.user.lastCmdRaw || ''),
         lastCmdNorm: String(STATE.user.lastCmdNorm || ''),
         lastCmdTs: toInt(STATE.user.lastCmdTs, 0),
+        pauseHoldUntilTs: toInt(STATE.user.pauseHoldUntilTs, 0),
+        pauseHoldWhy: String(STATE.user.pauseHoldWhy || ''),
+        mediaPaused: !!(STATE.tick && STATE.tick.paused),
         lastAutoPlaySuppressed: String(STATE.life.lastAutoPlaySuppressed || ''),
         lastAutoPlaySuppressedTs: toInt(STATE.life.lastAutoPlaySuppressedTs, 0)
       },
