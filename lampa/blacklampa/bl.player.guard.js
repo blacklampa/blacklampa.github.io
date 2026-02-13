@@ -55,9 +55,10 @@
     autoReopenCooldownMs: 25000,
     autoBufferDelayMs: 1800,
     popupIdleMs: 3000,
-    seekDeltaSec: 3.0,
+    forceSeekDeltaSec: 3.0,
     forceSeekWindowMs: 15000,
-    seekVerifyDelayMs: 1000
+    forceSeekVerifyDelayMs: 900,
+    forceSeekMaxRetries: 2
   };
 
   var CFG = {
@@ -162,6 +163,7 @@
       reason: '',
       resumeTimeSec: 0,
       resumePinnedSec: NaN,
+      resumeOverrideSec: NaN,
       keepPaused: false,
       hardIntent: '',
       lastHardAction: '',
@@ -1347,6 +1349,7 @@
     clearTimers();
     STATE.rec.mode = MODE_SOFT;
     STATE.rec.reason = String(why || 'manual_soft');
+    STATE.rec.resumeOverrideSec = NaN;
     STATE.rec.hardIntent = '';
     STATE.rec.stableSec = 0;
     STATE.rec.stableLastCur = NaN;
@@ -1434,9 +1437,11 @@
     try {
       hasOverride = (typeof resumeOverride === 'number' && isFinite(resumeOverride) && toNum(resumeOverride, NaN) >= 2);
       resume = hasOverride ? toNum(resumeOverride, NaN) : NaN;
+      STATE.rec.resumeOverrideSec = hasOverride ? resume : NaN;
     } catch (_) {
       hasOverride = false;
       resume = NaN;
+      STATE.rec.resumeOverrideSec = NaN;
     }
     if (!isFinite(resume) || resume < 0) {
       var backoff = toNum(DET.reopenBackoffSec, 0.5);
@@ -2295,17 +2300,20 @@
 
     var delta = isFinite(cur) ? Math.abs(cur - target) : 999999;
     var windowStart = Math.max(toInt(STATE.rec.reopenTransitionStartTs, 0), toInt(STATE.rec.pendingSeekSetTs, 0));
-    var inForceWindow = !!windowStart && (ts - windowStart) >= 0 && (ts - windowStart) <= toInt(DET.forceSeekWindowMs, 15000);
+    var windowAge = windowStart ? (ts - windowStart) : -1;
+    var inForceWindow = false;
+    if (windowStart) inForceWindow = windowAge >= 0 && windowAge <= toInt(DET.forceSeekWindowMs, 15000);
+    else if (isRecovering()) inForceWindow = true;
     var need = false;
 
     if (!isFinite(cur) || cur < 0) need = true;
-    else if (delta > toNum(DET.seekDeltaSec, 3.0) && inForceWindow) need = true;
+    else if (delta > toNum(DET.forceSeekDeltaSec, 3.0) && inForceWindow) need = true;
     else if (!inForceWindow && cur <= 1.0) need = true;
     else if (!inForceWindow && isFinite(dur) && dur > 0 && cur >= dur - DET.epsilonEndSec) need = true;
 
     try {
       if (!need) {
-        if (delta <= toNum(DET.seekDeltaSec, 3.0)) {
+        if (delta <= toNum(DET.forceSeekDeltaSec, 3.0)) {
           STATE.rec.pendingSeekSec = NaN;
           STATE.rec.pendingSeekSetTs = 0;
           STATE.rec.pendingSeekRetry = 0;
@@ -2335,6 +2343,7 @@
         to: target.toFixed(2),
         cur: isFinite(cur) ? cur.toFixed(2) : '',
         delta: delta.toFixed(2),
+        windowAge: toInt(windowAge, -1),
         forceWindow: inForceWindow ? 1 : 0
       }, 'rec:seek:' + String(why || ''), 900);
 
@@ -2349,7 +2358,7 @@
           if (!vv) return;
           var cur2 = toNum(vv.currentTime, NaN);
           var d2 = isFinite(cur2) ? Math.abs(cur2 - target) : 999999;
-          if (d2 <= toNum(DET.seekDeltaSec, 3.0)) {
+          if (d2 <= toNum(DET.forceSeekDeltaSec, 3.0)) {
             STATE.rec.pendingSeekSec = NaN;
             STATE.rec.pendingSeekSetTs = 0;
             STATE.rec.pendingSeekRetry = 0;
@@ -2358,7 +2367,7 @@
             return;
           }
 
-          if (toInt(STATE.rec.pendingSeekRetry, 0) < 1) {
+          if (toInt(STATE.rec.pendingSeekRetry, 0) < toInt(DET.forceSeekMaxRetries, 2)) {
             STATE.rec.pendingSeekRetry = toInt(STATE.rec.pendingSeekRetry, 0) + 1;
             logEvt('WRN', 'seek_retry', { why: String(why || ''), target: target.toFixed(2), cur: isFinite(cur2) ? cur2.toFixed(2) : '', delta: d2.toFixed(2), retry: STATE.rec.pendingSeekRetry }, 'seek:retry', 1200);
             try { vv.currentTime = target; } catch (_) { }
@@ -2370,10 +2379,12 @@
             return;
           }
 
-          logEvt('ERR', 'seek_not_applied', { why: String(why || ''), target: target.toFixed(2), cur: isFinite(cur2) ? cur2.toFixed(2) : '', delta: d2.toFixed(2) }, 'seek:not_applied', 2000);
-          recoveryFail('seek_not_applied');
+          logEvt('ERR', 'seek_not_applied', { why: String(why || ''), target: target.toFixed(2), cur: isFinite(cur2) ? cur2.toFixed(2) : '', delta: d2.toFixed(2), retries: toInt(STATE.rec.pendingSeekRetry, 0) }, 'seek:not_applied', 2000);
+          faultDetected('seek_not_applied', { why: String(why || ''), target: target.toFixed(2), cur: isFinite(cur2) ? cur2.toFixed(2) : '', delta: d2.toFixed(2) });
+          if (isRecovering()) scheduleNextAttempt(0);
+          else recoveryFail('seek_not_applied');
         } catch (_) { }
-      }, Math.max(600, toInt(DET.seekVerifyDelayMs, 1000)));
+      }, Math.max(600, toInt(DET.forceSeekVerifyDelayMs, 900)));
     } catch (_) { }
   }
 
@@ -2485,6 +2496,7 @@
     uiHide(String(why || 'recovery_stop'));
     STATE.rec.mode = MODE_NORMAL;
     STATE.rec.reason = '';
+    STATE.rec.resumeOverrideSec = NaN;
     STATE.rec.resumeTimeSec = 0;
     STATE.rec.resumePinnedSec = NaN;
     STATE.rec.keepPaused = false;
@@ -2508,6 +2520,7 @@
   function recoveryFail(why) {
     clearTimers();
     STATE.rec.mode = MODE_FAIL;
+    STATE.rec.resumeOverrideSec = NaN;
     STATE.rec.resumePinnedSec = NaN;
     STATE.rec.keepPaused = false;
     STATE.rec.lastHardAction = '';
@@ -2550,6 +2563,7 @@
     STATE.rec.lastOkTs = now();
     STATE.rec.mode = MODE_NORMAL;
     STATE.rec.reason = '';
+    STATE.rec.resumeOverrideSec = NaN;
     STATE.rec.pendingSeekSec = NaN;
     STATE.rec.pendingSeekSetTs = 0;
     STATE.rec.pendingSeekRetry = 0;
@@ -2666,6 +2680,7 @@
     STATE.rec.seq++;
     STATE.rec.mode = desiredMode;
     STATE.rec.reason = String(reason || '');
+    STATE.rec.resumeOverrideSec = NaN;
     STATE.rec.hardIntent = hardIntent || STATE.rec.hardIntent || '';
     STATE.rec.lastHardAction = '';
     STATE.rec.transitionKind = '';
@@ -2939,6 +2954,7 @@
     try {
       if (!window.Lampa || !Lampa.Player || typeof Lampa.Player.play !== 'function') return false;
       var requestedResume = toNum(t, NaN);
+      var overrideResume = toNum(STATE.rec.resumeOverrideSec, NaN);
 
       // forced snapshot right before close (resumePinned)
       var video = null;
@@ -2957,6 +2973,7 @@
       var resumePinned = Math.max(0, toNum(t, 0));
       try {
         if (isFinite(requestedResume) && requestedResume >= 2) resumePinned = Math.max(resumePinned, requestedResume);
+        if (isFinite(overrideResume) && overrideResume >= 2) resumePinned = Math.max(resumePinned, overrideResume);
         resumePinned = Math.max(resumePinned, Math.max(0, truthT));
 
         if (isFinite(liveT) && liveT >= 0) {
@@ -2982,7 +2999,7 @@
       try { if (CFG.storePos) writeTruthLS(resumePinned, isFinite(dur) && dur > 0 ? dur : 0, String(STATE.srcSig || ''), 'snapshotNow'); } catch (_) { }
       logEvt('INF', 'snapshotNow', { truth: toNum(truthT, 0).toFixed(2), live: isFinite(liveT) ? liveT.toFixed(2) : '', resumePinned: resumePinned.toFixed(2) }, 'snap:now', 1200);
       logEvt('INF', 'reopen_override', {
-        override: isFinite(requestedResume) ? requestedResume.toFixed(2) : '',
+        override: isFinite(overrideResume) ? overrideResume.toFixed(2) : (isFinite(requestedResume) ? requestedResume.toFixed(2) : ''),
         pinned: resumePinned.toFixed(2),
         truth: toNum(truthT, 0).toFixed(2),
         live: isFinite(liveT) ? liveT.toFixed(2) : ''
@@ -3038,14 +3055,28 @@
     try { video = STATE.video || (window.Lampa && Lampa.PlayerVideo && Lampa.PlayerVideo.video ? Lampa.PlayerVideo.video() : null); } catch (_) { video = STATE.video; }
     updateStreamContext(video, null);
 
+    var mode = STATE.rec.mode;
     var delayMs = clampInt(CFG.attemptDelaySec, 1, 5) * 1000;
-    var resume = pickResumeTime(video);
-    STATE.rec.resumeTimeSec = resume;
-    setPendingSeek(resume);
-
+    var resume = NaN;
     var action = '';
     var ok = false;
-    var mode = STATE.rec.mode;
+
+    if (mode === MODE_HARD) {
+      var overrideResume = toNum(STATE.rec.resumeOverrideSec, NaN);
+      var pendingResume = toNum(STATE.rec.pendingSeekSec, NaN);
+      var pinnedResume = toNum(STATE.rec.resumePinnedSec, NaN);
+      if (isFinite(overrideResume) && overrideResume >= 2) resume = overrideResume;
+      else if (isFinite(pendingResume) && pendingResume >= 2) resume = pendingResume;
+      else if (isFinite(pinnedResume) && pinnedResume >= 2) resume = pinnedResume;
+    }
+
+    if (!isFinite(resume) || resume < 0) resume = pickResumeTime(video);
+    STATE.rec.resumeTimeSec = resume;
+    var hardPendingValid = (mode === MODE_HARD && isFinite(toNum(STATE.rec.pendingSeekSec, NaN)) && toNum(STATE.rec.pendingSeekSec, NaN) >= 2);
+    var hardOverrideValid = (mode === MODE_HARD && isFinite(toNum(STATE.rec.resumeOverrideSec, NaN)) && toNum(STATE.rec.resumeOverrideSec, NaN) >= 2);
+    if (!(hardPendingValid && !hardOverrideValid)) {
+      setPendingSeek(resume);
+    }
 
     if (mode === MODE_SOFT) {
       // With hard strategy enabled: give one SOFT chance, then escalate to hard path.
@@ -3711,6 +3742,7 @@
         attemptStartedTs: toInt(STATE.rec.attemptStartedTs, 0),
         lastOkTs: toInt(STATE.rec.lastOkTs, 0),
         resumeTimeSec: toNum(STATE.rec.resumeTimeSec, 0),
+        resumeOverrideSec: toNum(STATE.rec.resumeOverrideSec, NaN),
         pendingSeekSec: toNum(STATE.rec.pendingSeekSec, NaN),
         pendingSeekSetTs: toInt(STATE.rec.pendingSeekSetTs, 0),
         pendingSeekRetry: toInt(STATE.rec.pendingSeekRetry, 0),
