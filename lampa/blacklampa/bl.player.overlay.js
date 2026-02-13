@@ -160,12 +160,40 @@
       }
     },
 
+    ev: {
+      lastTimeupdateTs: 0,
+      lastProgressTs: 0,
+      lastPlayingTs: 0,
+      lastWaitingTs: 0,
+      lastStalledTs: 0,
+      lastErrorTs: 0
+    },
+
+    ct: {
+      lastSec: null,
+      lastChangeTs: 0,
+      lastSampleTs: 0,
+      stuckMs: 0
+    },
+
     monitor: {
       lastCt: NaN,
       lastCtChangeTs: 0,
       lastAheadSec: NaN,
       lastAheadChangeTs: 0,
       lastProgressSignalTs: 0
+    },
+
+    hang: {
+      active: false,
+      reason: '',
+      ctStuckMs: 0,
+      timeupdateAge: 0,
+      progressAge: 0,
+      aheadAge: 0,
+      waitingAge: 0,
+      resumeAge: 0,
+      evalTs: 0
     },
 
     truth: {
@@ -192,7 +220,10 @@
       srcSig: ''
     },
 
-    logs: [],
+    log: {
+      rows: [],
+      cap: 120
+    },
 
     ui: {
       open: false,
@@ -207,7 +238,8 @@
   };
 
   function safe(fn, fallback) { try { return fn(); } catch (_) { return fallback; } }
-  function now() { try { return Date.now(); } catch (_) { return +new Date(); } }
+  function nowMs() { try { return Date.now(); } catch (_) { return +new Date(); } }
+  function now() { return nowMs(); }
   function toInt(v, d) { var n = parseInt(v, 10); return isNaN(n) ? d : n; }
   function toNum(v, d) { var n = parseFloat(v); return isNaN(n) ? d : n; }
   function clampInt(n, a, b) { n = toInt(n, a); if (n < a) return a; if (n > b) return b; return n; }
@@ -251,8 +283,8 @@
 
   function ageMs(ts) {
     ts = toInt(ts, 0);
-    if (!ts) return 0;
-    var a = now() - ts;
+    if (!ts) return 1000000000000000;
+    var a = nowMs() - ts;
     if (!isFinite(a) || a < 0) a = 0;
     return toInt(a, 0);
   }
@@ -338,6 +370,17 @@
     return out.join(' ');
   }
 
+  function logRowsTail(limit) {
+    try {
+      var rows = (STATE.log && STATE.log.rows) ? STATE.log.rows : [];
+      var n = clampInt(limit || DET.logLimit, 1, 500);
+      if (rows.length <= n) return rows.slice(0);
+      return rows.slice(rows.length - n);
+    } catch (_) {
+      return [];
+    }
+  }
+
   function logLine(level, name, fields) {
     var msg = String(name || '');
     var extra = kv(fields);
@@ -358,9 +401,43 @@
 
     try {
       var line = '[' + String(level || 'INF') + '] ' + msg + (extra ? (' | ' + extra) : '');
-      STATE.logs.push(line);
-      if (STATE.logs.length > DET.logLimit) STATE.logs.splice(0, STATE.logs.length - DET.logLimit);
+      var rows = (STATE.log && STATE.log.rows) ? STATE.log.rows : null;
+      if (!rows) return;
+      var t = nowMs();
+      var last = rows.length ? rows[rows.length - 1] : null;
+      if (last && last.msg === line) {
+        last.n = toInt(last.n, 1) + 1;
+        last.ts = t;
+        return;
+      }
+      rows.push({ msg: line, n: 1, ts: t });
+      var cap = clampInt((STATE.log && STATE.log.cap) ? STATE.log.cap : 120, 20, 500);
+      if (rows.length > cap) rows.splice(0, rows.length - cap);
     } catch (_) { }
+  }
+
+  function logRec(step, idx, max, action, result, err) {
+    var f = {
+      step: String(step || ''),
+      try: String(toInt(idx, 0)) + '/' + String(toInt(max, 0)),
+      action: String(action || ''),
+      result: String(result || '')
+    };
+    if (err) f.err = String(err || '');
+    logLine('INF', 'REC', f);
+  }
+
+  function hangUpdate(active, reason, ages) {
+    ages = ages || {};
+    STATE.hang.active = !!active;
+    STATE.hang.reason = String(reason || '');
+    STATE.hang.ctStuckMs = toInt(ages.ctAge, 0);
+    STATE.hang.timeupdateAge = toInt(ages.timeupdateAge, 0);
+    STATE.hang.progressAge = toInt(ages.progAge, 0);
+    STATE.hang.aheadAge = toInt(ages.aheadAge, 0);
+    STATE.hang.waitingAge = toInt(ages.waitingAge, 0);
+    STATE.hang.resumeAge = toInt(ages.resumeAge, 0);
+    STATE.hang.evalTs = now();
   }
 
   function phaseColor(phase) {
@@ -425,15 +502,23 @@
   function bumpEvent(name) {
     name = String(name || '');
     if (!name) return;
+    var t = nowMs();
     try {
       if (!Object.prototype.hasOwnProperty.call(STATE.events.count, name)) STATE.events.count[name] = 0;
       STATE.events.count[name] = toInt(STATE.events.count[name], 0) + 1;
-      STATE.events.last[name] = now();
+      STATE.events.last[name] = t;
     } catch (_) { }
 
     if (name === 'progress' || name === 'timeupdate' || name === 'play' || name === 'playing') {
-      STATE.monitor.lastProgressSignalTs = now();
+      STATE.monitor.lastProgressSignalTs = t;
     }
+
+    if (name === 'timeupdate') STATE.ev.lastTimeupdateTs = t;
+    else if (name === 'progress') STATE.ev.lastProgressTs = t;
+    else if (name === 'play' || name === 'playing') STATE.ev.lastPlayingTs = t;
+    else if (name === 'waiting') STATE.ev.lastWaitingTs = t;
+    else if (name === 'stalled') STATE.ev.lastStalledTs = t;
+    else if (name === 'error') STATE.ev.lastErrorTs = t;
   }
 
   function detachVideoListeners() {
@@ -629,7 +714,7 @@
   }
 
   function collectTick(video) {
-    var ts = now();
+    var ts = nowMs();
     var s = {
       ts: ts,
       hasVideo: !!video,
@@ -667,6 +752,21 @@
       } else if (isFinite(s.ct) && Math.abs(s.ct - STATE.monitor.lastCt) >= DET.ctEpsSec) {
         STATE.monitor.lastCt = s.ct;
         STATE.monitor.lastCtChangeTs = ts;
+      }
+
+      if (STATE.ct.lastSec === null || !isFinite(toNum(STATE.ct.lastSec, NaN))) {
+        STATE.ct.lastSec = isFinite(s.ct) ? s.ct : 0;
+        STATE.ct.lastChangeTs = ts;
+        STATE.ct.lastSampleTs = ts;
+        STATE.ct.stuckMs = 0;
+      } else if (isFinite(s.ct) && Math.abs(s.ct - toNum(STATE.ct.lastSec, 0)) >= 0.15) {
+        STATE.ct.lastSec = s.ct;
+        STATE.ct.lastChangeTs = ts;
+        STATE.ct.lastSampleTs = ts;
+        STATE.ct.stuckMs = 0;
+      } else {
+        STATE.ct.lastSampleTs = ts;
+        STATE.ct.stuckMs = Math.max(0, ts - toInt(STATE.ct.lastChangeTs, ts));
       }
 
       if (!isFinite(STATE.monitor.lastAheadSec)) {
@@ -891,15 +991,23 @@
       + ' progress=' + toInt(STATE.events.count.progress, 0)
       + ' timeupdate=' + toInt(STATE.events.count.timeupdate, 0));
 
-    lines.push('agesMs: ct=' + String(ageMs(STATE.monitor.lastCtChangeTs))
-      + ' progress=' + String(ageMs(STATE.monitor.lastProgressSignalTs))
-      + ' ahead=' + String(ageMs(STATE.monitor.lastAheadChangeTs))
-      + ' waiting=' + String(ageMs(STATE.events.last.waiting))
-      + ' stalled=' + String(ageMs(STATE.events.last.stalled)));
+    var ra = runtimeAges();
+    lines.push('ctStuckMs=' + String(toInt(STATE.ct.stuckMs, 0))
+      + ' timeupdateAge=' + String(toInt(ra.timeupdateAge, 0))
+      + ' progressAge=' + String(toInt(ra.progAge, 0))
+      + ' aheadAge=' + String(toInt(ra.aheadAge, 0)));
+    lines.push('hung=' + (STATE.hang && STATE.hang.active ? '1' : '0')
+      + ' hungReason=' + String(STATE.hang && STATE.hang.reason ? STATE.hang.reason : '')
+      + ' rec.active=' + (STATE.rec.active ? '1' : '0')
+      + ' rec.step=' + String(STATE.rec.step || '')
+      + ' rec.try=' + String(toInt(STATE.rec.softTry, 0)) + '/' + String(toInt(STATE.rec.softMax, 0))
+      + '|' + String(toInt(STATE.rec.inpTry, 0)) + '/' + String(toInt(STATE.rec.inpMax, 0))
+      + ' lastAction=' + String(STATE.rec.lastAction || '')
+      + ' lastErr=' + String(STATE.rec.lastErr || ''));
 
     var strictFalseEnd = isFalseEnd(toNum(t.ct, NaN), toNum(t.dur, NaN));
-    var looseFalseEnd = isFalseEndLooser(toNum(t.ct, NaN), toNum(t.dur, NaN), runtimeAges());
-    lines.push('resumeAgeMs=' + String(ageMs(STATE.pause.lastResumeTs))
+    var looseFalseEnd = isFalseEndLooser(toNum(t.ct, NaN), toNum(t.dur, NaN), ra);
+    lines.push('resumeAgeMs=' + String(toInt(ra.resumeAge, 0))
       + ' resumeGuardMs=' + String(toInt(CFG.resumeGuardMs, 0))
       + ' staleAllow=' + (CFG.falseEndStaleAllow ? '1' : '0')
       + ' falseEnd(strict)=' + (strictFalseEnd ? '1' : '0')
@@ -939,8 +1047,13 @@
 
     lines.push('logs:');
     try {
-      var tail = STATE.logs.slice(-DET.logLimit);
-      for (var i = 0; i < tail.length; i++) lines.push(tail[i]);
+      var tail = logRowsTail(DET.logLimit);
+      for (var i = 0; i < tail.length; i++) {
+        var row = tail[i] || {};
+        var msg = String(row.msg || '');
+        var n = toInt(row.n, 1);
+        lines.push(n > 1 ? ('×' + String(n) + ' ' + msg) : msg);
+      }
     } catch (_) { }
 
     return lines.join('\n');
@@ -974,7 +1087,7 @@
       STATE.ui.open = true;
     } catch (_) { }
 
-    if (reason) logLine('DBG', 'debug_render', { reason: String(reason || '') });
+    if (reason && String(reason || '') !== 'tick') logLine('DBG', 'debug_render', { reason: String(reason || '') });
   }
 
   function uiShow(reason) {
@@ -1272,13 +1385,22 @@
     STATE.rec.step = 'reopen';
     STATE.rec.reopenTry = 1;
     setPhase(ST.RECOVERING_REOPEN, 'reopen');
+    STATE.rec.lastErr = '';
+    logRec('reopen', STATE.rec.reopenTry, 1, 'pg_reopen', 'start');
 
     var ok = actionReopenViaPg();
-    if (!ok) return recoveryFinish(false, 'reopen_rejected');
+    if (!ok) {
+      logRec('reopen', STATE.rec.reopenTry, 1, String(STATE.rec.lastAction || 'pg_reopen'), 'fail', String(STATE.rec.lastErr || 'reopen_rejected'));
+      return recoveryFinish(false, 'reopen_rejected');
+    }
 
     waitForProgress(token, DET.reopenStepWaitMs, function (success, why) {
       if (token !== toInt(STATE.rec.token, 0)) return;
-      if (success) return recoveryFinish(true, 'reopen_' + String(why || 'ok'));
+      if (success) {
+        logRec('reopen', STATE.rec.reopenTry, 1, String(STATE.rec.lastAction || 'pg_reopen'), 'ok');
+        return recoveryFinish(true, 'reopen_' + String(why || 'ok'));
+      }
+      logRec('reopen', STATE.rec.reopenTry, 1, String(STATE.rec.lastAction || 'pg_reopen'), 'timeout', 'reopen_no_progress');
       recoveryFinish(false, 'reopen_timeout');
     });
   }
@@ -1294,9 +1416,12 @@
     STATE.rec.inpTry++;
     STATE.rec.step = 'inplayer';
     setPhase(ST.RECOVERING_INPLAYER, 'inplayer:' + String(STATE.rec.inpTry) + '/' + String(STATE.rec.inpMax));
+    STATE.rec.lastErr = '';
+    logRec('inplayer', STATE.rec.inpTry, STATE.rec.inpMax, CFG.inplayerMode, 'start');
 
     var ok = actionInplayerRebuild(CFG.inplayerMode);
     if (!ok) {
+      logRec('inplayer', STATE.rec.inpTry, STATE.rec.inpMax, String(STATE.rec.lastAction || CFG.inplayerMode), 'fail', String(STATE.rec.lastErr || 'inplayer_action_failed'));
       setTimeout(function () {
         runInplayerStep(token);
       }, 250);
@@ -1305,8 +1430,12 @@
 
     waitForProgress(token, DET.inplayerStepWaitMs, function (success, why) {
       if (token !== toInt(STATE.rec.token, 0)) return;
-      if (success) return recoveryFinish(true, 'inplayer_' + String(why || 'ok'));
+      if (success) {
+        logRec('inplayer', STATE.rec.inpTry, STATE.rec.inpMax, String(STATE.rec.lastAction || CFG.inplayerMode), 'ok');
+        return recoveryFinish(true, 'inplayer_' + String(why || 'ok'));
+      }
       STATE.rec.lastErr = 'inplayer_no_progress';
+      logRec('inplayer', STATE.rec.inpTry, STATE.rec.inpMax, String(STATE.rec.lastAction || CFG.inplayerMode), 'timeout', 'inplayer_no_progress');
       runInplayerStep(token);
     });
   }
@@ -1319,9 +1448,12 @@
     STATE.rec.softTry++;
     STATE.rec.step = 'soft';
     setPhase(ST.RECOVERING_SOFT, 'soft:' + String(STATE.rec.softTry) + '/' + String(STATE.rec.softMax));
+    STATE.rec.lastErr = '';
+    logRec('soft', STATE.rec.softTry, STATE.rec.softMax, 'seek/load/play', 'start');
 
     var ok = actionSoftAttempt(STATE.rec.softTry);
     if (!ok) {
+      logRec('soft', STATE.rec.softTry, STATE.rec.softMax, String(STATE.rec.lastAction || 'seek/load/play'), 'fail', String(STATE.rec.lastErr || 'soft_action_failed'));
       setTimeout(function () {
         runSoftStep(token);
       }, 150);
@@ -1330,8 +1462,12 @@
 
     waitForProgress(token, DET.softStepWaitMs, function (success, why) {
       if (token !== toInt(STATE.rec.token, 0)) return;
-      if (success) return recoveryFinish(true, 'soft_' + String(why || 'ok'));
+      if (success) {
+        logRec('soft', STATE.rec.softTry, STATE.rec.softMax, String(STATE.rec.lastAction || 'seek/load/play'), 'ok');
+        return recoveryFinish(true, 'soft_' + String(why || 'ok'));
+      }
       STATE.rec.lastErr = 'soft_no_progress';
+      logRec('soft', STATE.rec.softTry, STATE.rec.softMax, String(STATE.rec.lastAction || 'seek/load/play'), 'timeout', 'soft_no_progress');
       runSoftStep(token);
     });
   }
@@ -1339,8 +1475,16 @@
   function startRecovery(reason) {
     reason = String(reason || 'hang');
 
-    if (!CFG.enabled) return false;
-    if (STATE.rec.active) return false;
+    if (!CFG.enabled) {
+      STATE.rec.lastErr = 'disabled';
+      logLine('DBG', 'REC skip', { reason: reason, why: 'disabled' });
+      return false;
+    }
+    if (STATE.rec.active) {
+      STATE.rec.lastErr = 'busy';
+      logLine('DBG', 'REC skip', { reason: reason, why: 'busy', step: String(STATE.rec.step || '') });
+      return false;
+    }
 
     STATE.rec.active = true;
     STATE.rec.token = toInt(STATE.rec.token, 0) + 1;
@@ -1394,10 +1538,12 @@
 
   function runtimeAges() {
     return {
-      ctAge: ageMs(STATE.monitor.lastCtChangeTs),
-      progAge: ageMs(STATE.monitor.lastProgressSignalTs),
+      ctAge: toInt(STATE.ct.stuckMs, 0),
+      timeupdateAge: ageMs(STATE.ev.lastTimeupdateTs || STATE.events.last.timeupdate),
+      progAge: ageMs(STATE.ev.lastProgressTs || STATE.monitor.lastProgressSignalTs),
       aheadAge: ageMs(STATE.monitor.lastAheadChangeTs),
-      waitingAge: ageMs(STATE.events.last.waiting),
+      waitingAge: ageMs(STATE.ev.lastWaitingTs || STATE.events.last.waiting),
+      stalledAge: ageMs(STATE.ev.lastStalledTs || STATE.events.last.stalled),
       resumeAge: ageMs(STATE.pause.lastResumeTs)
     };
   }
@@ -1714,49 +1860,74 @@
   }
 
   function maybeDetectHang() {
-    if (!CFG.enabled) return false;
-    if (STATE.rec.active) return false;
+    if (!CFG.enabled) {
+      hangUpdate(false, 'disabled', { ctAge: 0, timeupdateAge: 0, progAge: 0, aheadAge: 0, waitingAge: 0, resumeAge: 0 });
+      return false;
+    }
+    if (STATE.rec.active) {
+      hangUpdate(false, 'recovering', runtimeAges());
+      return false;
+    }
 
     var t = STATE.tick;
-    if (!t || !t.hasVideo) return false;
-    if (STATE.userPausedIntent || t.paused) return false;
+    if (!t || !t.hasVideo) {
+      hangUpdate(false, 'no_video', { ctAge: 0, timeupdateAge: 0, progAge: 0, aheadAge: 0, waitingAge: 0, resumeAge: 0 });
+      return false;
+    }
+    if (STATE.userPausedIntent || t.paused) {
+      hangUpdate(false, 'paused', runtimeAges());
+      return false;
+    }
 
     var ages = runtimeAges();
-    var ctAge = ages.ctAge;
+    var ctStuckMs = ages.ctAge;
+    var timeupdateAge = ages.timeupdateAge;
     var progAge = ages.progAge;
     var aheadAge = ages.aheadAge;
-    var waitingAge = ages.waitingAge;
     var resumeAge = ages.resumeAge;
 
     var hangTimeMs = toInt(CFG.hangTimeMs, 10000);
     var hangBufMs = toInt(CFG.hangBufMs, 8000);
     if (resumeAge > 0 && resumeAge <= Math.max(10000, toInt(CFG.resumeGuardMs, 180000))) {
-      hangTimeMs = Math.max(2500, Math.floor(hangTimeMs * 0.75));
+      hangTimeMs = Math.max(2500, Math.min(hangTimeMs, 4000));
       hangBufMs = Math.max(2500, Math.floor(hangBufMs * 0.75));
     }
 
-    var hang = ctAge >= hangTimeMs && progAge >= hangBufMs && aheadAge >= hangBufMs;
-    if (!hang) return false;
+    var noTimeupdate = timeupdateAge >= hangTimeMs;
+    var noProgress = progAge >= hangBufMs;
+    var noAhead = aheadAge >= hangBufMs;
+    var lowReady = toInt(t.readyState, 0) <= 2 && ctStuckMs >= Math.max(hangTimeMs, 2000);
+    var hang = ctStuckMs >= hangTimeMs && (noTimeupdate || noProgress || noAhead || lowReady);
 
-    if (waitingAge < DET.waitingGraceMs) {
-      var aliveMs = Math.max(1500, Math.floor(hangBufMs * 0.35));
-      if (progAge < aliveMs) return false;
-      if (aheadAge < aliveMs) return false;
+    if (!hang) {
+      var why = 'ct_moving_or_signals';
+      if (ctStuckMs < hangTimeMs) why = 'ct_not_stuck';
+      else if (!(noTimeupdate || noProgress || noAhead || lowReady)) why = 'signals_alive';
+      hangUpdate(false, why, ages);
+      return false;
     }
 
+    hangUpdate(true, 'ct_stuck', ages);
     setPhase(ST.HUNG, 'watchdog_hang');
     logLine('WRN', 'hang_detected', {
-      ctAge: ctAge,
+      ctStuckMs: ctStuckMs,
+      timeupdateAge: timeupdateAge,
       progAge: progAge,
       aheadAge: aheadAge,
-      waitingAge: waitingAge,
       resumeAge: resumeAge,
       hangTimeMs: hangTimeMs,
       hangBufMs: hangBufMs,
+      rs: toInt(t.readyState, 0),
       ahead: toNum(t.aheadSec, 0).toFixed(1)
     });
 
-    return startRecovery('watchdog_hang');
+    var started = startRecovery('hung_ct_stuck');
+    if (!started) {
+      hangUpdate(true, 'ct_stuck_no_recover', ages);
+      armBlockNext(DET.manualNextBlockMs + 2000, 'hang_no_recover');
+      logLine('WRN', 'hang_recovery_not_started', { recActive: STATE.rec.active ? 1 : 0, lastErr: String(STATE.rec.lastErr || '') });
+    }
+    return started;
   }
 
   function tick() {
@@ -1817,6 +1988,15 @@
         lastAction: String(STATE.rec.lastAction || ''),
         lastErr: String(STATE.rec.lastErr || '')
       },
+      hang: {
+        active: !!(STATE.hang && STATE.hang.active),
+        reason: String(STATE.hang && STATE.hang.reason ? STATE.hang.reason : ''),
+        ctStuckMs: toInt(STATE.ct.stuckMs, 0),
+        timeupdateAge: ageMs(STATE.ev.lastTimeupdateTs || STATE.events.last.timeupdate),
+        progressAge: ageMs(STATE.ev.lastProgressTs || STATE.monitor.lastProgressSignalTs),
+        aheadAge: ageMs(STATE.monitor.lastAheadChangeTs),
+        resumeAge: ageMs(STATE.pause.lastResumeTs)
+      },
       protect: {
         blockNextUntilTs: toInt(STATE.guard.blockNextUntilTs, 0),
         falseEndCount: toInt(STATE.guard.falseEndCount, 0)
@@ -1841,7 +2021,17 @@
         count: safe(function () { return JSON.parse(JSON.stringify(STATE.events.count)); }, {}),
         last: safe(function () { return JSON.parse(JSON.stringify(STATE.events.last)); }, {})
       },
-      logs: safe(function () { return STATE.logs.slice(-DET.logLimit); }, [])
+      logs: safe(function () {
+        var rows = logRowsTail(DET.logLimit);
+        var out = [];
+        for (var i = 0; i < rows.length; i++) {
+          var row = rows[i] || {};
+          var msg = String(row.msg || '');
+          var n = toInt(row.n, 1);
+          out.push(n > 1 ? ('×' + String(n) + ' ' + msg) : msg);
+        }
+        return out;
+      }, [])
     };
   };
 
