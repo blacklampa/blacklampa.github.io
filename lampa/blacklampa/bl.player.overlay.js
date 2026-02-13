@@ -1336,13 +1336,20 @@
       st.textContent = ''
         + ':host, .ov-root, .ov-root *{box-sizing:border-box;}'
         + '.ov-root{all:initial;font:' + POPUP_FONT + ';position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);'
-        + 'width:80vw;height:80vh;max-width:80vw;max-height:80vh;overflow:hidden;border-radius:10px;background:rgba(0,0,0,0.92);color:#eaeaea;display:flex;flex-direction:column;'
+        + 'width:90vw;height:80vh;max-width:90vw;max-height:80vh;overflow:hidden;border-radius:10px;background:rgba(0,0,0,0.92);color:#eaeaea;display:flex;flex-direction:column;'
         + 'z-index:2147483647;min-width:360px;box-shadow:0 10px 28px rgba(0,0,0,0.6);border:1px solid #b7bec7;pointer-events:auto;}'
         + '.ov-hidden{display:none;}'
         + '.ov-header{flex:0 0 auto;display:flex;align-items:flex-start;justify-content:space-between;background:rgba(0,0,0,0.85);border-bottom:1px solid rgba(255,255,255,0.15);padding:8px 10px;}'
         + '.ov-head{display:flex;flex-direction:column;gap:2px;min-width:0;}'
         + '.ov-headline,.ov-subline{margin:0;font:' + POPUP_FONT + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#eaeaea;}'
         + '.ov-headline{font-weight:700;}'
+        + '.st{font-weight:700;}'
+        + '.st-playing{color:#67c27a;}'
+        + '.st-warn{color:#ffb74d;}'
+        + '.st-err{color:#ff8a80;}'
+        + '.st-muted{color:#8eb4ff;}'
+        + '.st-inf{color:#a0d2ff;}'
+        + '.st-ok{color:#96ffa9;}'
         + '.ov-close{all:unset;cursor:pointer;font:700 18px/1 system-ui,-apple-system,\"Segoe UI\",Roboto,Arial,sans-serif;color:#cfd8dc;padding:2px 6px;border-radius:6px;}'
         + '.ov-close:hover{background:rgba(255,255,255,0.12);color:#ffffff;}'
         + '.ov-body{flex:1;overflow:auto;padding:8px 10px;margin:0;font:' + POPUP_FONT + ';color:#eaeaea;}'
@@ -1351,6 +1358,11 @@
         + '.section-body{white-space:pre-wrap;word-break:break-word;}'
         + '.section-line{margin:0 0 2px 0;}'
         + '.logs .section-line{color:#d7dee3;}'
+        + '.logs .section-line.lv-dbg{color:rgba(255,255,255,0.60);}'
+        + '.logs .section-line.lv-inf{color:rgba(160,210,255,0.95);}'
+        + '.logs .section-line.lv-wrn{color:rgba(255,210,120,0.98);}'
+        + '.logs .section-line.lv-err{color:rgba(255,120,120,0.98);}'
+        + '.logs .section-line.lv-ok{color:rgba(150,255,170,0.95);}'
         + '.ov-footer{padding:6px 10px;border-top:1px solid rgba(255,255,255,0.12);font:500 11px/1.3 system-ui,-apple-system,\"Segoe UI\",Roboto,Arial,sans-serif;color:#90a4ae;}'
         + '.state-playing{border-color:#4caf50;}'
         + '.state-buffering{border-color:#ffb300;}'
@@ -1694,24 +1706,66 @@
     var out = '<div class="' + cls + '">';
     out += '<div class="section-title">' + escHtml(title) + '</div>';
     out += '<div class="section-body">';
-    for (var i = 0; i < lines.length; i++) out += '<div class="section-line">' + escHtml(lines[i]) + '</div>';
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      var txt = '';
+      var lineCls = 'section-line';
+      if (line && typeof line === 'object') {
+        txt = String(line.text == null ? '' : line.text);
+        if (line.className) {
+          var safeCls = String(line.className || '').replace(/[^a-zA-Z0-9_\- ]/g, '').trim();
+          if (safeCls) lineCls += ' ' + safeCls;
+        }
+      } else {
+        txt = String(line == null ? '' : line);
+      }
+      out += '<div class="' + lineCls + '">' + escHtml(txt) + '</div>';
+    }
     out += '</div></div>';
     return out;
+  }
+
+  function phaseStatusClass(phase) {
+    phase = String(phase || '');
+    if (phase === ST.PLAYING) return 'st-playing';
+    if (phase === ST.BUFFERING || phase === ST.STALLED) return 'st-warn';
+    if (phase === ST.RECOVERING_SOFT || phase === ST.RECOVERING_INPLAYER || phase === ST.RECOVERING_REOPEN) return 'st-warn';
+    if (phase === ST.HUNG || phase === ST.FAILED) return 'st-err';
+    if (phase === ST.PAUSED_BY_USER || phase === ST.PAUSED_MEDIA) return 'st-muted';
+    return 'st-muted';
+  }
+
+  function logLevelClass(line) {
+    var s = String(line || '').toUpperCase();
+    if (s.indexOf('[ERR]') >= 0 || s.indexOf('[ERROR]') >= 0) return 'lv-err';
+    if (s.indexOf('[WRN]') >= 0 || s.indexOf('[WARN]') >= 0) return 'lv-wrn';
+    if (s.indexOf('[OK]') >= 0 || s.indexOf('[EVT]') >= 0 || s.indexOf('[EVENT]') >= 0) return 'lv-ok';
+    if (s.indexOf('[DBG]') >= 0 || s.indexOf('[DEBUG]') >= 0) return 'lv-dbg';
+    if (s.indexOf('[INF]') >= 0 || s.indexOf('[INFO]') >= 0) return 'lv-inf';
+    return '';
   }
 
   function buildDebugHeaderLines() {
     var t = STATE.tick || {};
     var ticket = STATE.resume.ticket || STATE.resume.lastTicket || null;
     var blockOn = isBlockNextActive() ? 1 : 0;
+    var phase = String(STATE.phase || '');
+    var paused = t.paused ? '1' : '0';
+    var recover = STATE.rec.active ? '1' : '0';
+    var block = String(blockOn);
+    var phaseCls = phaseStatusClass(phase);
+    var pausedCls = t.paused ? 'st-muted' : 'st-inf';
+    var recCls = STATE.rec.active ? 'st-warn' : 'st-muted';
+    var blockCls = blockOn ? 'st-warn' : 'st-muted';
     return {
-      line1: 'phase=' + String(STATE.phase || '')
-        + ' paused=' + (t.paused ? '1' : '0')
-        + ' recover=' + (STATE.rec.active ? '1' : '0')
-        + ' blockNext=' + String(blockOn),
-      line2: 'ct=' + fmtDbgSec(t.ct)
-        + ' / dur=' + fmtDbgSec(t.dur)
-        + '  stable=' + fmtDbgSec(STATE.pos.lastStableSec)
-        + '  ticket=' + (ticket && isFinite(toNum(ticket.sec, NaN)) ? toNum(ticket.sec, 0).toFixed(2) : '-')
+      line1: 'phase=<span class="st ' + phaseCls + '">' + escHtml(phase) + '</span>'
+        + ' paused=<span class="st ' + pausedCls + '">' + escHtml(paused) + '</span>'
+        + ' recover=<span class="st ' + recCls + '">' + escHtml(recover) + '</span>'
+        + ' blockNext=<span class="st ' + blockCls + '">' + escHtml(block) + '</span>',
+      line2: 'ct=<span class="st st-inf">' + escHtml(fmtDbgSec(t.ct)) + '</span>'
+        + ' / dur=<span class="st st-inf">' + escHtml(fmtDbgSec(t.dur)) + '</span>'
+        + '  stable=<span class="st st-inf">' + escHtml(fmtDbgSec(STATE.pos.lastStableSec)) + '</span>'
+        + '  ticket=<span class="st st-inf">' + escHtml(ticket && isFinite(toNum(ticket.sec, NaN)) ? toNum(ticket.sec, 0).toFixed(2) : '-') + '</span>'
     };
   }
 
@@ -1787,7 +1841,8 @@
         var row = tail[i] || {};
         var msg = String(row.msg || '');
         var n = toInt(row.n, 1);
-        logs.push(n > 1 ? ('×' + String(n) + ' ' + msg) : msg);
+        var txt = n > 1 ? ('×' + String(n) + ' ' + msg) : msg;
+        logs.push({ text: txt, className: logLevelClass(msg) });
       }
     } catch (_) { }
 
@@ -1811,11 +1866,10 @@
 
       var h = buildDebugHeaderLines();
       if (STATE.ui.titleEl) {
-        STATE.ui.titleEl.textContent = String(h.line1 || '');
-        STATE.ui.titleEl.style.color = phaseColor(STATE.phase);
+        STATE.ui.titleEl.innerHTML = String(h.line1 || '');
       }
       if (STATE.ui.subTitleEl) {
-        STATE.ui.subTitleEl.textContent = String(h.line2 || '');
+        STATE.ui.subTitleEl.innerHTML = String(h.line2 || '');
       }
 
       root.classList.remove('state-playing');
