@@ -170,6 +170,9 @@
       preventStartUntilTs: 0,
       preventEndedUntilTs: 0,
       falseEndCriticalUntilTs: 0,
+      lastTailClampTs: 0,
+      lastTailClampKind: '',
+      tailJumpClampCount: 0,
       lastFalseEndTs: 0,
       falseEndCount: 0
     },
@@ -201,7 +204,9 @@
         canplay: 0,
         loadeddata: 0,
         ended: 0,
-        playing: 0
+        playing: 0,
+        seeking: 0,
+        seeked: 0
       },
       last: {
         timeupdate: 0,
@@ -214,7 +219,9 @@
         canplay: 0,
         loadeddata: 0,
         ended: 0,
-        playing: 0
+        playing: 0,
+        seeking: 0,
+        seeked: 0
       }
     },
 
@@ -997,11 +1004,22 @@
       }
     }
 
-    on('timeupdate', function () { bumpEvent('timeupdate'); try { truthUpdate(video, 'timeupdate'); } catch (_) { } });
+    on('timeupdate', function (e) {
+      bumpEvent('timeupdate');
+      try {
+        if (tryTailJumpClamp(video, e, 'timeupdate')) return;
+      } catch (_) { }
+      try { truthUpdate(video, 'timeupdate'); } catch (_) { }
+    });
     on('progress', function () { bumpEvent('progress'); });
     on('waiting', function () { bumpEvent('waiting'); });
     on('stalled', function () { bumpEvent('stalled'); });
     on('error', function () { bumpEvent('error'); });
+    on('seeking', function (e) {
+      bumpEvent('seeking');
+      try { tryTailJumpClamp(video, e, 'seeking'); } catch (_) { }
+    });
+    on('seeked', function () { bumpEvent('seeked'); });
     on('play', function () {
       bumpEvent('play');
       STATE.pause.lastResumeTs = now();
@@ -1728,6 +1746,10 @@
         + ' playingStuck=' + String(toInt(STATE.flags.playingStuck.on, 0)),
       'falseEndStrict=' + (strictFalseEnd ? '1' : '0')
         + ' falseEndLoose=' + (looseFalseEnd ? '1' : '0'),
+      'tailJumpClamp=' + (ageMs(toInt(STATE.guard.lastTailClampTs, 0)) < 5000 ? '1' : '0')
+        + ' lastClampAgeMs=' + String(ageMs(toInt(STATE.guard.lastTailClampTs, 0)))
+        + ' count=' + String(toInt(STATE.guard.tailJumpClampCount, 0))
+        + ' kind=' + String(STATE.guard.lastTailClampKind || ''),
       'ctStuckMs=' + String(toInt(STATE.ct.stuckMs, 0))
         + ' timeupdateAge=' + String(toInt(ra.timeupdateAge, 0))
         + ' progressAge=' + String(toInt(ra.progAge, 0))
@@ -1999,6 +2021,73 @@
     if (reason === 'buffer_underrun' || reason === 'playing_stuck') return 20000;
     if (reason.indexOf('stalled') >= 0 || reason.indexOf('waiting') >= 0) return 20000;
     return 0;
+  }
+
+  function isTail(ct, dur) {
+    return isFinite(toNum(ct, NaN)) && isFinite(toNum(dur, NaN)) && toNum(dur, 0) > 30 && toNum(ct, 0) >= (toNum(dur, 0) - 0.35);
+  }
+
+  function isStableFarFromTail(stableSec, dur) {
+    return isFinite(toNum(stableSec, NaN)) && isFinite(toNum(dur, NaN)) && toNum(stableSec, 0) >= 2 && toNum(stableSec, 0) <= (toNum(dur, 0) - 10);
+  }
+
+  function shouldClampTailJump(t, stableSec) {
+    if (!t || !t.hasVideo) return false;
+    if (!CFG.enabled || !CFG.protectNext) return false;
+    if (!isTail(t.ct, t.dur)) return false;
+    if (!isStableFarFromTail(stableSec, t.dur)) return false;
+
+    if (STATE.user && String(STATE.user.lastCmdNorm || '') === 'seek' && ageMs(toInt(STATE.user.lastCmdTs, 0)) < 3000) return false;
+
+    var ba = bufferAges();
+    var progAge = toInt(ba.progAge, 0);
+    var bufAge = toInt(ba.bufEndMoveAge, 0);
+    var stalledAge = ageMs(STATE.ev.lastStalledTs || STATE.events.last.stalled);
+    var waitingAge = ageMs(STATE.ev.lastWaitingTs || STATE.events.last.waiting);
+    if (progAge > 1500 || bufAge > 1500) return true;
+    if (stalledAge < 5000 || waitingAge < 5000) return true;
+
+    if (STATE.flags && STATE.flags.fakeFull && toInt(STATE.flags.fakeFull.on, 0)) return true;
+    if (STATE.flags && STATE.flags.underrun && toInt(STATE.flags.underrun.on, 0)) return true;
+    if (STATE.flags && STATE.flags.playingStuck && toInt(STATE.flags.playingStuck.on, 0)) return true;
+
+    return false;
+  }
+
+  function tryTailJumpClamp(video, e, source) {
+    if (!video) return false;
+    var ct = toNum(video.currentTime, NaN);
+    var dur = toNum(video.duration, NaN);
+    var stable = NaN;
+    if (STATE.pos && isFinite(toNum(STATE.pos.lastStableSec, NaN))) stable = toNum(STATE.pos.lastStableSec, NaN);
+    else if (isFinite(toNum(STATE.truth.lastGoodSec, NaN))) stable = toNum(STATE.truth.lastGoodSec, NaN);
+
+    var t = { hasVideo: true, ct: ct, dur: dur };
+    if (!shouldClampTailJump(t, stable)) return false;
+
+    var ts = nowMs();
+    if ((ts - toInt(STATE.guard.lastTailClampTs, 0)) < 600) return false;
+
+    armFalseEndCritical(30000, source === 'seeking' ? 'tail_jump_seek' : 'tail_jump');
+    try { if (e && e.stopImmediatePropagation) e.stopImmediatePropagation(); } catch (_) { }
+    try { if (e && e.preventDefault) e.preventDefault(); } catch (_) { }
+    try { video.currentTime = stable; } catch (_) { }
+
+    STATE.guard.lastTailClampTs = ts;
+    STATE.guard.lastTailClampKind = String(source || 'timeupdate');
+    STATE.guard.tailJumpClampCount = toInt(STATE.guard.tailJumpClampCount, 0) + 1;
+
+    var msg = source === 'seeking' ? 'CLAMP tail_jump (seeking)' : 'CLAMP tail_jump';
+    logLine('WRN', msg, {
+      ct: isFinite(ct) ? ct.toFixed(2) : '',
+      dur: isFinite(dur) ? dur.toFixed(2) : '',
+      stable: isFinite(stable) ? stable.toFixed(2) : '',
+      n: toInt(STATE.guard.tailJumpClampCount, 0)
+    });
+
+    if (!STATE.rec.active) startRecovery(source === 'seeking' ? 'tail_jump_seek' : 'tail_jump');
+    else armFalseEndCritical(30000, 'tail_jump_busy');
+    return true;
   }
 
   function shouldBlockNextType(type) {
@@ -3841,6 +3930,9 @@
         preventEndedUntilTs: toInt(STATE.guard.preventEndedUntilTs, 0),
         falseEndCriticalUntilTs: toInt(STATE.guard.falseEndCriticalUntilTs, 0),
         criticalActive: isCriticalWindowActive() ? 1 : 0,
+        lastTailClampTs: toInt(STATE.guard.lastTailClampTs, 0),
+        tailJumpClampCount: toInt(STATE.guard.tailJumpClampCount, 0),
+        lastTailClampKind: String(STATE.guard.lastTailClampKind || ''),
         falseEndCount: toInt(STATE.guard.falseEndCount, 0)
       },
       truth: {
