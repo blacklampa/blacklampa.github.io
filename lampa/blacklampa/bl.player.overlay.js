@@ -120,6 +120,8 @@
       pauseIntent: 0,
       lastCmdTs: 0,
       lastCmd: '',
+      lastCmdRaw: '',
+      lastCmdNorm: '',
       lastIntentTs: 0
     },
     media: {
@@ -1282,7 +1284,9 @@
       + ' reason=' + String(det.reason || '')
       + ' pauseIntent(user)=' + (isUserPauseIntent() ? '1' : '0')
       + ' mediaPaused=' + (t.paused ? '1' : '0'));
-    lines.push('lastCmd=' + String(STATE.user.lastCmd || '')
+    lines.push('lastCmdRaw=' + String(STATE.user.lastCmdRaw || '')
+      + ' lastCmdNorm=' + String(STATE.user.lastCmdNorm || '')
+      + ' lastCmd=' + String(STATE.user.lastCmd || '')
       + ' lastCmdAgeMs=' + String(ageMs(STATE.user.lastCmdTs))
       + ' lastAutoPlaySuppressed=' + String(STATE.life.lastAutoPlaySuppressed || '')
       + ' lastAutoPlaySuppressedAgeMs=' + String(ageMs(STATE.life.lastAutoPlaySuppressedTs)));
@@ -1502,11 +1506,38 @@
     logLine('WRN', 'SHUTDOWN overlay', { reason: reason, hard: hardStopVideo ? 1 : 0 });
   }
 
+  function softShutdownOnExit(reason) {
+    reason = String(reason || 'user_exit');
+
+    STATE.life.exitIntent = 1;
+    STATE.life.suspendDetectors = 1;
+
+    try { recoveryCancel('exit:' + reason); } catch (_) { }
+    try { truthFreeze(false, 'exit'); } catch (_) { }
+    try { clearResumeUnfreezeTimer(); } catch (_) { }
+    try { endCritical('overlay_recover'); } catch (_) { }
+    try { endCritical('bufguard'); } catch (_) { }
+
+    STATE.guard.blockNextUntilTs = 0;
+    markLifeClosed('soft_exit:' + reason);
+
+    // Exit must remain soft: do not pause/play/reset src/load here.
+    detachVideoListeners();
+    if (STATE.ui.open || STATE.ui.root) uiDestroy('exit:' + reason);
+    stopTickTimer('exit:' + reason);
+
+    logLine('WRN', 'SOFT_EXIT overlay', { reason: reason });
+  }
+
   function normalizeCommand(cmd) {
-    cmd = String(cmd || '').toLowerCase();
+    cmd = String(cmd || '').toLowerCase().trim();
     if (!cmd) return '';
 
-    if (cmd.indexOf('back') >= 0 || cmd === 'exit' || cmd === 'close' || cmd.indexOf('return') >= 0 || cmd.indexOf('stop') >= 0 || cmd.indexOf('cancel') >= 0) return 'exit';
+    // Exit-like: strict matches only. No broad "contains back" rules.
+    if (cmd === 'exit' || cmd === 'back' || cmd === 'close' || cmd === 'return' || cmd === 'cancel' || cmd === 'controller.back') return 'exit';
+    // TV remotes often send STOP for pause/stop, not for app exit.
+    if (cmd === 'stop') return 'pause';
+
     if (cmd === 'toggle' || cmd.indexOf('toggle') >= 0) return 'toggle';
     if (cmd.indexOf('pause') >= 0) return 'pause';
     if ((cmd.indexOf('play') >= 0 || cmd.indexOf('resume') >= 0) && cmd !== 'playlist') return 'play';
@@ -1520,7 +1551,7 @@
     if (!t) return false;
     if (t === 'pause' || t === 'play' || t === 'toggle' || t === 'toggle_pause' || t === 'toggle_play') return true;
     if (t === 'seek' || t === 'forward' || t === 'backward' || t === 'rewind' || t === 'to' || t === 'totime' || t === 'to_time') return true;
-    if (t === 'exit' || t === 'back' || t === 'return' || t === 'close' || t === 'stop' || t === 'cancel' || t === 'resume') return true;
+    if (t === 'exit' || t === 'back' || t === 'return' || t === 'close' || t === 'stop' || t === 'cancel' || t === 'resume' || t === 'controller.back') return true;
     return false;
   }
 
@@ -2158,27 +2189,32 @@
   }
 
   function handleUserCommand(cmd, payload) {
-    cmd = normalizeCommand(cmd);
-    if (!cmd) return;
+    var raw = String(cmd || '');
+    var norm = normalizeCommand(raw);
+    if (!norm) return;
 
-    if (cmd === 'toggle') {
+    if (norm === 'toggle') {
       var tv = STATE.video || getVideo();
       var isPaused = false;
       try { isPaused = !!(tv && tv.paused); } catch (_) { isPaused = false; }
-      cmd = isPaused ? 'play' : 'pause';
+      norm = isPaused ? 'play' : 'pause';
     }
 
-    STATE.pendingUserCommand = cmd;
-    STATE.user.lastCmd = String(cmd || '');
+    STATE.pendingUserCommand = norm;
+    STATE.user.lastCmd = String(norm || '');
+    STATE.user.lastCmdRaw = String(raw || '');
+    STATE.user.lastCmdNorm = String(norm || '');
     STATE.user.lastCmdTs = nowMs();
 
-    if (cmd === 'pause') {
+    logLine('DBG', 'CMD', { raw: String(raw || ''), norm: String(norm || '') });
+
+    if (norm === 'pause') {
       setUserPauseIntent(true, 'cmd_pause');
       STATE.pause.lastPauseTs = now();
       STATE.life.suspendDetectors = 1;
       setPhase(ST.PAUSED_BY_USER, 'cmd_pause');
     }
-    else if (cmd === 'play') {
+    else if (norm === 'play') {
       setUserPauseIntent(false, 'cmd_play');
       STATE.pause.lastResumeTs = now();
       if (!toInt(STATE.life.exitIntent, 0)) {
@@ -2187,22 +2223,16 @@
       }
       setPhase(ST.PLAYING, 'cmd_play');
     }
-    else if (cmd === 'exit') {
-      STATE.life.exitIntent = 1;
-      STATE.life.suspendDetectors = 1;
-      if (STATE.rec.active) recoveryCancel('user:exit');
-      shutdownOverlay('user_exit', true);
-      setPhase(ST.IDLE, 'user_exit');
-      try { logLine('DBG', 'user_command', { cmd: cmd, src: payload && payload.type ? String(payload.type) : '' }); } catch (_) { }
+    else if (norm === 'exit') {
+      softShutdownOnExit('user_exit');
+      try { logLine('DBG', 'user_command', { cmd: norm, src: payload && payload.type ? String(payload.type) : '' }); } catch (_) { }
       return;
     }
 
-    if (STATE.rec.active) recoveryCancel('user:' + cmd);
-
-    if (cmd === 'exit') setPhase(ST.IDLE, 'user_exit');
+    if (STATE.rec.active) recoveryCancel('user:' + norm);
 
     try {
-      logLine('DBG', 'user_command', { cmd: cmd, src: payload && payload.type ? String(payload.type) : '' });
+      logLine('DBG', 'user_command', { cmd: norm, src: payload && payload.type ? String(payload.type) : '' });
     } catch (_) { }
   }
 
@@ -2505,7 +2535,7 @@
 
     var orig = back;
     Lampa.Controller.back = function () {
-      try { handleUserCommand('back', { type: 'controller.back' }); } catch (_) { }
+      try { handleUserCommand('controller.back', { type: 'controller.back' }); } catch (_) { }
       return orig.apply(this, arguments);
     };
 
@@ -2798,7 +2828,7 @@
       }
 
       if (!active && (wasActive || toInt(STATE.life.exitIntent, 0))) {
-        shutdownOverlay('inactive', toInt(STATE.life.exitIntent, 0) === 1);
+        shutdownOverlay('inactive', false);
         return;
       }
 
@@ -2859,6 +2889,8 @@
         openedTs: toInt(STATE.life.openedTs, 0),
         closedTs: toInt(STATE.life.closedTs, 0),
         lastCmd: String(STATE.user.lastCmd || ''),
+        lastCmdRaw: String(STATE.user.lastCmdRaw || ''),
+        lastCmdNorm: String(STATE.user.lastCmdNorm || ''),
         lastCmdTs: toInt(STATE.user.lastCmdTs, 0),
         lastAutoPlaySuppressed: String(STATE.life.lastAutoPlaySuppressed || ''),
         lastAutoPlaySuppressedTs: toInt(STATE.life.lastAutoPlaySuppressedTs, 0)
@@ -2948,10 +2980,11 @@
   };
 
   API.command = function (cmd, payload) {
-    cmd = normalizeCommand(cmd);
+    var raw = String(cmd || '');
+    cmd = normalizeCommand(raw);
     if (!cmd) return false;
 
-    handleUserCommand(cmd, payload || null);
+    handleUserCommand(raw, payload || null);
 
     var v = STATE.video || getVideo();
     if (cmd === 'toggle') {
