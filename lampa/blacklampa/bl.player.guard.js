@@ -7,6 +7,7 @@
   var API = BL.PlayerGuard;
   if (API.__blPlayerGuardLoadedV2) return;
   API.__blPlayerGuardLoadedV2 = true;
+  var POPUP_FONT = '12px/1.35 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif';
 
   var LS_PREFIX = 'blacklampa_';
   try { if (BL.Keys && BL.Keys.prefix) LS_PREFIX = String(BL.Keys.prefix || 'blacklampa_'); } catch (_) { }
@@ -186,13 +187,15 @@
     },
 
     ui: {
-      styleInstalled: false,
+      host: null,
+      shadow: null,
       root: null,
       titleEl: null,
       stageEl: null,
       infoEl: null,
       detailsEl: null,
       actionsEl: null,
+      closeEl: null,
       autoCloseProgressTopEl: null,
       autoCloseProgressBottomEl: null,
       autoCloseProgressTopFillEl: null,
@@ -795,44 +798,6 @@
     return kv(out);
   }
 
-  function ensureUiStyle() {
-    if (STATE.ui.styleInstalled) return;
-    STATE.ui.styleInstalled = true;
-
-    safe(function () {
-      if (!document || !document.head) return;
-      if (document.getElementById('__bl_player_guard_style_v2')) return;
-      var st = document.createElement('style');
-      st.id = '__bl_player_guard_style_v2';
-      st.type = 'text/css';
-      st.textContent = ''
-        + '#__bl_player_guard_popup_v2{position:fixed;left:50%;bottom:12%;transform:translateX(-50%);min-width:300px;max-width:640px;'
-        + 'background:rgba(0,0,0,0.74);color:#fff;padding:16px 18px;border-radius:14px;z-index:2147483646;'
-        + 'pointer-events:none;font:13px/1.35 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;'
-        + 'box-shadow:0 10px 28px rgba(0,0,0,0.6);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);}'
-        + '#__bl_player_guard_popup_v2.bl-pg-hidden{display:none;}'
-        + '#__bl_player_guard_popup_v2.bl-pg-fail{pointer-events:auto;}'
-        + '#__bl_player_guard_popup_v2 .bl-pg-progress{position:absolute;left:0;right:0;z-index:3;height:2px;background:rgba(255,255,255,0.15);overflow:hidden;pointer-events:none;display:none;}'
-        + '#__bl_player_guard_popup_v2 .bl-pg-progress--top{top:0;border-radius:14px 14px 0 0;}'
-        + '#__bl_player_guard_popup_v2 .bl-pg-progress--bottom{bottom:0;border-radius:0 0 14px 14px;}'
-        + '#__bl_player_guard_popup_v2 .bl-pg-progress__fill{height:100%;width:100%;background:#40a9ff;transform-origin:left center;transform:scaleX(1);will-change:transform;pointer-events:none;}'
-        + '#__bl_player_guard_popup_v2 .bl-pg-row{display:flex;align-items:flex-start;gap:12px;}'
-        + '#__bl_player_guard_popup_v2 .bl-pg-title{font-weight:800;font-size:15px;margin:0 0 8px 0;}'
-        + '#__bl_player_guard_popup_v2 .bl-pg-stage{font-weight:700;font-size:14px;opacity:0.98;margin:0 0 8px 0;}'
-        + '#__bl_player_guard_popup_v2 .bl-pg-info{opacity:0.92;margin:0 0 6px 0;}'
-        + '#__bl_player_guard_popup_v2 .bl-pg-details{opacity:0.78;margin:0;font-size:12px;white-space:pre-wrap;}'
-        + '#__bl_player_guard_popup_v2 .bl-pg-spinner{width:18px;height:18px;flex:0 0 18px;margin:15px;border-radius:50%;'
-        + 'border:2px solid rgba(255,255,255,0.35);border-top-color:#fff;animation:blpgspin2 0.9s linear infinite;}'
-        + '@keyframes blpgspin2{from{transform:rotate(0deg);}to{transform:rotate(360deg);}}'
-        + '#__bl_player_guard_popup_v2 .bl-pg-actions{display:none;margin-top:12px;gap:8px;flex-wrap:wrap;}'
-        + '#__bl_player_guard_popup_v2.bl-pg-fail .bl-pg-actions{display:flex;}'
-        + '#__bl_player_guard_popup_v2 .bl-pg-btn{padding:9px 11px;border-radius:11px;background:rgba(255,255,255,0.12);'
-        + 'border:1px solid rgba(255,255,255,0.18);cursor:pointer;user-select:none;}'
-        + '#__bl_player_guard_popup_v2 .bl-pg-btn.active{background:rgba(64,169,255,0.25);border-color:rgba(64,169,255,0.55);}';
-      document.head.appendChild(st);
-    });
-  }
-
   function ensureUiAutoCloseProgressEls(root) {
     if (!root || !document) return;
 
@@ -874,18 +839,69 @@
   }
 
   function ensureUiRoot() {
-    ensureUiStyle();
     if (STATE.ui.root) return STATE.ui.root;
 
     return safe(function () {
-      if (!document || !document.body) return null;
-      var el = document.getElementById('__bl_player_guard_popup_v2');
+      if (!document || !(document.body || document.documentElement)) return null;
+
+      var oldRoot = document.getElementById('__bl_player_guard_popup_v2');
+      if (oldRoot && oldRoot.parentNode) oldRoot.parentNode.removeChild(oldRoot);
+      var oldStyle = document.getElementById('__bl_player_guard_style_v2');
+      if (oldStyle && oldStyle.parentNode) oldStyle.parentNode.removeChild(oldStyle);
+
+      var host = document.getElementById('__bl_player_guard_host_v3');
+      if (!host) {
+        host = document.createElement('div');
+        host.id = '__bl_player_guard_host_v3';
+        host.className = 'bl-player-guard-host';
+      }
+      if (!host.parentNode) (document.body || document.documentElement).appendChild(host);
+
+      var shadow = host.shadowRoot;
+      if (!shadow && host.attachShadow) shadow = host.attachShadow({ mode: 'open' });
+      if (!shadow) return null;
+
+      var el = null;
+      try { el = shadow.querySelector('.bl-pg-root'); } catch (_) { el = null; }
       if (!el) {
+        var st = document.createElement('style');
+        st.type = 'text/css';
+        st.textContent = ''
+          + ':host, .bl-pg-root, .bl-pg-root *{box-sizing:border-box;}'
+          + '.bl-pg-root{all:initial;position:fixed;left:50%;bottom:12%;transform:translateX(-50%);min-width:300px;max-width:640px;max-height:75vh;'
+          + 'background:rgba(0,0,0,0.74);color:#fff;padding:16px 18px;border-radius:14px;z-index:2147483647;'
+          + 'pointer-events:auto;font:' + POPUP_FONT + ';'
+          + 'box-shadow:0 10px 28px rgba(0,0,0,0.6);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);overflow:hidden;}'
+          + '.bl-pg-root.bl-pg-hidden{display:none;}'
+          + '.bl-pg-root .bl-pg-close{position:absolute;top:6px;right:8px;width:24px;height:24px;border-radius:50%;'
+          + 'border:1px solid rgba(255,255,255,0.28);background:rgba(255,255,255,0.08);color:#fff;cursor:pointer;'
+          + 'font:700 16px/22px system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;text-align:center;padding:0;}'
+          + '.bl-pg-root .bl-pg-close:hover{background:rgba(255,255,255,0.2);}'
+          + '.bl-pg-root .bl-pg-progress{position:absolute;left:0;right:0;z-index:3;height:2px;background:rgba(255,255,255,0.15);overflow:hidden;pointer-events:none;display:none;}'
+          + '.bl-pg-root .bl-pg-progress--top{top:0;border-radius:14px 14px 0 0;}'
+          + '.bl-pg-root .bl-pg-progress--bottom{bottom:0;border-radius:0 0 14px 14px;}'
+          + '.bl-pg-root .bl-pg-progress__fill{height:100%;width:100%;background:#40a9ff;transform-origin:left center;transform:scaleX(1);will-change:transform;pointer-events:none;}'
+          + '.bl-pg-root .bl-pg-row{display:flex;align-items:flex-start;gap:12px;}'
+          + '.bl-pg-root .bl-pg-col{min-width:0;display:flex;flex-direction:column;max-height:66vh;}'
+          + '.bl-pg-root .bl-pg-title{font:800 15px/1.3 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;margin:0 26px 8px 0;}'
+          + '.bl-pg-root .bl-pg-stage{font:700 14px/1.3 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;opacity:0.98;margin:0 0 8px 0;}'
+          + '.bl-pg-root .bl-pg-info{opacity:0.92;margin:0 0 6px 0;}'
+          + '.bl-pg-root .bl-pg-details{opacity:0.78;margin:0;font:' + POPUP_FONT + ';white-space:pre-wrap;overflow:auto;max-height:38vh;padding-right:2px;}'
+          + '.bl-pg-root .bl-pg-spinner{width:18px;height:18px;flex:0 0 18px;margin:15px;border-radius:50%;'
+          + 'border:2px solid rgba(255,255,255,0.35);border-top-color:#fff;animation:blpgspin3 0.9s linear infinite;}'
+          + '@keyframes blpgspin3{from{transform:rotate(0deg);}to{transform:rotate(360deg);}}'
+          + '.bl-pg-root .bl-pg-actions{display:none;margin-top:12px;gap:8px;flex-wrap:wrap;}'
+          + '.bl-pg-root.bl-pg-fail .bl-pg-actions{display:flex;}'
+          + '.bl-pg-root .bl-pg-btn{padding:9px 11px;border-radius:11px;background:rgba(255,255,255,0.12);'
+          + 'border:1px solid rgba(255,255,255,0.18);cursor:pointer;user-select:none;}'
+          + '.bl-pg-root .bl-pg-btn.active{background:rgba(64,169,255,0.25);border-color:rgba(64,169,255,0.55);}';
+        shadow.appendChild(st);
+
         el = document.createElement('div');
-        el.id = '__bl_player_guard_popup_v2';
-        el.className = 'bl-pg-hidden';
+        el.className = 'bl-pg-root bl-pg-hidden';
         el.innerHTML = ''
           + '<div class="bl-pg-progress bl-pg-progress--top"><div class="bl-pg-progress__fill"></div></div>'
+          + '<button type="button" class="bl-pg-close" title="Close">×</button>'
           + '<div class="bl-pg-row">'
           + '  <div class="bl-pg-spinner"></div>'
           + '  <div class="bl-pg-col">'
@@ -897,15 +913,19 @@
           + '  </div>'
           + '</div>'
           + '<div class="bl-pg-progress bl-pg-progress--bottom"><div class="bl-pg-progress__fill"></div></div>';
-        document.body.appendChild(el);
+        shadow.appendChild(el);
       }
 
+      STATE.ui.host = host;
+      STATE.ui.shadow = shadow;
       STATE.ui.root = el;
       STATE.ui.titleEl = el.querySelector('.bl-pg-title');
       STATE.ui.stageEl = el.querySelector('.bl-pg-stage');
       STATE.ui.infoEl = el.querySelector('.bl-pg-info');
       STATE.ui.detailsEl = el.querySelector('.bl-pg-details');
       STATE.ui.actionsEl = el.querySelector('.bl-pg-actions');
+      STATE.ui.closeEl = el.querySelector('.bl-pg-close');
+      if (STATE.ui.closeEl) STATE.ui.closeEl.onclick = function () { uiClose('btn_close'); };
       ensureUiAutoCloseProgressEls(el);
       return el;
     }, null);
@@ -1220,6 +1240,45 @@
     uiUpdate('', '', '', '');
     uiSetMode('hidden');
     logEvt('DBG', 'popup_close', { reason: String(reason || '') }, 'popup:close:' + String(reason || ''), 1200);
+  }
+
+  function uiDestroy(reason) {
+    uiRemoveFailKeyHandler();
+    uiAutoCloseClear('destroy');
+    uiClearActions();
+
+    safe(function () {
+      if (STATE.ui.closeEl) STATE.ui.closeEl.onclick = null;
+    });
+
+    safe(function () {
+      if (STATE.ui.host && STATE.ui.host.parentNode) STATE.ui.host.parentNode.removeChild(STATE.ui.host);
+    });
+
+    safe(function () {
+      if (!document) return;
+      var oldRoot = document.getElementById('__bl_player_guard_popup_v2');
+      if (oldRoot && oldRoot.parentNode) oldRoot.parentNode.removeChild(oldRoot);
+      var oldStyle = document.getElementById('__bl_player_guard_style_v2');
+      if (oldStyle && oldStyle.parentNode) oldStyle.parentNode.removeChild(oldStyle);
+    });
+
+    STATE.ui.mode = 'hidden';
+    STATE.ui.root = null;
+    STATE.ui.host = null;
+    STATE.ui.shadow = null;
+    STATE.ui.titleEl = null;
+    STATE.ui.stageEl = null;
+    STATE.ui.infoEl = null;
+    STATE.ui.detailsEl = null;
+    STATE.ui.actionsEl = null;
+    STATE.ui.closeEl = null;
+    STATE.ui.autoCloseProgressTopEl = null;
+    STATE.ui.autoCloseProgressBottomEl = null;
+    STATE.ui.autoCloseProgressTopFillEl = null;
+    STATE.ui.autoCloseProgressBottomFillEl = null;
+
+    logEvt('DBG', 'popup_destroy', { reason: String(reason || '') }, 'popup:destroy:' + String(reason || ''), 1200);
   }
 
   function stopGuardAndRecovery(why, suppressMs) {
@@ -3676,7 +3735,7 @@
 
     if (was && !CFG.enabled) {
       recoveryStop('disabled');
-      uiHide();
+      uiDestroy('disabled');
       detachVideoListeners();
       unlockGuard('disabled');
     } else if (!was && CFG.enabled) {
@@ -3687,6 +3746,8 @@
         }
       } catch (_) { }
       logEvt('INF', 'enabled', { soft: CFG.softAttempts, hard: CFG.hardAttempts, hardMax: STATE.rec.hardMax, strategy: CFG.hardStrategy, debugOnOpen: CFG.debugOnOpen ? 1 : 0, delay: CFG.attemptDelaySec, reopen: CFG.reopenOnFault ? 1 : 0, allowSoft: CFG.allowSoft ? 1 : 0, allowHard: CFG.allowHard ? 1 : 0, blockNext: CFG.blockNext ? 1 : 0 }, 'pg:enabled', 1500);
+    } else if (!CFG.enabled && (STATE.ui.root || STATE.ui.host)) {
+      uiDestroy('disabled_idle');
     }
 
     return CFG;

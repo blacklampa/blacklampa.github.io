@@ -439,6 +439,8 @@
     if (!n) return;
     try { if (n.guard && typeof n.guard === 'function' && !n.guard(ctx || null)) { route = 'root'; n = node('root'); } } catch (_) { route = 'root'; n = node('root'); }
     if (!n) return;
+    // UI route renders both submenu items and legacy UI settings in one screen.
+    if (route === 'ui' && n.screen && Screens[n.screen]) return Screens[n.screen](ctx || null);
     if (n.children && n.children.length) return buildMenu(ctx, route);
     if (n.screen && Screens[n.screen]) return Screens[n.screen](ctx || null);
     buildMenu(ctx, 'root');

@@ -188,9 +188,12 @@
 
     ui: {
       open: false,
+      host: null,
+      shadow: null,
       root: null,
       titleEl: null,
       bodyEl: null,
+      closeEl: null,
       keyHandler: null
     }
   };
@@ -662,64 +665,105 @@
     return s;
   }
 
-  function ensureUiStyle() {
+  function cleanupLegacyUi() {
     try {
-      if (!document || !document.head) return;
-      if (document.getElementById('__bl_player_overlay_style_v2')) return;
-
-      var st = document.createElement('style');
-      st.id = '__bl_player_overlay_style_v2';
-      st.type = 'text/css';
-      st.textContent = ''
-        + '#__bl_player_overlay_popup_v2{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);min-width:360px;max-width:760px;max-height:75vh;'
-        + 'background:rgba(0,0,0,0.86);color:#fff;padding:12px 14px;border-radius:14px;z-index:2147483646;'
-        + 'box-shadow:0 10px 28px rgba(0,0,0,0.6);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);pointer-events:auto;overflow:hidden;}'
-        + '#__bl_player_overlay_popup_v2.bl-ov-hidden{display:none;}'
-        + '#__bl_player_overlay_popup_v2 .bl-ov-title{font-weight:800;font-size:15px;margin:0 0 8px 0;}'
-        + '#__bl_player_overlay_popup_v2 .bl-ov-body{margin:0;opacity:0.95;white-space:pre-wrap;word-break:break-word;overflow:auto;max-height:66vh;}';
-
-      document.head.appendChild(st);
+      if (!document) return;
+      var oldRoot = document.getElementById('__bl_player_overlay_popup_v2');
+      if (oldRoot && oldRoot.parentNode) oldRoot.parentNode.removeChild(oldRoot);
+    } catch (_) { }
+    try {
+      if (!document) return;
+      var hosts = document.getElementsByClassName('bl-overlay-host');
+      while (hosts && hosts.length) {
+        var h = hosts[0];
+        if (!h || !h.parentNode) break;
+        h.parentNode.removeChild(h);
+      }
+    } catch (_) { }
+    try {
+      if (!document) return;
+      var oldStyle = document.getElementById('__bl_player_overlay_style_v2');
+      if (oldStyle && oldStyle.parentNode) oldStyle.parentNode.removeChild(oldStyle);
     } catch (_) { }
   }
 
   function ensureUiRoot() {
     if (STATE.ui.root) return STATE.ui.root;
 
-    ensureUiStyle();
+    cleanupLegacyUi();
 
+    var host = null;
+    var shadow = null;
     var root = null;
-    try { if (document) root = document.getElementById('__bl_player_overlay_popup_v2'); } catch (_) { root = null; }
+    try {
+      if (!document) return null;
+      host = document.createElement('div');
+      host.className = 'bl-overlay-host';
+      shadow = host.attachShadow ? host.attachShadow({ mode: 'open' }) : null;
+      if (!shadow) return null;
 
-    if (!root) {
-      try {
-        root = document.createElement('div');
-        root.id = '__bl_player_overlay_popup_v2';
-        root.className = 'bl-ov-hidden';
-        root.style.font = POPUP_FONT;
+      var st = document.createElement('style');
+      st.textContent = ''
+        + ':host, .ov-root, .ov-root *{box-sizing:border-box;}'
+        + '.ov-root{all:initial;font:' + POPUP_FONT + ';position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);'
+        + 'max-width:80vw;max-height:75vh;overflow:hidden;border-radius:10px;background:rgba(0,0,0,0.92);color:#eaeaea;display:flex;flex-direction:column;'
+        + 'z-index:2147483647;min-width:360px;box-shadow:0 10px 28px rgba(0,0,0,0.6);border:1px solid #b7bec7;pointer-events:auto;}'
+        + '.ov-hidden{display:none;}'
+        + '.ov-header{display:flex;align-items:center;justify-content:space-between;padding:10px 12px 8px 12px;border-bottom:1px solid rgba(255,255,255,0.15);}'
+        + '.ov-title{all:unset;font:700 14px/1.35 system-ui,-apple-system,\"Segoe UI\",Roboto,Arial,sans-serif;color:#eaeaea;}'
+        + '.ov-close{all:unset;cursor:pointer;font:700 18px/1 system-ui,-apple-system,\"Segoe UI\",Roboto,Arial,sans-serif;color:#cfd8dc;padding:2px 6px;border-radius:6px;}'
+        + '.ov-close:hover{background:rgba(255,255,255,0.12);color:#ffffff;}'
+        + '.ov-body{overflow:auto;padding:10px;flex:1;white-space:pre-wrap;word-break:break-word;margin:0;font:' + POPUP_FONT + ';color:#eaeaea;}'
+        + '.ov-footer{padding:6px 10px;border-top:1px solid rgba(255,255,255,0.12);font:500 11px/1.3 system-ui,-apple-system,\"Segoe UI\",Roboto,Arial,sans-serif;color:#90a4ae;}'
+        + '.state-playing{border-color:#4caf50;}'
+        + '.state-buffering{border-color:#ffb300;}'
+        + '.state-hung{border-color:#ff5252;}'
+        + '.state-recovering{border-color:#ff9800;}'
+        + '.state-failed{border-color:#f44336;}';
+      shadow.appendChild(st);
 
-        var title = document.createElement('div');
-        title.className = 'bl-ov-title';
-        title.textContent = 'BL Player Overlay DEBUG';
+      root = document.createElement('div');
+      root.className = 'ov-root ov-hidden';
 
-        var body = document.createElement('pre');
-        body.className = 'bl-ov-body';
+      var header = document.createElement('div');
+      header.className = 'ov-header';
 
-        root.appendChild(title);
-        root.appendChild(body);
-        (document.body || document.documentElement).appendChild(root);
+      var title = document.createElement('div');
+      title.className = 'ov-title';
+      title.textContent = 'BL Player Overlay DEBUG';
 
-        STATE.ui.titleEl = title;
-        STATE.ui.bodyEl = body;
-      } catch (_) { root = null; }
-    } else {
-      try {
-        root.style.font = POPUP_FONT;
-        STATE.ui.titleEl = root.querySelector('.bl-ov-title');
-        STATE.ui.bodyEl = root.querySelector('.bl-ov-body');
-      } catch (_) { }
+      var close = document.createElement('button');
+      close.className = 'ov-close';
+      close.type = 'button';
+      close.textContent = '×';
+      close.onclick = function () { try { uiHide('btn_close'); } catch (_) { } };
+
+      var body = document.createElement('pre');
+      body.className = 'ov-body';
+
+      var footer = document.createElement('div');
+      footer.className = 'ov-footer';
+      footer.textContent = 'Back/Esc or × to close';
+
+      header.appendChild(title);
+      header.appendChild(close);
+      root.appendChild(header);
+      root.appendChild(body);
+      root.appendChild(footer);
+      shadow.appendChild(root);
+
+      (document.body || document.documentElement).appendChild(host);
+
+      STATE.ui.host = host;
+      STATE.ui.shadow = shadow;
+      STATE.ui.root = root;
+      STATE.ui.titleEl = title;
+      STATE.ui.bodyEl = body;
+      STATE.ui.closeEl = close;
+    } catch (_) {
+      root = null;
     }
 
-    STATE.ui.root = root;
     return root;
   }
 
@@ -761,6 +805,32 @@
     if (!STATE.ui.keyHandler) return;
     try { window.removeEventListener('keydown', STATE.ui.keyHandler, true); } catch (_) { }
     STATE.ui.keyHandler = null;
+  }
+
+  function uiStateClass(phase) {
+    phase = String(phase || '');
+    if (phase === ST.PLAYING) return 'state-playing';
+    if (phase === ST.BUFFERING || phase === ST.STALLED) return 'state-buffering';
+    if (phase === ST.HUNG) return 'state-hung';
+    if (phase === ST.RECOVERING_SOFT || phase === ST.RECOVERING_INPLAYER || phase === ST.RECOVERING_REOPEN) return 'state-recovering';
+    if (phase === ST.FAILED) return 'state-failed';
+    return '';
+  }
+
+  function uiDestroy(reason) {
+    uiRemoveKeyHandler();
+    try { if (STATE.ui.closeEl) STATE.ui.closeEl.onclick = null; } catch (_) { }
+    try {
+      if (STATE.ui.host && STATE.ui.host.parentNode) STATE.ui.host.parentNode.removeChild(STATE.ui.host);
+    } catch (_) { }
+    STATE.ui.open = false;
+    STATE.ui.root = null;
+    STATE.ui.host = null;
+    STATE.ui.shadow = null;
+    STATE.ui.titleEl = null;
+    STATE.ui.bodyEl = null;
+    STATE.ui.closeEl = null;
+    if (reason) logLine('DBG', 'debug_destroy', { reason: String(reason || '') });
   }
 
   function buildDebugText() {
@@ -853,6 +923,7 @@
     if (!root) return;
 
     try {
+      root.classList.remove('ov-hidden');
       root.style.opacity = String(popupOpacity());
       root.style.font = POPUP_FONT;
 
@@ -861,10 +932,17 @@
         STATE.ui.titleEl.style.color = phaseColor(STATE.phase);
       }
 
+      root.classList.remove('state-playing');
+      root.classList.remove('state-buffering');
+      root.classList.remove('state-hung');
+      root.classList.remove('state-recovering');
+      root.classList.remove('state-failed');
+      var stClass = uiStateClass(STATE.phase);
+      if (stClass) root.classList.add(stClass);
+
       root.style.border = '1px solid ' + phaseColor(STATE.phase);
       if (STATE.ui.bodyEl) STATE.ui.bodyEl.textContent = buildDebugText();
 
-      root.classList.remove('bl-ov-hidden');
       STATE.ui.open = true;
     } catch (_) { }
 
@@ -877,9 +955,8 @@
   }
 
   function uiHide(reason) {
-    try { if (STATE.ui.root) STATE.ui.root.classList.add('bl-ov-hidden'); } catch (_) { }
-    STATE.ui.open = false;
-    uiRemoveKeyHandler();
+    try { if (STATE.ui.root) STATE.ui.root.classList.add('ov-hidden'); } catch (_) { }
+    uiDestroy('hide:' + String(reason || ''));
     logLine('DBG', 'debug_hide', { reason: String(reason || '') });
   }
 
@@ -1518,7 +1595,7 @@
 
       if (!CFG.enabled) {
         if (STATE.rec.active) recoveryCancel('disabled');
-        if (STATE.ui.open) uiHide('disabled');
+        if (STATE.ui.open || STATE.ui.root) uiDestroy('disabled');
         setPhase(ST.IDLE, 'disabled');
         return;
       }
@@ -1651,7 +1728,7 @@
     readSettingsFromStorage();
     if (!CFG.enabled) {
       recoveryCancel('refresh_disabled');
-      if (STATE.ui.open) uiHide('refresh_disabled');
+      if (STATE.ui.open || STATE.ui.root) uiDestroy('refresh_disabled');
     }
     return CFG;
   };
