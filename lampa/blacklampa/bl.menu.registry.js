@@ -1269,6 +1269,66 @@
       });
 
       P(ctx, {
+        id: 'player_overlay_fake_full_enabled',
+        type: 'toggle',
+        values: { 0: 'OFF', 1: 'ON' },
+        default: 1,
+        name: 'Overlay: Fake-full detector',
+        desc: 'Ловить фейковую «полную буферизацию» (range 0..dur без движения прогресса/буфера).',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
+        id: 'player_overlay_fake_full_no_prog_ms',
+        type: 'select',
+        values: { '3000': '3000', '4000': '4000', '5000': '5000', '6000': '6000', '8000': '8000', '10000': '10000', '12000': '12000' },
+        default: '6000',
+        name: 'Overlay: Fake-full no-progress (ms)',
+        desc: 'Сколько ждать без progress перед fake-full детектом.',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
+        id: 'player_overlay_fake_full_no_move_ms',
+        type: 'select',
+        values: { '3000': '3000', '4000': '4000', '5000': '5000', '6000': '6000', '8000': '8000', '10000': '10000', '12000': '12000' },
+        default: '6000',
+        name: 'Overlay: Fake-full no-buffer-move (ms)',
+        desc: 'Сколько ждать без движения buffered-end перед fake-full детектом.',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
+        id: 'player_overlay_min_ahead_sec',
+        type: 'select',
+        values: { '0.25': '0.25', '0.5': '0.5', '0.75': '0.75', '1.0': '1.0', '1.5': '1.5', '2.0': '2.0' },
+        default: '0.5',
+        name: 'Overlay: Min ahead (sec)',
+        desc: 'Порог ahead для underrun-детектора.',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
+        id: 'player_overlay_underrun_no_prog_ms',
+        type: 'select',
+        values: { '2000': '2000', '3000': '3000', '4000': '4000', '5000': '5000', '6000': '6000', '8000': '8000', '10000': '10000' },
+        default: '4000',
+        name: 'Overlay: Underrun no-progress (ms)',
+        desc: 'Сколько ждать без progress для buffer underrun.',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
+        id: 'player_overlay_underrun_no_ahead_move_ms',
+        type: 'select',
+        values: { '2000': '2000', '3000': '3000', '4000': '4000', '5000': '5000', '6000': '6000', '8000': '8000', '10000': '10000' },
+        default: '4000',
+        name: 'Overlay: Underrun no-ahead-move (ms)',
+        desc: 'Сколько ждать без изменения ahead для buffer underrun.',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
         id: 'player_overlay_soft_attempts',
         type: 'select',
         values: { '0': '0', '1': '1', '2': '2', '3': '3', '4': '4', '5': '5' },
