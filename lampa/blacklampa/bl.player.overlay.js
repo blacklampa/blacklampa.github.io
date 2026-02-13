@@ -331,6 +331,7 @@
       shadow: null,
       root: null,
       titleEl: null,
+      subTitleEl: null,
       bodyEl: null,
       closeEl: null,
       keyHandler: null
@@ -1287,14 +1288,21 @@
       st.textContent = ''
         + ':host, .ov-root, .ov-root *{box-sizing:border-box;}'
         + '.ov-root{all:initial;font:' + POPUP_FONT + ';position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);'
-        + 'max-width:80vw;max-height:75vh;overflow:hidden;border-radius:10px;background:rgba(0,0,0,0.92);color:#eaeaea;display:flex;flex-direction:column;'
+        + 'width:80vw;height:80vh;max-width:80vw;max-height:80vh;overflow:hidden;border-radius:10px;background:rgba(0,0,0,0.92);color:#eaeaea;display:flex;flex-direction:column;'
         + 'z-index:2147483647;min-width:360px;box-shadow:0 10px 28px rgba(0,0,0,0.6);border:1px solid #b7bec7;pointer-events:auto;}'
         + '.ov-hidden{display:none;}'
-        + '.ov-header{display:flex;align-items:center;justify-content:space-between;padding:10px 12px 8px 12px;border-bottom:1px solid rgba(255,255,255,0.15);}'
-        + '.ov-title{all:unset;font:700 14px/1.35 system-ui,-apple-system,\"Segoe UI\",Roboto,Arial,sans-serif;color:#eaeaea;}'
+        + '.ov-header{flex:0 0 auto;display:flex;align-items:flex-start;justify-content:space-between;background:rgba(0,0,0,0.85);border-bottom:1px solid rgba(255,255,255,0.15);padding:8px 10px;}'
+        + '.ov-head{display:flex;flex-direction:column;gap:2px;min-width:0;}'
+        + '.ov-headline,.ov-subline{margin:0;font:' + POPUP_FONT + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#eaeaea;}'
+        + '.ov-headline{font-weight:700;}'
         + '.ov-close{all:unset;cursor:pointer;font:700 18px/1 system-ui,-apple-system,\"Segoe UI\",Roboto,Arial,sans-serif;color:#cfd8dc;padding:2px 6px;border-radius:6px;}'
         + '.ov-close:hover{background:rgba(255,255,255,0.12);color:#ffffff;}'
-        + '.ov-body{overflow:auto;padding:10px;flex:1;white-space:pre-wrap;word-break:break-word;margin:0;font:' + POPUP_FONT + ';color:#eaeaea;}'
+        + '.ov-body{flex:1;overflow:auto;padding:8px 10px;margin:0;font:' + POPUP_FONT + ';color:#eaeaea;}'
+        + '.section{margin-bottom:8px;}'
+        + '.section-title{color:#66d9ef;margin-bottom:3px;font-weight:700;}'
+        + '.section-body{white-space:pre-wrap;word-break:break-word;}'
+        + '.section-line{margin:0 0 2px 0;}'
+        + '.logs .section-line{color:#d7dee3;}'
         + '.ov-footer{padding:6px 10px;border-top:1px solid rgba(255,255,255,0.12);font:500 11px/1.3 system-ui,-apple-system,\"Segoe UI\",Roboto,Arial,sans-serif;color:#90a4ae;}'
         + '.state-playing{border-color:#4caf50;}'
         + '.state-buffering{border-color:#ffb300;}'
@@ -1309,9 +1317,16 @@
       var header = document.createElement('div');
       header.className = 'ov-header';
 
+      var head = document.createElement('div');
+      head.className = 'ov-head';
+
       var title = document.createElement('div');
-      title.className = 'ov-title';
-      title.textContent = 'BL Player Overlay DEBUG';
+      title.className = 'ov-headline';
+      title.textContent = 'phase=IDLE paused=0 recover=0 blockNext=0';
+
+      var subTitle = document.createElement('div');
+      subTitle.className = 'ov-subline';
+      subTitle.textContent = 'ct=- / dur=-  stable=-  ticket=-';
 
       var close = document.createElement('button');
       close.className = 'ov-close';
@@ -1319,14 +1334,16 @@
       close.textContent = '×';
       close.onclick = function () { try { uiHide('btn_close'); } catch (_) { } };
 
-      var body = document.createElement('pre');
+      var body = document.createElement('div');
       body.className = 'ov-body';
 
       var footer = document.createElement('div');
       footer.className = 'ov-footer';
       footer.textContent = 'Back/Esc or × to close';
 
-      header.appendChild(title);
+      head.appendChild(title);
+      head.appendChild(subTitle);
+      header.appendChild(head);
       header.appendChild(close);
       root.appendChild(header);
       root.appendChild(body);
@@ -1339,6 +1356,7 @@
       STATE.ui.shadow = shadow;
       STATE.ui.root = root;
       STATE.ui.titleEl = title;
+      STATE.ui.subTitleEl = subTitle;
       STATE.ui.bodyEl = body;
       STATE.ui.closeEl = close;
     } catch (_) {
@@ -1409,6 +1427,7 @@
     STATE.ui.host = null;
     STATE.ui.shadow = null;
     STATE.ui.titleEl = null;
+    STATE.ui.subTitleEl = null;
     STATE.ui.bodyEl = null;
     STATE.ui.closeEl = null;
     if (reason) logLine('DBG', 'debug_destroy', { reason: String(reason || '') });
@@ -1602,6 +1621,125 @@
     return lines.join('\n');
   }
 
+  function escHtml(s) {
+    s = String(s == null ? '' : s);
+    return s
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function fmtDbgSec(v) {
+    var n = toNum(v, NaN);
+    return isFinite(n) ? n.toFixed(2) : '-';
+  }
+
+  function fmtDbgRange(a, b) {
+    return fmtDbgSec(a) + '-' + fmtDbgSec(b);
+  }
+
+  function buildSectionHtml(title, lines, extraCls) {
+    var cls = 'section';
+    if (extraCls) cls += ' ' + String(extraCls || '');
+    var out = '<div class="' + cls + '">';
+    out += '<div class="section-title">' + escHtml(title) + '</div>';
+    out += '<div class="section-body">';
+    for (var i = 0; i < lines.length; i++) out += '<div class="section-line">' + escHtml(lines[i]) + '</div>';
+    out += '</div></div>';
+    return out;
+  }
+
+  function buildDebugHeaderLines() {
+    var t = STATE.tick || {};
+    var ticket = STATE.resume.ticket || STATE.resume.lastTicket || null;
+    var blockOn = isBlockNextActive() ? 1 : 0;
+    return {
+      line1: 'phase=' + String(STATE.phase || '')
+        + ' paused=' + (t.paused ? '1' : '0')
+        + ' recover=' + (STATE.rec.active ? '1' : '0')
+        + ' blockNext=' + String(blockOn),
+      line2: 'ct=' + fmtDbgSec(t.ct)
+        + ' / dur=' + fmtDbgSec(t.dur)
+        + '  stable=' + fmtDbgSec(STATE.pos.lastStableSec)
+        + '  ticket=' + (ticket && isFinite(toNum(ticket.sec, NaN)) ? toNum(ticket.sec, 0).toFixed(2) : '-')
+    };
+  }
+
+  function buildDebugBodyHtml() {
+    var t = STATE.tick || {};
+    var ba = bufferAges();
+    var ra = runtimeAges();
+    var strictFalseEnd = isFalseEnd(toNum(t.ct, NaN), toNum(t.dur, NaN));
+    var looseFalseEnd = isFalseEndLooser(toNum(t.ct, NaN), toNum(t.dur, NaN), ra);
+    var ticket = STATE.resume.ticket || STATE.resume.lastTicket || null;
+
+    var bufferLines = [
+      'ranges=' + String(toInt(t.rangesCount, 0))
+        + ' first=' + fmtDbgRange(t.firstRangeStart, t.firstRangeEnd)
+        + ' current=' + fmtDbgRange(t.rangeStartAtCt, t.rangeEndAtCt),
+      'ahead=' + fmtDbgSec(t.aheadSec)
+        + ' total=' + fmtDbgSec(t.totalBufferedSec)
+        + ' bufferedEndAtCt=' + fmtDbgSec(t.bufferedEndAtCt),
+      'bufMoveAge=' + String(toInt(ba.bufEndMoveAge, 0))
+        + ' progressAge=' + String(toInt(ba.progAge, 0))
+        + ' aheadMoveAge=' + String(toInt(ba.aheadMoveAge, 0))
+    ];
+
+    var detectorLines = [
+      'fakeFull=' + String(toInt(STATE.flags.fakeFull.on, 0))
+        + ' underrun=' + String(toInt(STATE.flags.underrun.on, 0))
+        + ' playingStuck=' + String(toInt(STATE.flags.playingStuck.on, 0)),
+      'falseEndStrict=' + (strictFalseEnd ? '1' : '0')
+        + ' falseEndLoose=' + (looseFalseEnd ? '1' : '0'),
+      'ctStuckMs=' + String(toInt(STATE.ct.stuckMs, 0))
+        + ' timeupdateAge=' + String(toInt(ra.timeupdateAge, 0))
+        + ' progressAge=' + String(toInt(ra.progAge, 0))
+    ];
+
+    var recoveryLines = [
+      'active=' + (STATE.rec.active ? '1' : '0')
+        + ' step=' + String(STATE.rec.step || '')
+        + ' soft=' + String(toInt(STATE.rec.softTry, 0)) + '/' + String(toInt(STATE.rec.softMax, 0))
+        + ' inplayer=' + String(toInt(STATE.rec.inpTry, 0)) + '/' + String(toInt(STATE.rec.inpMax, 0))
+        + ' reopen=' + String(toInt(STATE.rec.reopenTry, 0)) + '/1',
+      'pendingSeek=' + (ticket && isFinite(toNum(ticket.sec, NaN)) ? toNum(ticket.sec, 0).toFixed(2) : '-')
+        + ' lastSeek=' + fmtDbgSec(STATE.resume.lastSeekSec)
+        + ' lastSeekOk=' + String(toInt(STATE.resume.lastSeekOk, 0)),
+      'lastAction=' + String(STATE.rec.lastAction || ''),
+      'lastErr=' + String(STATE.rec.lastErr || '')
+    ];
+
+    var truthLines = [
+      'lastGoodSec=' + fmtDbgSec(STATE.truth.lastGoodSec)
+        + ' frozen=' + (STATE.truth.frozen ? '1' : '0')
+        + ' lastCommitAge=' + String(ageMs(STATE.truth.lastCommitTs)),
+      'stableSec=' + fmtDbgSec(STATE.pos.lastStableSec)
+        + ' stableAge=' + String(ageMs(STATE.pos.lastStableTs))
+        + ' srcSig=' + String(STATE.truth.srcSig || t.srcSig || '')
+    ];
+
+    var logs = [];
+    try {
+      var tail = logRowsTail(DET.logLimit);
+      for (var i = 0; i < tail.length; i++) {
+        var row = tail[i] || {};
+        var msg = String(row.msg || '');
+        var n = toInt(row.n, 1);
+        logs.push(n > 1 ? ('×' + String(n) + ' ' + msg) : msg);
+      }
+    } catch (_) { }
+
+    var html = '';
+    html += buildSectionHtml('BUFFER', bufferLines);
+    html += buildSectionHtml('DETECTORS', detectorLines);
+    html += buildSectionHtml('RECOVERY', recoveryLines);
+    html += buildSectionHtml('TRUTH', truthLines);
+    html += buildSectionHtml('LOGS', logs.length ? logs : ['(empty)'], 'logs');
+    return html;
+  }
+
   function uiRender(reason) {
     var root = ensureUiRoot();
     if (!root) return;
@@ -1611,9 +1749,13 @@
       root.style.opacity = String(popupOpacity());
       root.style.font = POPUP_FONT;
 
+      var h = buildDebugHeaderLines();
       if (STATE.ui.titleEl) {
-        STATE.ui.titleEl.textContent = 'BL Player Overlay DEBUG';
+        STATE.ui.titleEl.textContent = String(h.line1 || '');
         STATE.ui.titleEl.style.color = phaseColor(STATE.phase);
+      }
+      if (STATE.ui.subTitleEl) {
+        STATE.ui.subTitleEl.textContent = String(h.line2 || '');
       }
 
       root.classList.remove('state-playing');
@@ -1625,7 +1767,7 @@
       if (stClass) root.classList.add(stClass);
 
       root.style.border = '1px solid ' + phaseColor(STATE.phase);
-      if (STATE.ui.bodyEl) STATE.ui.bodyEl.textContent = buildDebugText();
+      if (STATE.ui.bodyEl) STATE.ui.bodyEl.innerHTML = buildDebugBodyHtml();
 
       STATE.ui.open = true;
     } catch (_) { }
