@@ -167,6 +167,9 @@
 
     guard: {
       blockNextUntilTs: 0,
+      preventStartUntilTs: 0,
+      preventEndedUntilTs: 0,
+      falseEndCriticalUntilTs: 0,
       lastFalseEndTs: 0,
       falseEndCount: 0
     },
@@ -1031,8 +1034,35 @@
     });
     on('canplay', function () { bumpEvent('canplay'); });
     on('loadeddata', function () { bumpEvent('loadeddata'); });
-    on('ended', function () {
+    on('ended', function (e) {
       bumpEvent('ended');
+      try {
+        if (CFG.enabled && CFG.protectNext) {
+          var until = Math.max(toInt(STATE.guard.preventEndedUntilTs, 0), toInt(STATE.guard.falseEndCriticalUntilTs, 0));
+          if (until && now() < until) {
+            try { if (e && e.stopImmediatePropagation) e.stopImmediatePropagation(); } catch (_) { }
+            try { if (e && e.preventDefault) e.preventDefault(); } catch (_) { }
+            var left = Math.max(0, until - now());
+            logLine('WRN', 'BLOCK ended (critical window)', {
+              leftMs: left,
+              ct: isFinite(toNum(STATE.tick && STATE.tick.ct, NaN)) ? toNum(STATE.tick && STATE.tick.ct, 0).toFixed(2) : '',
+              dur: isFinite(toNum(STATE.tick && STATE.tick.dur, NaN)) ? toNum(STATE.tick && STATE.tick.dur, 0).toFixed(2) : ''
+            });
+
+            try {
+              var v = STATE.video || getVideo();
+              var sec = NaN;
+              if (STATE.pos && isFinite(toNum(STATE.pos.lastStableSec, NaN)) && toNum(STATE.pos.lastStableSec, NaN) >= 2) sec = toNum(STATE.pos.lastStableSec, NaN);
+              else if (isFinite(toNum(STATE.truth.lastGoodSec, NaN)) && toNum(STATE.truth.lastGoodSec, NaN) >= 2) sec = toNum(STATE.truth.lastGoodSec, NaN);
+              if (v && isFinite(sec)) v.currentTime = sec;
+            } catch (_) { }
+
+            armFalseEndCritical(30000, 'ended_blocked');
+            if (!STATE.rec.active) startRecovery('ended_blocked');
+            return;
+          }
+        }
+      } catch (_) { }
       try { maybeHandleFalseEnd('ended_evt'); } catch (_) { }
     });
 
@@ -1674,6 +1704,11 @@
     var strictFalseEnd = isFalseEnd(toNum(t.ct, NaN), toNum(t.dur, NaN));
     var looseFalseEnd = isFalseEndLooser(toNum(t.ct, NaN), toNum(t.dur, NaN), ra);
     var ticket = STATE.resume.ticket || STATE.resume.lastTicket || null;
+    var nowTs = now();
+    var criticalUntil = criticalUntilTs();
+    var criticalLeft = Math.max(0, criticalUntil - nowTs);
+    var preventStart = nowTs < toInt(STATE.guard.preventStartUntilTs, 0) ? 1 : 0;
+    var preventEnded = nowTs < toInt(STATE.guard.preventEndedUntilTs, 0) ? 1 : 0;
 
     var bufferLines = [
       'ranges=' + String(toInt(t.rangesCount, 0))
@@ -1704,6 +1739,9 @@
         + ' soft=' + String(toInt(STATE.rec.softTry, 0)) + '/' + String(toInt(STATE.rec.softMax, 0))
         + ' inplayer=' + String(toInt(STATE.rec.inpTry, 0)) + '/' + String(toInt(STATE.rec.inpMax, 0))
         + ' reopen=' + String(toInt(STATE.rec.reopenTry, 0)) + '/1',
+      'criticalLeftMs=' + String(toInt(criticalLeft, 0))
+        + ' preventStart=' + String(preventStart)
+        + ' preventEnded=' + String(preventEnded),
       'pendingSeek=' + (ticket && isFinite(toNum(ticket.sec, NaN)) ? toNum(ticket.sec, 0).toFixed(2) : '-')
         + ' lastSeek=' + fmtDbgSec(STATE.resume.lastSeekSec)
         + ' lastSeekOk=' + String(toInt(STATE.resume.lastSeekOk, 0)),
@@ -1810,6 +1848,9 @@
     try { endCritical('bufguard'); } catch (_) { }
 
     STATE.guard.blockNextUntilTs = 0;
+    STATE.guard.preventStartUntilTs = 0;
+    STATE.guard.preventEndedUntilTs = 0;
+    STATE.guard.falseEndCriticalUntilTs = 0;
     STATE.life.suspendDetectors = 1;
     markLifeClosed('shutdown:' + reason);
 
@@ -1843,6 +1884,9 @@
     try { endCritical('bufguard'); } catch (_) { }
 
     STATE.guard.blockNextUntilTs = 0;
+    STATE.guard.preventStartUntilTs = 0;
+    STATE.guard.preventEndedUntilTs = 0;
+    STATE.guard.falseEndCriticalUntilTs = 0;
     markLifeClosed('soft_exit:' + reason);
 
     // Exit must remain soft: do not pause/play/reset src/load here.
@@ -1860,11 +1904,10 @@
     try { endCritical('overlay_recover'); } catch (_) { }
     try { endCritical('bufguard'); } catch (_) { }
 
-    STATE.guard.blockNextUntilTs = 0;
     STATE.life.suspendDetectors = 1;
     markLifeClosed('soft_keep:' + reason);
 
-    // Keep resume ticket/carry/truth freeze intact; just detach runtime bindings.
+    // Keep resume ticket/carry/truth freeze and critical windows intact; just detach runtime bindings.
     detachVideoListeners();
     if (STATE.ui.open || STATE.ui.root) uiDestroy('soft_keep:' + reason);
     stopTickTimer('soft_keep:' + reason);
@@ -1922,9 +1965,40 @@
   }
 
   function armBlockNext(ms, why) {
-    ms = clampInt(ms, 1000, 10000);
+    ms = clampInt(ms, 1000, 60000);
     STATE.guard.blockNextUntilTs = Math.max(toInt(STATE.guard.blockNextUntilTs, 0), now() + ms);
     logLine('WRN', 'block_next_window', { ms: ms, why: String(why || '') });
+  }
+
+  function criticalUntilTs() {
+    return Math.max(
+      toInt(STATE.guard.falseEndCriticalUntilTs, 0),
+      toInt(STATE.guard.preventStartUntilTs, 0),
+      toInt(STATE.guard.preventEndedUntilTs, 0)
+    );
+  }
+
+  function isCriticalWindowActive() {
+    return now() < criticalUntilTs();
+  }
+
+  function armFalseEndCritical(ms, why) {
+    ms = clampInt(ms, 2000, 60000);
+    var until = now() + ms;
+    STATE.guard.falseEndCriticalUntilTs = Math.max(toInt(STATE.guard.falseEndCriticalUntilTs, 0), until);
+    STATE.guard.preventStartUntilTs = Math.max(toInt(STATE.guard.preventStartUntilTs, 0), until);
+    STATE.guard.preventEndedUntilTs = Math.max(toInt(STATE.guard.preventEndedUntilTs, 0), until);
+    armBlockNext(ms, 'falseEndCritical:' + String(why || ''));
+    logLine('WRN', 'false_end_critical_window', { ms: ms, why: String(why || '') });
+  }
+
+  function criticalMsForReason(reason) {
+    reason = String(reason || '');
+    if (!reason) return 0;
+    if (reason === 'fake_full_buffer' || reason === 'false_end' || reason === 'forced_next' || reason === 'ended_blocked') return 30000;
+    if (reason === 'buffer_underrun' || reason === 'playing_stuck') return 20000;
+    if (reason.indexOf('stalled') >= 0 || reason.indexOf('waiting') >= 0) return 20000;
+    return 0;
   }
 
   function shouldBlockNextType(type) {
@@ -2637,7 +2711,7 @@
       return false;
     }
 
-    if (CFG.protectNext) armBlockNext(12000, 'carry_start');
+    if (CFG.protectNext) armFalseEndCritical(20000, 'carry_start');
 
     var sig = '';
     try { sig = String(carry.srcSig || ''); } catch (_) { sig = ''; }
@@ -2902,7 +2976,11 @@
     clearResumeUnfreezeTimer();
     var ticket = makeResumeTicket(reason, 'recovery');
     truthFreeze(true, 'recover:' + reason);
-    if (CFG.protectNext) armBlockNext(10000, 'recover:' + reason);
+    if (CFG.protectNext) {
+      var criticalMs = criticalMsForReason(reason);
+      if (criticalMs > 0) armFalseEndCritical(criticalMs, 'recover:' + reason);
+      else armBlockNext(10000, 'recover:' + reason);
+    }
 
     logLine('WRN', 'recover_begin', {
       reason: reason,
@@ -3044,7 +3122,7 @@
     STATE.guard.lastFalseEndTs = ts;
     STATE.guard.falseEndCount = toInt(STATE.guard.falseEndCount, 0) + 1;
 
-    armBlockNext(DET.manualNextBlockMs, 'false_end');
+    armFalseEndCritical(30000, 'false_end');
 
     var v = STATE.video || getVideo();
     var target = Math.max(0, toNum(STATE.truth.lastGoodSec, 0) - 0.7);
@@ -3073,7 +3151,7 @@
       setPhase(ST.HUNG, 'false_end');
       startRecovery('false_end');
     } else {
-      armBlockNext(DET.manualNextBlockMs + 2000, 'false_end_busy');
+      armFalseEndCritical(30000, 'false_end_busy');
     }
 
     return true;
@@ -3095,13 +3173,13 @@
 
     var ts = now();
     if ((ts - toInt(STATE.guard.lastFalseEndTs, 0)) < 700) {
-      armBlockNext(DET.manualNextBlockMs + 2000, 'forced_next_debounce');
+      armFalseEndCritical(30000, 'forced_next_debounce');
       return true;
     }
 
     STATE.guard.lastFalseEndTs = ts;
     STATE.guard.falseEndCount = toInt(STATE.guard.falseEndCount, 0) + 1;
-    armBlockNext(DET.manualNextBlockMs + (STATE.rec.active ? 3000 : 0), 'forced_next');
+    armFalseEndCritical(30000, 'forced_next');
 
     var v = STATE.video || getVideo();
     var target = Math.max(0, toNum(STATE.truth.lastGoodSec, 0) - 0.7);
@@ -3136,7 +3214,7 @@
       setPhase(ST.HUNG, 'forced_next');
       startRecovery('forced_next');
     } else {
-      armBlockNext(DET.manualNextBlockMs + 2000, 'forced_next_busy');
+      armFalseEndCritical(30000, 'forced_next_busy');
       logLine('DBG', 'forced_next_recover_busy', { rec: 1, hold: toInt(STATE.guard.blockNextUntilTs, 0) });
     }
 
@@ -3153,6 +3231,7 @@
       STATE.life.suspendDetectors = 0;
       STATE.life.exitIntent = 0;
       setUserPauseIntent(false, 'player_start');
+      if (STATE.resume && STATE.resume.carry && CFG.protectNext) armFalseEndCritical(20000, 'carry_start');
       setPhase(ST.PLAYING, 'player_start');
       logLine('INF', 'player_start', { hasPayload: payload ? 1 : 0 });
       if (CFG.enabled && CFG.debugOnOpen) uiShow('player_start');
@@ -3194,6 +3273,16 @@
       var type = (arguments && arguments.length) ? arguments[0] : '';
       var payload = (arguments && arguments.length > 1) ? arguments[1] : undefined;
       var lowerType = String(type || '').toLowerCase();
+
+      try {
+        if (CFG.enabled && CFG.protectNext && lowerType === 'start' && !STATE.rec.active) {
+          var untilStart = Math.max(toInt(STATE.guard.preventStartUntilTs, 0), toInt(STATE.guard.falseEndCriticalUntilTs, 0));
+          if (untilStart && now() < untilStart) {
+            logLine('WRN', 'BLOCK player.start (critical window)', { leftMs: Math.max(0, untilStart - now()) });
+            return;
+          }
+        }
+      } catch (_) { }
 
       try { handlePlayerSend(type, payload); } catch (_) { }
 
@@ -3240,6 +3329,13 @@
       var lowerType = String(type || '').toLowerCase();
 
       try {
+        if (CFG.enabled && CFG.protectNext && lowerType === 'start' && !STATE.rec.active) {
+          var untilStart = Math.max(toInt(STATE.guard.preventStartUntilTs, 0), toInt(STATE.guard.falseEndCriticalUntilTs, 0));
+          if (untilStart && now() < untilStart) {
+            logLine('WRN', 'BLOCK playlist.start (critical window)', { leftMs: Math.max(0, untilStart - now()) });
+            return;
+          }
+        }
         if (CFG.enabled && CFG.protectNext && shouldBlockNextType(type)) {
           if (STATE.rec.active) {
             armBlockNext(5000, 'rec_active_playlist');
@@ -3381,6 +3477,7 @@
     hangUpdate(true, 'playing_stuck', ages);
     flagSet('playingStuck', true, 'ctStuckMs=' + String(ctStuckMs));
     setPhase(ST.HUNG, 'playing_stuck');
+    if (CFG.protectNext) armFalseEndCritical(20000, 'stuck');
     logLine('WRN', 'DETECT playing_stuck', {
       ctStuckMs: ctStuckMs,
       timeupdateAge: timeupdateAge,
@@ -3399,7 +3496,7 @@
     else logLine('DBG', 'DETECT blocked', { kind: 'playing_stuck', why: String(rec.reason || '') });
     if (!started) {
       hangUpdate(true, 'playing_stuck_no_recover', ages);
-      armBlockNext(DET.manualNextBlockMs + 2000, 'hang_no_recover');
+      armFalseEndCritical(20000, 'hang_no_recover');
       logLine('WRN', 'hang_recovery_not_started', { recActive: STATE.rec.active ? 1 : 0, lastErr: String(STATE.rec.lastErr || '') });
     }
     return started;
@@ -3448,7 +3545,7 @@
     flagSet('fakeFull', true, 'dur=' + dur.toFixed(2) + ' range=' + fs.toFixed(2) + '-' + fe.toFixed(2));
 
     setPhase(ST.HUNG, 'fake_full');
-    if (CFG.protectNext) armBlockNext(6000, 'fake_full');
+    if (CFG.protectNext) armFalseEndCritical(30000, 'fake_full');
     logLine('WRN', 'DETECT fake_full', {
       dur: dur.toFixed(2),
       range: fs.toFixed(2) + '-' + fe.toFixed(2),
@@ -3462,7 +3559,7 @@
     var started = false;
     if (rec.ok) started = startRecovery('fake_full_buffer');
     else logLine('DBG', 'DETECT blocked', { kind: 'fake_full', why: String(rec.reason || '') });
-    if (!started && CFG.protectNext) armBlockNext(8000, 'fake_full_busy');
+    if (!started && CFG.protectNext) armFalseEndCritical(30000, 'fake_full_busy');
     return started;
   }
 
@@ -3492,7 +3589,7 @@
     flagSet('underrun', true, 'ahead=' + ahead.toFixed(2) + ' progAge=' + String(toInt(ba.progAge, 0)));
 
     setPhase(ST.HUNG, 'underrun');
-    if (CFG.protectNext) armBlockNext(6000, 'underrun');
+    if (CFG.protectNext) armFalseEndCritical(20000, 'underrun');
     logLine('WRN', 'DETECT underrun', {
       ahead: ahead.toFixed(2),
       progAge: toInt(ba.progAge, 0),
@@ -3504,7 +3601,7 @@
     var started = false;
     if (rec.ok) started = startRecovery('buffer_underrun');
     else logLine('DBG', 'DETECT blocked', { kind: 'underrun', why: String(rec.reason || '') });
-    if (!started && CFG.protectNext) armBlockNext(8000, 'underrun_busy');
+    if (!started && CFG.protectNext) armFalseEndCritical(20000, 'underrun_busy');
     return started;
   }
 
@@ -3740,6 +3837,10 @@
       },
       protect: {
         blockNextUntilTs: toInt(STATE.guard.blockNextUntilTs, 0),
+        preventStartUntilTs: toInt(STATE.guard.preventStartUntilTs, 0),
+        preventEndedUntilTs: toInt(STATE.guard.preventEndedUntilTs, 0),
+        falseEndCriticalUntilTs: toInt(STATE.guard.falseEndCriticalUntilTs, 0),
+        criticalActive: isCriticalWindowActive() ? 1 : 0,
         falseEndCount: toInt(STATE.guard.falseEndCount, 0)
       },
       truth: {
