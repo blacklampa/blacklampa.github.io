@@ -3697,9 +3697,34 @@
     return { started: false, why: why, reason: reason, mode: String(STATE.rec.mode || ''), intent: String(STATE.rec.hardIntent || '') };
   }
 
+  function reopenAtPublic(sec, reason, meta) {
+    sec = toNum(sec, NaN);
+    reason = String(reason || 'overlay_reopen_at');
+    meta = meta || {};
+
+    if (!CFG.enabled) return { started: false, why: 'disabled', reason: reason };
+    if (!isFinite(sec) || sec < 0) sec = 0;
+
+    var ok = false;
+    try {
+      ok = reopenFromPosition(reason, sec, {
+        manual: true,
+        overlay: true,
+        srcSig: String(meta && meta.srcSig ? meta.srcSig : ''),
+        ticketTs: toInt(meta && meta.ticketTs ? meta.ticketTs : 0, 0)
+      });
+    } catch (_) {
+      ok = false;
+    }
+
+    if (!ok) return { started: false, why: 'reopen_failed', reason: reason, sec: sec };
+    return { started: true, reason: reason, sec: sec, mode: String(STATE.rec.mode || ''), intent: String(STATE.rec.hardIntent || '') };
+  }
+
   API.getConfig = function () { return CFG; };
   API.getRuntimeSnapshot = function () { try { return getRuntimeSnapshot(); } catch (_) { return {}; } };
   API.requestRecover = function (reason, opts) { try { return requestRecoverPublic(reason, opts); } catch (_) { return { started: false, why: 'exception' }; } };
+  API.reopenAt = function (sec, reason, meta) { try { return reopenAtPublic(sec, reason, meta); } catch (_) { return { started: false, why: 'exception' }; } };
   API.beginOverlayCritical = function (tag, ttlMs) { try { return overlayCriticalBegin(tag, ttlMs); } catch (_) { return { tag: String(tag || ''), untilTs: 0 }; } };
   API.endOverlayCritical = function (tag) { try { return overlayCriticalEnd(tag); } catch (_) { return { tag: String(tag || ''), untilTs: 0 }; } };
 

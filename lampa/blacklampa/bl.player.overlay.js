@@ -201,7 +201,24 @@
       lastGoodTs: 0,
       lastCommitTs: 0,
       srcSig: '',
-      srcRaw: ''
+      srcRaw: '',
+      frozen: false
+    },
+
+    resume: {
+      ticket: null,
+      lastTicket: null,
+      unfreezeTimer: null,
+      lastSeekSec: NaN,
+      lastSeekTs: 0,
+      lastSeekOk: 0,
+      lastSeekErr: '',
+      reopenRequestedSec: NaN,
+      reopenRequestedTs: 0,
+      reopenAppliedSec: NaN,
+      reopenAppliedTs: 0,
+      reopenDeltaSec: NaN,
+      reopenSeekTs: 0
     },
 
     tick: {
@@ -554,8 +571,52 @@
     }
   }
 
+  function truthFreeze(on, why) {
+    if (on) {
+      STATE.truth.frozen = true;
+      logLine('DBG', 'truth_frozen', { why: String(why || '') });
+      return;
+    }
+    STATE.truth.frozen = false;
+    logLine('DBG', 'truth_unfrozen', { why: String(why || '') });
+  }
+
+  function clearResumeUnfreezeTimer() {
+    try {
+      if (STATE.resume.unfreezeTimer) clearTimeout(STATE.resume.unfreezeTimer);
+    } catch (_) { }
+    STATE.resume.unfreezeTimer = null;
+  }
+
+  function resumeFinalizeDelayed(delayMs, why) {
+    clearResumeUnfreezeTimer();
+    delayMs = clampInt(delayMs, 0, 10000);
+    STATE.resume.unfreezeTimer = setTimeout(function () {
+      STATE.resume.unfreezeTimer = null;
+      truthFreeze(false, 'resume_final:' + String(why || ''));
+      STATE.resume.ticket = null;
+      if (STATE.resume.reopenAppliedTs && ageMs(STATE.resume.reopenAppliedTs) > 1200) {
+        STATE.resume.reopenRequestedSec = NaN;
+        STATE.resume.reopenRequestedTs = 0;
+        STATE.resume.reopenSeekTs = 0;
+      }
+    }, delayMs);
+  }
+
+  function isValidTruthFrame(video, ct, dur) {
+    if (!isFinite(ct) || ct < 0) return false;
+    if (!isFinite(dur) || dur <= 5) return false;
+    if (ct > dur - 0.25) return false;
+    if (STATE.rec.active || STATE.truth.frozen) return false;
+    try {
+      if (video && video.paused && !STATE.userPausedIntent) return false;
+    } catch (_) { }
+    return true;
+  }
+
   function truthCommit(reason) {
     if (!CFG.storeTruth) return;
+    if (STATE.truth.frozen || STATE.rec.active) return;
     var t = STATE.truth;
     if (!isFinite(toNum(t.lastGoodSec, NaN))) return;
     if (!t.lastGoodTs) return;
@@ -589,26 +650,36 @@
   function truthUpdate(video, reason) {
     if (!CFG.storeTruth) return;
     if (!video) return;
+    if (STATE.rec.active || STATE.truth.frozen) return;
 
     var ct = toNum(video.currentTime, NaN);
     var dur = toNum(video.duration, NaN);
-    if (!isFinite(ct) || ct < 0) return;
-    if (isFinite(dur) && dur > 0 && ct >= dur - DET.falseEndNearDurSec) return;
+    if (!isValidTruthFrame(video, ct, dur)) return;
 
     var prev = toNum(STATE.truth.lastGoodSec, NaN);
+    var sig = srcSig(getCurrentSrc(video));
+    if (STATE.truth.srcSig && sig && sig !== STATE.truth.srcSig) {
+      // New stream source: reset anchor for new src when not in recovery.
+      STATE.truth.lastGoodSec = 0;
+      STATE.truth.lastGoodTs = 0;
+      STATE.truth.lastCommitTs = 0;
+      STATE.truth.srcSig = sig;
+      STATE.truth.srcRaw = getCurrentSrc(video);
+      prev = NaN;
+    }
     if (isFinite(prev)) {
       var d = ct - prev;
-      if (d < -2) return;
+      if (d < -1.2) return;
       if (d > DET.truthSmoothMaxStepSec) return;
       if (d < 0.02) return;
     }
 
     STATE.truth.lastGoodSec = ct;
-    STATE.truth.lastGoodTs = now();
+    STATE.truth.lastGoodTs = nowMs();
     STATE.truth.srcRaw = getCurrentSrc(video);
-    STATE.truth.srcSig = srcSig(STATE.truth.srcRaw);
+    STATE.truth.srcSig = sig || srcSig(STATE.truth.srcRaw);
 
-    if (!STATE.truth.lastCommitTs || (now() - toInt(STATE.truth.lastCommitTs, 0)) >= CFG.truthCommitMs) {
+    if (!STATE.truth.lastCommitTs || (nowMs() - toInt(STATE.truth.lastCommitTs, 0)) >= CFG.truthCommitMs) {
       truthCommit(reason || 'tick');
     }
   }
@@ -1021,6 +1092,19 @@
       + ' falseEndCount=' + String(toInt(STATE.guard.falseEndCount, 0))
       + ' lastFalseEndTs=' + String(toInt(STATE.guard.lastFalseEndTs, 0)));
 
+    var ticket = STATE.resume.ticket || STATE.resume.lastTicket || null;
+    lines.push('resumeTicket: sec=' + (ticket && isFinite(toNum(ticket.sec, NaN)) ? toNum(ticket.sec, 0).toFixed(2) : '')
+      + ' srcSig=' + String(ticket && ticket.srcSig ? ticket.srcSig : '')
+      + ' age=' + String(resumeTicketAgeMs())
+      + ' frozen=' + (STATE.truth.frozen ? '1' : '0'));
+    lines.push('lastSeek: sec=' + (isFinite(toNum(STATE.resume.lastSeekSec, NaN)) ? toNum(STATE.resume.lastSeekSec, 0).toFixed(2) : '')
+      + ' ts=' + String(toInt(STATE.resume.lastSeekTs, 0))
+      + ' ok=' + String(toInt(STATE.resume.lastSeekOk, 0))
+      + ' err=' + String(STATE.resume.lastSeekErr || ''));
+    lines.push('reopenAt: requestedSec=' + (isFinite(toNum(STATE.resume.reopenRequestedSec, NaN)) ? toNum(STATE.resume.reopenRequestedSec, 0).toFixed(2) : '')
+      + ' applied=' + (isFinite(toNum(STATE.resume.reopenAppliedSec, NaN)) ? toNum(STATE.resume.reopenAppliedSec, 0).toFixed(2) : '')
+      + ' delta=' + (isFinite(toNum(STATE.resume.reopenDeltaSec, NaN)) ? toNum(STATE.resume.reopenDeltaSec, 0).toFixed(2) : ''));
+
     lines.push('truth: ct=' + toNum(t.ct, 0).toFixed(2)
       + ' lastGood=' + toNum(STATE.truth.lastGoodSec, 0).toFixed(2)
       + ' drift=' + toNum(drift, 0).toFixed(2)
@@ -1156,11 +1240,169 @@
     return 0;
   }
 
+  function resumeTicketAgeMs() {
+    var ticket = STATE.resume.ticket || STATE.resume.lastTicket || null;
+    if (!ticket) return 0;
+    return ageMs(toInt(ticket.createdTs, 0));
+  }
+
+  function resumeSecFromTicketOrTruth(preferTicket) {
+    if (preferTicket !== false) {
+      var ticket = STATE.resume.ticket || null;
+      if (ticket && isFinite(toNum(ticket.sec, NaN)) && toNum(ticket.sec, NaN) >= 0) return Math.max(0, toNum(ticket.sec, 0));
+    }
+
+    var sig = '';
+    try { sig = String(STATE.tick && STATE.tick.srcSig ? STATE.tick.srcSig : ''); } catch (_) { sig = ''; }
+    if (!sig) {
+      try { sig = srcSig(getCurrentSrc(STATE.video || getVideo())); } catch (_) { sig = ''; }
+    }
+
+    var tr = toNum(STATE.truth.lastGoodSec, NaN);
+    if (isFinite(tr) && tr >= 0) {
+      var trSig = '';
+      try { trSig = String(STATE.truth.srcSig || ''); } catch (_) { trSig = ''; }
+      if (!sig || !trSig || sig === trSig) return Math.max(0, tr);
+    }
+
+    var cur = toNum(STATE.tick.ct, NaN);
+    var dur = toNum(STATE.tick.dur, NaN);
+    if (isFinite(cur) && cur >= 0 && isFinite(dur) && dur > 5) return Math.max(0, cur - 1.0);
+    return Math.max(0, truthTarget());
+  }
+
+  function makeResumeTicket(reason, kind) {
+    reason = String(reason || 'recover');
+    kind = String(kind || 'overlay');
+
+    var v = STATE.video || getVideo();
+    var sig = '';
+    try { sig = String(STATE.tick && STATE.tick.srcSig ? STATE.tick.srcSig : ''); } catch (_) { sig = ''; }
+    if (!sig) {
+      try { sig = srcSig(getCurrentSrc(v)); } catch (_) { sig = ''; }
+    }
+
+    var sec = resumeSecFromTicketOrTruth(false);
+    var dur = toNum(v ? v.duration : NaN, NaN);
+    if (isFinite(dur) && dur > 0) sec = Math.min(Math.max(0, sec), Math.max(0, dur - 0.5));
+    sec = Math.max(0, toNum(sec, 0));
+
+    STATE.resume.ticket = {
+      sec: sec,
+      srcSig: String(sig || ''),
+      createdTs: nowMs(),
+      reason: reason,
+      kind: kind
+    };
+    STATE.resume.lastTicket = {
+      sec: sec,
+      srcSig: String(sig || ''),
+      createdTs: nowMs(),
+      reason: reason,
+      kind: kind
+    };
+
+    logLine('INF', 'TICKET create', {
+      sec: sec.toFixed(2),
+      srcSig: String(sig || ''),
+      reason: reason,
+      kind: kind
+    });
+
+    return STATE.resume.ticket;
+  }
+
+  function seekAfterReady(video, sec, why, cb) {
+    if (!video) {
+      if (cb) cb(false, 'no_video');
+      return;
+    }
+
+    var done = false;
+    var timer = null;
+    var handlers = {};
+    sec = Math.max(0, toNum(sec, 0));
+
+    function cleanup() {
+      try { if (timer) clearTimeout(timer); } catch (_) { }
+      timer = null;
+      var keys = ['loadedmetadata', 'canplay', 'loadeddata'];
+      for (var i = 0; i < keys.length; i++) {
+        var k = keys[i];
+        var h = handlers[k];
+        if (!h) continue;
+        try { video.removeEventListener(k, h, true); } catch (_) { }
+        try { video.removeEventListener(k, h); } catch (_) { }
+      }
+      handlers = {};
+    }
+
+    function apply(trigger) {
+      if (done) return;
+      done = true;
+      cleanup();
+
+      var ok = true;
+      var err = '';
+      var target = sec;
+      try {
+        var dur = toNum(video.duration, NaN);
+        if (isFinite(dur) && dur > 0) target = Math.min(Math.max(0, sec), Math.max(0, dur - 0.5));
+        video.currentTime = target;
+      } catch (e) {
+        ok = false;
+        err = e && e.message ? String(e.message) : 'seek_error';
+      }
+
+      if (ok && !STATE.userPausedIntent) {
+        try {
+          if (typeof video.play === 'function') {
+            var p = video.play();
+            if (p && typeof p.catch === 'function') p.catch(function () { });
+          }
+        } catch (_) { }
+      }
+
+      STATE.resume.lastSeekSec = target;
+      STATE.resume.lastSeekTs = nowMs();
+      STATE.resume.lastSeekOk = ok ? 1 : 0;
+      STATE.resume.lastSeekErr = err;
+
+      logLine(ok ? 'INF' : 'WRN', ok ? 'INPLAYER seek' : 'INPLAYER seek_failed', {
+        sec: toNum(target, 0).toFixed(2),
+        why: String(why || ''),
+        trig: String(trigger || ''),
+        err: err
+      });
+
+      if (cb) cb(ok, err);
+    }
+
+    function on(evt) {
+      return function () { apply(String(evt || 'evt')); };
+    }
+
+    handlers.loadedmetadata = on('loadedmetadata');
+    handlers.canplay = on('canplay');
+    handlers.loadeddata = on('loadeddata');
+
+    try { video.addEventListener('loadedmetadata', handlers.loadedmetadata, true); } catch (_) { try { video.addEventListener('loadedmetadata', handlers.loadedmetadata); } catch (__e) { } }
+    try { video.addEventListener('canplay', handlers.canplay, true); } catch (_) { try { video.addEventListener('canplay', handlers.canplay); } catch (__e) { } }
+    try { video.addEventListener('loadeddata', handlers.loadeddata, true); } catch (_) { try { video.addEventListener('loadeddata', handlers.loadeddata); } catch (__e) { } }
+
+    timer = setTimeout(function () { apply('timeout'); }, 2600);
+
+    try {
+      var rs = toInt(video.readyState, 0);
+      if (rs >= 1) setTimeout(function () { apply('ready'); }, 0);
+    } catch (_) { }
+  }
+
   function applyTruthSeekAndPlay(tag) {
     var v = STATE.video || getVideo();
     if (!v) return false;
 
-    var target = Math.max(0, toNum(truthTarget(), 0));
+    var target = Math.max(0, toNum(resumeSecFromTicketOrTruth(), 0));
     try { v.currentTime = target; } catch (_) { }
 
     if (!STATE.userPausedIntent) {
@@ -1205,7 +1447,7 @@
     var v = STATE.video || getVideo();
     if (!v) return false;
 
-    var target = truthTarget();
+    var target = resumeSecFromTicketOrTruth();
     if (idx <= 1) {
       try { v.currentTime = Math.max(0, target); } catch (_) { }
       if (!STATE.userPausedIntent) {
@@ -1297,14 +1539,22 @@
       ok = false;
     }
 
-    setTimeout(function () {
-      try { applyTruthSeekAndPlay('inplayer_seek_truth'); } catch (_) { }
-    }, 280);
+    if (ok) {
+      var resumeSec = resumeSecFromTicketOrTruth();
+      logLine('INF', 'INPLAYER set src ok', { mode: mode, seek: toNum(resumeSec, 0).toFixed(2) });
+      seekAfterReady(v, resumeSec, 'inplayer_resume', function (seekOk, seekErr) {
+        if (!seekOk) {
+          setTimeout(function () {
+            try { seekAfterReady(STATE.video || getVideo(), resumeSec, 'inplayer_resume_retry', function () { }); } catch (_) { }
+          }, 450);
+          if (seekErr) STATE.rec.lastErr = String(seekErr || '');
+        }
+      });
+    }
 
     setTimeout(function () {
-      try { applyTruthSeekAndPlay('inplayer_seek_truth2'); } catch (_) { }
       try { endCritical('overlay_recover'); } catch (_) { }
-    }, 1100);
+    }, 1200);
 
     return ok;
   }
@@ -1322,18 +1572,30 @@
     }
 
     var pg = getPg();
-    if (!pg || typeof pg.requestRecover !== 'function') {
+    if (!pg || (typeof pg.reopenAt !== 'function' && typeof pg.reopenFromPosition !== 'function' && typeof pg.requestRecover !== 'function')) {
       STATE.rec.lastErr = 'pg_request_missing';
       return false;
     }
 
     STATE.rec.lastReopenTs = t;
+    var sec = Math.max(0, toNum(resumeSecFromTicketOrTruth(), 0));
+    STATE.resume.reopenRequestedSec = sec;
+    STATE.resume.reopenRequestedTs = nowMs();
+    STATE.resume.reopenAppliedSec = NaN;
+    STATE.resume.reopenAppliedTs = 0;
+    STATE.resume.reopenDeltaSec = NaN;
+    STATE.resume.reopenSeekTs = 0;
+    logLine('INF', 'REOPEN requested', { sec: sec.toFixed(2), age: resumeTicketAgeMs() });
 
     beginCritical('overlay_recover', 2500);
     var r = null;
-    try { r = pg.requestRecover('overlay_reopen', { prefer: 'reopen' }); } catch (_) { r = null; }
+    try {
+      if (typeof pg.reopenAt === 'function') r = pg.reopenAt(sec, 'overlay_reopen', { srcSig: String(STATE.tick && STATE.tick.srcSig ? STATE.tick.srcSig : ''), ticketTs: toInt(STATE.resume.reopenRequestedTs, 0) });
+      else if (typeof pg.reopenFromPosition === 'function') r = { started: !!pg.reopenFromPosition('overlay_reopen', sec, { manual: true, overlay: true }) };
+      else r = pg.requestRecover('overlay_reopen', { prefer: 'reopen' });
+    } catch (_) { r = null; }
 
-    STATE.rec.lastAction = 'reopen_via_pg';
+    STATE.rec.lastAction = 'reopen_via_pg:' + sec.toFixed(2);
 
     setTimeout(function () {
       try { endCritical('overlay_recover'); } catch (_) { }
@@ -1356,9 +1618,11 @@
     if (ok) {
       setPhase(ST.PLAYING, 'recovered:' + String(why || 'ok'));
       logLine('OK', 'recover_done', { why: String(why || 'ok') });
+      resumeFinalizeDelayed(1500, 'success');
     } else {
       setPhase(ST.FAILED, String(why || 'failed'));
       logLine('ERR', 'recover_failed', { why: String(why || ''), lastErr: String(STATE.rec.lastErr || '') });
+      resumeFinalizeDelayed(2200, 'fail');
     }
   }
 
@@ -1376,6 +1640,7 @@
     } else setPhase(ST.IDLE, String(reason || 'cancel'));
 
     if (was) logLine('WRN', 'recover_cancel', { reason: String(reason || '') });
+    resumeFinalizeDelayed(800, 'cancel');
     return was;
   }
 
@@ -1386,6 +1651,7 @@
     STATE.rec.reopenTry = 1;
     setPhase(ST.RECOVERING_REOPEN, 'reopen');
     STATE.rec.lastErr = '';
+    if (CFG.protectNext) armBlockNext(5000, 'rec_step:reopen');
     logRec('reopen', STATE.rec.reopenTry, 1, 'pg_reopen', 'start');
 
     var ok = actionReopenViaPg();
@@ -1417,6 +1683,7 @@
     STATE.rec.step = 'inplayer';
     setPhase(ST.RECOVERING_INPLAYER, 'inplayer:' + String(STATE.rec.inpTry) + '/' + String(STATE.rec.inpMax));
     STATE.rec.lastErr = '';
+    if (CFG.protectNext) armBlockNext(5000, 'rec_step:inplayer');
     logRec('inplayer', STATE.rec.inpTry, STATE.rec.inpMax, CFG.inplayerMode, 'start');
 
     var ok = actionInplayerRebuild(CFG.inplayerMode);
@@ -1449,6 +1716,7 @@
     STATE.rec.step = 'soft';
     setPhase(ST.RECOVERING_SOFT, 'soft:' + String(STATE.rec.softTry) + '/' + String(STATE.rec.softMax));
     STATE.rec.lastErr = '';
+    if (CFG.protectNext) armBlockNext(4000, 'rec_step:soft');
     logRec('soft', STATE.rec.softTry, STATE.rec.softMax, 'seek/load/play', 'start');
 
     var ok = actionSoftAttempt(STATE.rec.softTry);
@@ -1498,13 +1766,18 @@
     STATE.rec.lastAction = '';
     STATE.rec.lastErr = '';
     STATE.rec.startedTs = now();
+    clearResumeUnfreezeTimer();
+    makeResumeTicket(reason, 'recovery');
+    truthFreeze(true, 'recover:' + reason);
+    if (CFG.protectNext) armBlockNext(6000, 'recover:' + reason);
 
     logLine('WRN', 'recover_begin', {
       reason: reason,
       soft: STATE.rec.softMax,
       inplayer: STATE.rec.inpMax,
       mode: CFG.inplayerMode,
-      reopen: CFG.escalateToReopen ? 1 : 0
+      reopen: CFG.escalateToReopen ? 1 : 0,
+      resume: toNum(resumeSecFromTicketOrTruth(), 0).toFixed(2)
     });
 
     var token = toInt(STATE.rec.token, 0);
@@ -1593,6 +1866,7 @@
 
   function maybeHandleFalseEnd(reason) {
     if (!CFG.enabled || !CFG.protectNext) return false;
+    if (STATE.rec.active) return false;
 
     var t = STATE.tick;
     var ct = toNum(t && t.ct, NaN);
@@ -1745,6 +2019,11 @@
 
       try {
         if (CFG.enabled && CFG.protectNext && shouldBlockNextType(type)) {
+          if (STATE.rec.active) {
+            armBlockNext(5000, 'rec_active_player');
+            logLine('WRN', 'BLOCK next/select while recovering', { where: 'player.send', type: String(type || '') });
+            return;
+          }
           collectTick(STATE.video || getVideo());
           if (maybeHandleFalseEnd('player:' + lowerType)) return;
           if (maybeHandleForcedNext('player:' + lowerType, { type: type, payload: payload })) return;
@@ -1782,6 +2061,11 @@
 
       try {
         if (CFG.enabled && CFG.protectNext && shouldBlockNextType(type)) {
+          if (STATE.rec.active) {
+            armBlockNext(5000, 'rec_active_playlist');
+            logLine('WRN', 'BLOCK next/select while recovering', { where: 'playlist.send', type: String(type || '') });
+            return;
+          }
           collectTick(STATE.video || getVideo());
           if (maybeHandleFalseEnd('playlist:' + lowerType)) return;
           if (maybeHandleForcedNext('playlist:' + lowerType, { type: type, payload: payload })) return;
@@ -1930,6 +2214,65 @@
     return started;
   }
 
+  function trackReopenApply() {
+    var req = toNum(STATE.resume.reopenRequestedSec, NaN);
+    if (!isFinite(req) || req < 0) return;
+    if (STATE.resume.reopenAppliedTs) {
+      if (ageMs(STATE.resume.reopenAppliedTs) > 12000) {
+        STATE.resume.reopenRequestedSec = NaN;
+        STATE.resume.reopenRequestedTs = 0;
+        STATE.resume.reopenSeekTs = 0;
+      }
+      return;
+    }
+
+    var t = STATE.tick || {};
+    var ct = toNum(t.ct, NaN);
+    if (isFinite(ct)) {
+      var delta = ct - req;
+      STATE.resume.reopenDeltaSec = delta;
+      if (!STATE.resume.reopenAppliedTs && Math.abs(delta) <= 2.0) {
+        STATE.resume.reopenAppliedTs = nowMs();
+        STATE.resume.reopenAppliedSec = ct;
+        logLine('INF', 'REOPEN applied', {
+          requestedSec: req.toFixed(2),
+          applied: ct.toFixed(2),
+          delta: delta.toFixed(2),
+          ok: 1
+        });
+        return;
+      }
+    }
+
+    var ts = nowMs();
+    if ((ts - toInt(STATE.resume.reopenRequestedTs, 0)) < 1400) return;
+    if ((ts - toInt(STATE.resume.reopenSeekTs, 0)) < 2800) return;
+
+    var v = STATE.video || getVideo();
+    if (!v) return;
+
+    STATE.resume.reopenSeekTs = ts;
+    seekAfterReady(v, req, 'reopen_apply', function (ok, err) {
+      if (ok) {
+        var cur = toNum(v.currentTime, NaN);
+        STATE.resume.reopenAppliedTs = nowMs();
+        STATE.resume.reopenAppliedSec = isFinite(cur) ? cur : req;
+        STATE.resume.reopenDeltaSec = isFinite(cur) ? (cur - req) : 0;
+        logLine('INF', 'REOPEN applied', {
+          requestedSec: req.toFixed(2),
+          applied: isFinite(cur) ? cur.toFixed(2) : req.toFixed(2),
+          delta: isFinite(cur) ? (cur - req).toFixed(2) : '0.00',
+          ok: 1
+        });
+      } else {
+        logLine('WRN', 'REOPEN apply_failed', {
+          requestedSec: req.toFixed(2),
+          err: String(err || '')
+        });
+      }
+    });
+  }
+
   function tick() {
     try {
       if ((now() - toInt(STATE.lastCfgReadTs, 0)) > 1200) readSettingsFromStorage();
@@ -1948,6 +2291,7 @@
       updatePhaseByTick();
       maybeHandleFalseEnd('tick_check');
       maybeDetectHang();
+      trackReopenApply();
 
       if (STATE.ui.open) uiRender('tick');
     } catch (e) {
@@ -1996,6 +2340,18 @@
         progressAge: ageMs(STATE.ev.lastProgressTs || STATE.monitor.lastProgressSignalTs),
         aheadAge: ageMs(STATE.monitor.lastAheadChangeTs),
         resumeAge: ageMs(STATE.pause.lastResumeTs)
+      },
+      resume: {
+        ticketSec: toNum(STATE.resume.ticket && STATE.resume.ticket.sec, NaN),
+        ticketSrcSig: String(STATE.resume.ticket && STATE.resume.ticket.srcSig ? STATE.resume.ticket.srcSig : ''),
+        ticketAge: resumeTicketAgeMs(),
+        frozen: !!STATE.truth.frozen,
+        lastSeekSec: toNum(STATE.resume.lastSeekSec, NaN),
+        lastSeekTs: toInt(STATE.resume.lastSeekTs, 0),
+        lastSeekOk: toInt(STATE.resume.lastSeekOk, 0),
+        reopenRequestedSec: toNum(STATE.resume.reopenRequestedSec, NaN),
+        reopenAppliedSec: toNum(STATE.resume.reopenAppliedSec, NaN),
+        reopenDeltaSec: toNum(STATE.resume.reopenDeltaSec, NaN)
       },
       protect: {
         blockNextUntilTs: toInt(STATE.guard.blockNextUntilTs, 0),
