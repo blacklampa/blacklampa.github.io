@@ -270,6 +270,7 @@
     resume: {
       ticket: null,
       lastTicket: null,
+      carry: null,
       unfreezeTimer: null,
       lastApplyStage: '',
       lastApplyTs: 0,
@@ -835,6 +836,13 @@
         STATE.resume.reopenSeekTs = 0;
       }
     }, delayMs);
+  }
+
+  function clearCarry(why, unfreeze) {
+    var had = !!(STATE.resume && STATE.resume.carry);
+    STATE.resume.carry = null;
+    if (unfreeze) truthFreeze(false, String(why || 'carry_clear'));
+    if (had) logLine('DBG', 'CARRY clear', { why: String(why || ''), unfreeze: unfreeze ? 1 : 0 });
   }
 
   function isValidTruthFrame(video, ct, dur) {
@@ -1542,6 +1550,12 @@
       + ' verifyOk=' + String(ticket ? toInt(ticket.verifyOk, 0) : 0)
       + ' verifyDelta=' + (ticket && isFinite(toNum(ticket.verifyDelta, NaN)) ? toNum(ticket.verifyDelta, 0).toFixed(2) : '')
       + ' frozen=' + (STATE.truth.frozen ? '1' : '0'));
+    var carry = STATE.resume && STATE.resume.carry ? STATE.resume.carry : null;
+    lines.push('carry: sec=' + (carry && isFinite(toNum(carry.sec, NaN)) ? toNum(carry.sec, 0).toFixed(2) : '')
+      + ' ageMs=' + String(carry ? ageMs(carry.ts) : 0)
+      + ' srcSig=' + String(carry && carry.srcSig ? carry.srcSig : '')
+      + ' why=' + String(carry && carry.why ? carry.why : '')
+      + ' ticketId=' + String(carry && carry.ticketId ? carry.ticketId : ''));
     lines.push('lastSeek: sec=' + (isFinite(toNum(STATE.resume.lastSeekSec, NaN)) ? toNum(STATE.resume.lastSeekSec, 0).toFixed(2) : '')
       + ' ts=' + String(toInt(STATE.resume.lastSeekTs, 0))
       + ' ok=' + String(toInt(STATE.resume.lastSeekOk, 0))
@@ -1695,6 +1709,29 @@
     stopTickTimer('exit:' + reason);
 
     logLine('WRN', 'SOFT_EXIT overlay', { reason: reason });
+  }
+
+  function softShutdownKeepResume(reason) {
+    reason = String(reason || 'destroy');
+
+    try { clearResumeUnfreezeTimer(); } catch (_) { }
+    try { endCritical('overlay_recover'); } catch (_) { }
+    try { endCritical('bufguard'); } catch (_) { }
+
+    STATE.guard.blockNextUntilTs = 0;
+    STATE.life.suspendDetectors = 1;
+    markLifeClosed('soft_keep:' + reason);
+
+    // Keep resume ticket/carry/truth freeze intact; just detach runtime bindings.
+    detachVideoListeners();
+    if (STATE.ui.open || STATE.ui.root) uiDestroy('soft_keep:' + reason);
+    stopTickTimer('soft_keep:' + reason);
+    setPhase(ST.IDLE, 'soft_keep:' + reason);
+    logLine('WRN', 'SOFT_SHUTDOWN keep_resume', {
+      reason: reason,
+      carry: STATE.resume && STATE.resume.carry ? 1 : 0,
+      ticket: STATE.resume && STATE.resume.ticket ? 1 : 0
+    });
   }
 
   function normalizeCommand(cmd) {
@@ -2396,6 +2433,152 @@
     return false;
   }
 
+  function armCarryFromDestroy(reason) {
+    reason = String(reason || 'player_destroy');
+    var ticket = STATE.resume.ticket || makeResumeTicket('destroy_carry', 'destroy');
+    var sec = NaN;
+    if (ticket && isFinite(toNum(ticket.sec, NaN)) && toNum(ticket.sec, NaN) >= 2) sec = toNum(ticket.sec, NaN);
+    if (!isFinite(sec) || sec < 2) {
+      try {
+        if (STATE.pos && isFinite(toNum(STATE.pos.lastStableSec, NaN)) && toNum(STATE.pos.lastStableSec, NaN) >= 2) sec = toNum(STATE.pos.lastStableSec, NaN);
+      } catch (_) { sec = NaN; }
+    }
+
+    if (!isFinite(sec) || sec < 2) {
+      logLine('WRN', 'CARRY skip (no_sec)', {
+        reason: reason,
+        ticket: ticket ? 1 : 0,
+        stable: isFinite(toNum(STATE.pos && STATE.pos.lastStableSec, NaN)) ? toNum(STATE.pos.lastStableSec, 0).toFixed(2) : ''
+      });
+      return false;
+    }
+
+    var sig = '';
+    try { sig = String(STATE.tick && STATE.tick.srcSig ? STATE.tick.srcSig : ''); } catch (_) { sig = ''; }
+    if (!sig && ticket) {
+      try { sig = String(ticket.srcSig || ''); } catch (_) { sig = ''; }
+    }
+
+    STATE.resume.carry = {
+      sec: sec,
+      ts: nowMs(),
+      srcSig: String(sig || ''),
+      why: reason,
+      ticketId: String(ticket && ticket.id ? ticket.id : '')
+    };
+
+    truthFreeze(true, 'carry_destroy');
+    logLine('WRN', 'CARRY arm (destroy)', {
+      sec: sec.toFixed(2),
+      srcSig: String(sig || ''),
+      ticketId: String(ticket && ticket.id ? ticket.id : ''),
+      reason: reason
+    });
+    return true;
+  }
+
+  function maybeApplyCarryOnPlayerStart(reason) {
+    reason = String(reason || 'player_start');
+    var carry = STATE.resume && STATE.resume.carry ? STATE.resume.carry : null;
+    if (!carry) return false;
+
+    var sec = toNum(carry.sec, NaN);
+    var age = ageMs(carry.ts);
+    if (!isFinite(sec) || sec < 2) {
+      logLine('WRN', 'CARRY skip (invalid)', { sec: isFinite(sec) ? sec.toFixed(2) : '', age: age, reason: reason });
+      clearCarry('carry_invalid', true);
+      return false;
+    }
+    if (age > 20000) {
+      logLine('WRN', 'CARRY expired', { sec: sec.toFixed(2), age: age, reason: reason });
+      clearCarry('carry_expired', true);
+      return false;
+    }
+
+    if (CFG.protectNext) armBlockNext(12000, 'carry_start');
+
+    var sig = '';
+    try { sig = String(carry.srcSig || ''); } catch (_) { sig = ''; }
+    if (!sig) {
+      try { sig = String(STATE.tick && STATE.tick.srcSig ? STATE.tick.srcSig : ''); } catch (_) { sig = ''; }
+    }
+    var ticket = {
+      id: String(carry.ticketId || ('carry_' + String(nowMs()))),
+      recToken: toInt(STATE.rec.token, 0),
+      sec: sec,
+      srcSig: String(sig || ''),
+      createdTs: nowMs(),
+      reason: 'carry_start',
+      kind: 'carry',
+      source: 'carry',
+      applied: 0,
+      applyTs: 0,
+      lastApplyErr: '',
+      verifyOk: 0,
+      verifyDelta: NaN
+    };
+    STATE.resume.ticket = ticket;
+    syncResumeTicket(ticket);
+
+    logLine('INF', 'CARRY apply_start', {
+      sec: sec.toFixed(2),
+      age: age,
+      srcSig: String(sig || ''),
+      reason: reason,
+      ticketId: String(ticket.id || '')
+    });
+
+    var tries = 0;
+    function attemptApply() {
+      if (toInt(STATE.life.exitIntent, 0) === 1) return;
+      var v = STATE.video || getVideo();
+      if (!v) {
+        tries++;
+        if (tries > 20) {
+          logLine('WRN', 'CARRY not applied', { sec: sec.toFixed(2), err: 'no_video', tries: tries });
+          return;
+        }
+        setTimeout(attemptApply, 300);
+        return;
+      }
+
+      applyResumeTicket(v, 'carry_start', function (ok, err) {
+        if (ok) {
+          var cur = toNum(v.currentTime, NaN);
+          logLine('INF', 'CARRY applied', {
+            sec: sec.toFixed(2),
+            cur: isFinite(cur) ? cur.toFixed(2) : '',
+            delta: isFinite(cur) ? Math.abs(cur - sec).toFixed(2) : ''
+          });
+          clearCarry('carry_applied', true);
+          return;
+        }
+
+        logLine('WRN', 'CARRY not applied', { sec: sec.toFixed(2), err: String(err || '') });
+        var escalated = false;
+        var pg = getPg();
+        try {
+          if (pg && typeof pg.reopenAt === 'function') {
+            var r = pg.reopenAt(sec, 'overlay_carry_reopen', { srcSig: String(sig || ''), ticketTs: toInt(carry.ts, 0) });
+            escalated = !!(r && r.started);
+            logLine('WRN', 'CARRY escalate', {
+              via: 'pg.reopenAt',
+              started: escalated ? 1 : 0,
+              why: r && r.why ? String(r.why || '') : ''
+            });
+          }
+        } catch (_) { escalated = false; }
+
+        if (!escalated) {
+          try { startRecovery('carry_not_applied'); } catch (_) { }
+        }
+      });
+    }
+
+    setTimeout(attemptApply, 60);
+    return true;
+  }
+
   function recoveryFinish(ok, why) {
     STATE.rec.active = false;
     STATE.rec.step = '';
@@ -2831,16 +3014,23 @@
       setPhase(ST.PLAYING, 'player_start');
       logLine('INF', 'player_start', { hasPayload: payload ? 1 : 0 });
       if (CFG.enabled && CFG.debugOnOpen) uiShow('player_start');
+      maybeApplyCarryOnPlayerStart('player_start');
       return;
     }
 
     if (tl === 'destroy') {
+      if (toInt(STATE.life.exitIntent, 0) === 1) {
+        shutdownOverlay('player_destroy_exit', false);
+        setPhase(ST.IDLE, 'player_destroy_exit');
+        return;
+      }
       if (STATE.rec.active) {
         markLifeClosed('player_destroy_recovery');
         return;
       }
-      shutdownOverlay('player_destroy', false);
-      setPhase(ST.IDLE, 'player_destroy');
+      armCarryFromDestroy('player_destroy');
+      softShutdownKeepResume('player_destroy');
+      setPhase(ST.IDLE, 'player_destroy_carry');
       return;
     }
 
@@ -3358,6 +3548,12 @@
         resumeAge: ageMs(STATE.pause.lastResumeTs)
       },
       resume: {
+        carrySec: toNum(STATE.resume && STATE.resume.carry ? STATE.resume.carry.sec : NaN, NaN),
+        carryTs: toInt(STATE.resume && STATE.resume.carry ? STATE.resume.carry.ts : 0, 0),
+        carryAge: ageMs(STATE.resume && STATE.resume.carry ? STATE.resume.carry.ts : 0),
+        carrySrcSig: String(STATE.resume && STATE.resume.carry && STATE.resume.carry.srcSig ? STATE.resume.carry.srcSig : ''),
+        carryWhy: String(STATE.resume && STATE.resume.carry && STATE.resume.carry.why ? STATE.resume.carry.why : ''),
+        carryTicketId: String(STATE.resume && STATE.resume.carry && STATE.resume.carry.ticketId ? STATE.resume.carry.ticketId : ''),
         ticketId: String(ticket && ticket.id ? ticket.id : ''),
         ticketRecToken: toInt(ticket && ticket.recToken, 0),
         ticketSec: toNum(ticket && ticket.sec, NaN),
