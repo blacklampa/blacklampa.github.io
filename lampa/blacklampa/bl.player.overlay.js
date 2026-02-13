@@ -173,6 +173,8 @@
       preventStartUntilTs: 0,
       preventEndedUntilTs: 0,
       falseEndCriticalUntilTs: 0,
+      allowStartUntilTs: 0,
+      allowStartSig: '',
       lastTailClampTs: 0,
       lastTailClampKind: '',
       tailJumpClampCount: 0,
@@ -481,6 +483,25 @@
 
   function srcSig(url) {
     return hash32(normalizeSrc(url));
+  }
+
+  function extractStartSig(payload) {
+    try {
+      if (!payload) return '';
+      if (typeof payload === 'string') {
+        if (payload.indexOf('http') === 0 || payload.indexOf('blob:') === 0) return String(srcSig(payload));
+        return '';
+      }
+
+      var u = payload.url || payload.src || payload.source || payload.stream || payload.file;
+      if (typeof u === 'string' && u) return String(srcSig(u));
+
+      if (payload.video && typeof payload.video === 'string') return String(srcSig(payload.video));
+      if (payload.data && typeof payload.data.url === 'string') return String(srcSig(payload.data.url));
+      return '';
+    } catch (_) {
+      return '';
+    }
   }
 
   function kv(obj) {
@@ -876,6 +897,8 @@
   function clearCarry(why, unfreeze) {
     var had = !!(STATE.resume && STATE.resume.carry);
     STATE.resume.carry = null;
+    STATE.guard.allowStartUntilTs = 0;
+    STATE.guard.allowStartSig = '';
     if (unfreeze) truthFreeze(false, String(why || 'carry_clear'));
     if (had) logLine('DBG', 'CARRY clear', { why: String(why || ''), unfreeze: unfreeze ? 1 : 0 });
   }
@@ -1966,6 +1989,8 @@
     STATE.guard.preventStartUntilTs = 0;
     STATE.guard.preventEndedUntilTs = 0;
     STATE.guard.falseEndCriticalUntilTs = 0;
+    STATE.guard.allowStartUntilTs = 0;
+    STATE.guard.allowStartSig = '';
     STATE.life.suspendDetectors = 1;
     markLifeClosed('shutdown:' + reason);
 
@@ -2002,6 +2027,8 @@
     STATE.guard.preventStartUntilTs = 0;
     STATE.guard.preventEndedUntilTs = 0;
     STATE.guard.falseEndCriticalUntilTs = 0;
+    STATE.guard.allowStartUntilTs = 0;
+    STATE.guard.allowStartSig = '';
     markLifeClosed('soft_exit:' + reason);
 
     // Exit must remain soft: do not pause/play/reset src/load here.
@@ -2937,6 +2964,8 @@
       why: reason,
       ticketId: String(ticket && ticket.id ? ticket.id : '')
     };
+    STATE.guard.allowStartUntilTs = nowMs() + 7000;
+    STATE.guard.allowStartSig = String(STATE.resume.carry && STATE.resume.carry.srcSig ? STATE.resume.carry.srcSig : '');
 
     truthFreeze(true, 'carry_destroy');
     logLine('WRN', 'CARRY arm (destroy)', {
@@ -2944,6 +2973,10 @@
       srcSig: String(sig || ''),
       ticketId: String(ticket && ticket.id ? ticket.id : ''),
       reason: reason
+    });
+    logLine('INF', 'allowStart armed', {
+      ms: 7000,
+      sig: String(STATE.guard.allowStartSig || '')
     });
     return true;
   }
@@ -2963,6 +2996,24 @@
     if (age > 20000) {
       logLine('WRN', 'CARRY expired', { sec: sec.toFixed(2), age: age, reason: reason });
       clearCarry('carry_expired', true);
+      return false;
+    }
+
+    var vCur = STATE.video || getVideo();
+    var newSig = '';
+    try { newSig = String(srcSig(getCurrentSrc(vCur)) || ''); } catch (_) { newSig = ''; }
+    if (!newSig) {
+      try { newSig = String(STATE.tick && STATE.tick.srcSig ? STATE.tick.srcSig : ''); } catch (_) { newSig = ''; }
+    }
+    var carrySig = '';
+    try { carrySig = String(carry.srcSig || ''); } catch (_) { carrySig = ''; }
+    if (carrySig && newSig && carrySig !== newSig) {
+      logLine('WRN', 'CARRY sig mismatch - NOT applying', {
+        carry: carrySig,
+        newSig: newSig,
+        why: reason
+      });
+      armFalseEndCritical(30000, 'carry_sig_mismatch');
       return false;
     }
 
@@ -3542,11 +3593,34 @@
       var lowerType = String(type || '').toLowerCase();
 
       try {
-        if (CFG.enabled && CFG.protectNext && lowerType === 'start' && !STATE.rec.active) {
+        if (CFG.enabled && CFG.protectNext && lowerType === 'start') {
           var untilStart = Math.max(toInt(STATE.guard.preventStartUntilTs, 0), toInt(STATE.guard.falseEndCriticalUntilTs, 0));
           if (untilStart && now() < untilStart) {
-            logLine('WRN', 'BLOCK player.start (critical window)', { leftMs: Math.max(0, untilStart - now()) });
-            return;
+            var allowUntil = toInt(STATE.guard.allowStartUntilTs, 0);
+            var allowSig = String(STATE.guard.allowStartSig || '');
+            var pSig = extractStartSig(payload);
+            var carrySig = String(STATE.resume && STATE.resume.carry && STATE.resume.carry.srcSig || '');
+            var allowed = false;
+
+            if (allowUntil && now() < allowUntil) {
+              if (allowSig && pSig && pSig === allowSig) allowed = true;
+              else if (allowSig && !pSig) allowed = true;
+            }
+
+            if (!allowed && carrySig) {
+              if (pSig && pSig === carrySig) allowed = true;
+            }
+
+            if (!allowed) {
+              logLine('WRN', 'BLOCK player.start (critical window)', {
+                leftMs: Math.max(0, untilStart - now()),
+                rec: toInt(STATE.rec.active, 0),
+                pSig: pSig || '',
+                carrySig: carrySig || '',
+                allowSig: allowSig || ''
+              });
+              return;
+            }
           }
         }
       } catch (_) { }
@@ -3596,11 +3670,34 @@
       var lowerType = String(type || '').toLowerCase();
 
       try {
-        if (CFG.enabled && CFG.protectNext && lowerType === 'start' && !STATE.rec.active) {
+        if (CFG.enabled && CFG.protectNext && lowerType === 'start') {
           var untilStart = Math.max(toInt(STATE.guard.preventStartUntilTs, 0), toInt(STATE.guard.falseEndCriticalUntilTs, 0));
           if (untilStart && now() < untilStart) {
-            logLine('WRN', 'BLOCK playlist.start (critical window)', { leftMs: Math.max(0, untilStart - now()) });
-            return;
+            var allowUntil = toInt(STATE.guard.allowStartUntilTs, 0);
+            var allowSig = String(STATE.guard.allowStartSig || '');
+            var pSig = extractStartSig(payload);
+            var carrySig = String(STATE.resume && STATE.resume.carry && STATE.resume.carry.srcSig || '');
+            var allowed = false;
+
+            if (allowUntil && now() < allowUntil) {
+              if (allowSig && pSig && pSig === allowSig) allowed = true;
+              else if (allowSig && !pSig) allowed = true;
+            }
+
+            if (!allowed && carrySig) {
+              if (pSig && pSig === carrySig) allowed = true;
+            }
+
+            if (!allowed) {
+              logLine('WRN', 'BLOCK playlist.start (critical window)', {
+                leftMs: Math.max(0, untilStart - now()),
+                rec: toInt(STATE.rec.active, 0),
+                pSig: pSig || '',
+                carrySig: carrySig || '',
+                allowSig: allowSig || ''
+              });
+              return;
+            }
           }
         }
         if (CFG.enabled && CFG.protectNext && shouldBlockNextType(type)) {
