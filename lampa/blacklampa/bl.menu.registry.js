@@ -1249,6 +1249,26 @@
       });
 
       P(ctx, {
+        id: 'player_overlay_resume_guard_ms',
+        type: 'select',
+        values: { '60000': '60000', '120000': '120000', '180000': '180000', '240000': '240000', '300000': '300000' },
+        default: '180000',
+        name: 'Overlay: Resume guard window (ms)',
+        desc: 'Окно усиленной защиты после resume (агрессивнее hang/false-end guard).',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
+        id: 'player_overlay_false_end_stale_allow',
+        type: 'toggle',
+        values: { 0: 'OFF', 1: 'ON' },
+        default: 1,
+        name: 'Overlay: Allow stale false-end',
+        desc: 'Разрешить loose false-end даже при stale truth, если есть stall-сигналы.',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
         id: 'player_overlay_soft_attempts',
         type: 'select',
         values: { '0': '0', '1': '1', '2': '2', '3': '3', '4': '4', '5': '5' },

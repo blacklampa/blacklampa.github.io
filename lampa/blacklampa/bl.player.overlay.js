@@ -22,6 +22,8 @@
     truthCommitMs: LS_PREFIX + 'player_overlay_truth_commit_ms',
     hangTimeMs: LS_PREFIX + 'player_overlay_hang_time_ms',
     hangBufMs: LS_PREFIX + 'player_overlay_hang_buf_ms',
+    resumeGuardMs: LS_PREFIX + 'player_overlay_resume_guard_ms',
+    falseEndStaleAllow: LS_PREFIX + 'player_overlay_false_end_stale_allow',
     softAttempts: LS_PREFIX + 'player_overlay_soft_attempts',
     inplayerAttempts: LS_PREFIX + 'player_overlay_inplayer_attempts',
     inplayerMode: LS_PREFIX + 'player_overlay_inplayer_rebuild_mode',
@@ -78,6 +80,8 @@
     truthCommitMs: 500,
     hangTimeMs: 10000,
     hangBufMs: 8000,
+    resumeGuardMs: 180000,
+    falseEndStaleAllow: true,
     softAttempts: 2,
     inplayerAttempts: 3,
     inplayerMode: 'refresh_src',
@@ -100,6 +104,10 @@
 
     userPausedIntent: false,
     pendingUserCommand: '',
+    pause: {
+      lastPauseTs: 0,
+      lastResumeTs: 0
+    },
 
     rec: {
       active: false,
@@ -391,6 +399,8 @@
     var hbRaw = sGet(K.hangBufMs, null);
     if (hbRaw === null || hbRaw === undefined || hbRaw === '') hbRaw = sGet(K.oldHangBufMs, '8000');
     CFG.hangBufMs = clampInt(hbRaw, 3000, 60000);
+    CFG.resumeGuardMs = clampInt(sGet(K.resumeGuardMs, '180000'), 30000, 600000);
+    CFG.falseEndStaleAllow = parseBool(sGet(K.falseEndStaleAllow, '1'), true);
 
     CFG.softAttempts = clampInt(sGet(K.softAttempts, '2'), 0, 5);
     CFG.inplayerAttempts = clampInt(sGet(K.inplayerAttempts, '3'), 0, 6);
@@ -539,10 +549,19 @@
     on('waiting', function () { bumpEvent('waiting'); });
     on('stalled', function () { bumpEvent('stalled'); });
     on('error', function () { bumpEvent('error'); });
-    on('play', function () { bumpEvent('play'); if (!STATE.rec.active) STATE.userPausedIntent = false; });
-    on('playing', function () { bumpEvent('playing'); if (!STATE.rec.active) STATE.userPausedIntent = false; });
+    on('play', function () {
+      bumpEvent('play');
+      STATE.pause.lastResumeTs = now();
+      if (!STATE.rec.active) STATE.userPausedIntent = false;
+    });
+    on('playing', function () {
+      bumpEvent('playing');
+      STATE.pause.lastResumeTs = now();
+      if (!STATE.rec.active) STATE.userPausedIntent = false;
+    });
     on('pause', function () {
       bumpEvent('pause');
+      STATE.pause.lastPauseTs = now();
       if (STATE.rec.active) return;
       try { if (video.paused) STATE.userPausedIntent = true; } catch (_) { }
       try { truthCommit('pause'); } catch (_) { }
@@ -878,12 +897,21 @@
       + ' waiting=' + String(ageMs(STATE.events.last.waiting))
       + ' stalled=' + String(ageMs(STATE.events.last.stalled)));
 
+    var strictFalseEnd = isFalseEnd(toNum(t.ct, NaN), toNum(t.dur, NaN));
+    var looseFalseEnd = isFalseEndLooser(toNum(t.ct, NaN), toNum(t.dur, NaN), runtimeAges());
+    lines.push('resumeAgeMs=' + String(ageMs(STATE.pause.lastResumeTs))
+      + ' resumeGuardMs=' + String(toInt(CFG.resumeGuardMs, 0))
+      + ' staleAllow=' + (CFG.falseEndStaleAllow ? '1' : '0')
+      + ' falseEnd(strict)=' + (strictFalseEnd ? '1' : '0')
+      + ' falseEnd(loose)=' + (looseFalseEnd ? '1' : '0'));
+
     var blockUntil = toInt(STATE.guard.blockNextUntilTs, 0);
     var blockLeft = Math.max(0, blockUntil - now());
     lines.push('protect_next=' + (CFG.protectNext ? 'ON' : 'OFF')
       + ' blockNextUntilTs=' + String(blockUntil)
       + ' blockLeftMs=' + String(toInt(blockLeft, 0))
-      + ' falseEndCount=' + String(toInt(STATE.guard.falseEndCount, 0)));
+      + ' falseEndCount=' + String(toInt(STATE.guard.falseEndCount, 0))
+      + ' lastFalseEndTs=' + String(toInt(STATE.guard.lastFalseEndTs, 0)));
 
     lines.push('truth: ct=' + toNum(t.ct, 0).toFixed(2)
       + ' lastGood=' + toNum(STATE.truth.lastGoodSec, 0).toFixed(2)
@@ -1000,7 +1028,7 @@
   function shouldBlockNextType(type) {
     var t = String(type || '').toLowerCase();
     if (!t) return false;
-    if (t === 'select' || t === 'next' || t === 'to_end' || t === 'ended' || t === 'destroy') return true;
+    if (t === 'select' || t === 'next' || t === 'to_end' || t === 'ended') return true;
     if (t.indexOf('next') >= 0) return true;
     if (t.indexOf('select') >= 0) return true;
     if (t.indexOf('ended') >= 0) return true;
@@ -1346,8 +1374,14 @@
 
     STATE.pendingUserCommand = cmd;
 
-    if (cmd === 'pause') STATE.userPausedIntent = true;
-    else if (cmd === 'play') STATE.userPausedIntent = false;
+    if (cmd === 'pause') {
+      STATE.userPausedIntent = true;
+      STATE.pause.lastPauseTs = now();
+    }
+    else if (cmd === 'play') {
+      STATE.userPausedIntent = false;
+      STATE.pause.lastResumeTs = now();
+    }
 
     if (STATE.rec.active) recoveryCancel('user:' + cmd);
 
@@ -1356,6 +1390,16 @@
     try {
       logLine('DBG', 'user_command', { cmd: cmd, src: payload && payload.type ? String(payload.type) : '' });
     } catch (_) { }
+  }
+
+  function runtimeAges() {
+    return {
+      ctAge: ageMs(STATE.monitor.lastCtChangeTs),
+      progAge: ageMs(STATE.monitor.lastProgressSignalTs),
+      aheadAge: ageMs(STATE.monitor.lastAheadChangeTs),
+      waitingAge: ageMs(STATE.events.last.waiting),
+      resumeAge: ageMs(STATE.pause.lastResumeTs)
+    };
   }
 
   function isFalseEnd(ct, dur) {
@@ -1371,14 +1415,46 @@
     return true;
   }
 
+  function isFalseEndLooser(ct, dur, ages) {
+    if (!CFG.protectNext) return false;
+    if (!CFG.falseEndStaleAllow) return false;
+    if (!isFinite(toNum(ct, NaN)) || !isFinite(toNum(dur, NaN)) || dur <= 0) return false;
+    if (ct < dur - DET.falseEndNearDurSec) return false;
+
+    var tr = toNum(STATE.truth.lastGoodSec, NaN);
+    if (!isFinite(tr) || tr < 0) return false;
+    if ((dur - tr) < DET.falseEndTruthGapSec) return false;
+
+    var tickSig = '';
+    var truthSig = '';
+    try { tickSig = String(STATE.tick && STATE.tick.srcSig ? STATE.tick.srcSig : ''); } catch (_) { tickSig = ''; }
+    try { truthSig = String(STATE.truth.srcSig || ''); } catch (_) { truthSig = ''; }
+    if (tickSig && truthSig && tickSig !== truthSig) return false;
+
+    if (isFalseEnd(ct, dur)) return true;
+
+    ages = ages || runtimeAges();
+
+    var hangTime = Math.max(1500, toInt(CFG.hangTimeMs, 10000));
+    var hangBuf = Math.max(1500, toInt(CFG.hangBufMs, 8000));
+    var ctStall = toInt(ages.ctAge, 0) >= Math.floor(hangTime * 0.8);
+    var progStall = toInt(ages.progAge, 0) >= Math.floor(hangBuf * 0.8);
+    var aheadStall = toInt(ages.aheadAge, 0) >= Math.floor(hangBuf * 0.8);
+    var resumeWindow = toInt(ages.resumeAge, 0) > 0 && toInt(ages.resumeAge, 0) <= Math.max(10000, toInt(CFG.resumeGuardMs, 180000));
+
+    return !!(ctStall || progStall || aheadStall || resumeWindow);
+  }
+
   function maybeHandleFalseEnd(reason) {
     if (!CFG.enabled || !CFG.protectNext) return false;
 
     var t = STATE.tick;
     var ct = toNum(t && t.ct, NaN);
     var dur = toNum(t && t.dur, NaN);
+    var strict = isFalseEnd(ct, dur);
+    var loose = isFalseEndLooser(ct, dur);
 
-    if (!isFalseEnd(ct, dur)) return false;
+    if (!strict) return false;
 
     var ts = now();
     if ((ts - toInt(STATE.guard.lastFalseEndTs, 0)) < 1000) return false;
@@ -1398,11 +1474,14 @@
         }
       } catch (_) { }
     }
+    STATE.rec.lastAction = 'false_end_prevented';
 
     logLine('WRN', 'FALSE_END prevented', {
       reason: String(reason || ''),
       ct: isFinite(ct) ? ct.toFixed(2) : '',
       dur: isFinite(dur) ? dur.toFixed(2) : '',
+      strict: strict ? 1 : 0,
+      loose: loose ? 1 : 0,
       truth: toNum(STATE.truth.lastGoodSec, 0).toFixed(2),
       blockNextUntilTs: toInt(STATE.guard.blockNextUntilTs, 0)
     });
@@ -1410,6 +1489,70 @@
     if (!STATE.rec.active) {
       setPhase(ST.HUNG, 'false_end');
       startRecovery('false_end');
+    } else {
+      armBlockNext(DET.manualNextBlockMs + 2000, 'false_end_busy');
+    }
+
+    return true;
+  }
+
+  function maybeHandleForcedNext(reason, payload) {
+    if (!CFG.enabled || !CFG.protectNext) return false;
+
+    var t = STATE.tick;
+    var ct = toNum(t && t.ct, NaN);
+    var dur = toNum(t && t.dur, NaN);
+    var ages = runtimeAges();
+    var strict = isFalseEnd(ct, dur);
+    var loose = isFalseEndLooser(ct, dur, ages);
+
+    if (!(strict || loose)) return false;
+
+    var ts = now();
+    if ((ts - toInt(STATE.guard.lastFalseEndTs, 0)) < 700) {
+      armBlockNext(DET.manualNextBlockMs + 2000, 'forced_next_debounce');
+      return true;
+    }
+
+    STATE.guard.lastFalseEndTs = ts;
+    STATE.guard.falseEndCount = toInt(STATE.guard.falseEndCount, 0) + 1;
+    armBlockNext(DET.manualNextBlockMs + (STATE.rec.active ? 3000 : 0), 'forced_next');
+
+    var v = STATE.video || getVideo();
+    var target = Math.max(0, toNum(STATE.truth.lastGoodSec, 0) - 0.7);
+    try { if (v) v.currentTime = target; } catch (_) { }
+    if (!STATE.userPausedIntent) {
+      try {
+        if (v && typeof v.play === 'function') {
+          var p = v.play();
+          if (p && typeof p.catch === 'function') p.catch(function () { });
+        }
+      } catch (_) { }
+    }
+
+    STATE.rec.lastAction = 'forced_next_prevented';
+
+    logLine('WRN', 'FORCED_NEXT prevented', {
+      reason: String(reason || ''),
+      type: payload && payload.type ? String(payload.type || '') : '',
+      ct: isFinite(ct) ? ct.toFixed(2) : '',
+      dur: isFinite(dur) ? dur.toFixed(2) : '',
+      truth: toNum(STATE.truth.lastGoodSec, 0).toFixed(2),
+      strict: strict ? 1 : 0,
+      loose: loose ? 1 : 0,
+      ctAge: toInt(ages.ctAge, 0),
+      progAge: toInt(ages.progAge, 0),
+      aheadAge: toInt(ages.aheadAge, 0),
+      resumeAge: toInt(ages.resumeAge, 0),
+      blockNextUntilTs: toInt(STATE.guard.blockNextUntilTs, 0)
+    });
+
+    if (!STATE.rec.active) {
+      setPhase(ST.HUNG, 'forced_next');
+      startRecovery('forced_next');
+    } else {
+      armBlockNext(DET.manualNextBlockMs + 2000, 'forced_next_busy');
+      logLine('DBG', 'forced_next_recover_busy', { rec: 1, hold: toInt(STATE.guard.blockNextUntilTs, 0) });
     }
 
     return true;
@@ -1450,13 +1593,19 @@
     Lampa.Player.listener.send = function () {
       var type = (arguments && arguments.length) ? arguments[0] : '';
       var payload = (arguments && arguments.length > 1) ? arguments[1] : undefined;
+      var lowerType = String(type || '').toLowerCase();
 
       try { handlePlayerSend(type, payload); } catch (_) { }
 
       try {
-        if (CFG.enabled && CFG.protectNext && isBlockNextActive() && shouldBlockNextType(type)) {
-          logLine('WRN', 'prevent_next_overlay', { where: 'player.send', type: String(type || ''), untilTs: toInt(STATE.guard.blockNextUntilTs, 0) });
-          return;
+        if (CFG.enabled && CFG.protectNext && shouldBlockNextType(type)) {
+          collectTick(STATE.video || getVideo());
+          if (maybeHandleFalseEnd('player:' + lowerType)) return;
+          if (maybeHandleForcedNext('player:' + lowerType, { type: type, payload: payload })) return;
+          if (isBlockNextActive()) {
+            logLine('WRN', 'prevent_next_overlay', { where: 'player.send', type: String(type || ''), untilTs: toInt(STATE.guard.blockNextUntilTs, 0) });
+            return;
+          }
         }
       } catch (_) { }
 
@@ -1482,11 +1631,18 @@
     var orig = send;
     Lampa.PlayerPlaylist.listener.send = function () {
       var type = (arguments && arguments.length) ? arguments[0] : '';
+      var payload = (arguments && arguments.length > 1) ? arguments[1] : undefined;
+      var lowerType = String(type || '').toLowerCase();
 
       try {
-        if (CFG.enabled && CFG.protectNext && isBlockNextActive() && shouldBlockNextType(type)) {
-          logLine('WRN', 'prevent_next_overlay', { where: 'playlist.send', type: String(type || ''), untilTs: toInt(STATE.guard.blockNextUntilTs, 0) });
-          return;
+        if (CFG.enabled && CFG.protectNext && shouldBlockNextType(type)) {
+          collectTick(STATE.video || getVideo());
+          if (maybeHandleFalseEnd('playlist:' + lowerType)) return;
+          if (maybeHandleForcedNext('playlist:' + lowerType, { type: type, payload: payload })) return;
+          if (isBlockNextActive()) {
+            logLine('WRN', 'prevent_next_overlay', { where: 'playlist.send', type: String(type || ''), untilTs: toInt(STATE.guard.blockNextUntilTs, 0) });
+            return;
+          }
         }
       } catch (_) { }
 
@@ -1565,20 +1721,38 @@
     if (!t || !t.hasVideo) return false;
     if (STATE.userPausedIntent || t.paused) return false;
 
-    var ctAge = ageMs(STATE.monitor.lastCtChangeTs);
-    var progAge = ageMs(STATE.monitor.lastProgressSignalTs);
-    var aheadAge = ageMs(STATE.monitor.lastAheadChangeTs);
+    var ages = runtimeAges();
+    var ctAge = ages.ctAge;
+    var progAge = ages.progAge;
+    var aheadAge = ages.aheadAge;
+    var waitingAge = ages.waitingAge;
+    var resumeAge = ages.resumeAge;
 
-    var hang = ctAge >= CFG.hangTimeMs && progAge >= CFG.hangBufMs && aheadAge >= CFG.hangBufMs;
+    var hangTimeMs = toInt(CFG.hangTimeMs, 10000);
+    var hangBufMs = toInt(CFG.hangBufMs, 8000);
+    if (resumeAge > 0 && resumeAge <= Math.max(10000, toInt(CFG.resumeGuardMs, 180000))) {
+      hangTimeMs = Math.max(2500, Math.floor(hangTimeMs * 0.75));
+      hangBufMs = Math.max(2500, Math.floor(hangBufMs * 0.75));
+    }
+
+    var hang = ctAge >= hangTimeMs && progAge >= hangBufMs && aheadAge >= hangBufMs;
     if (!hang) return false;
 
-    if (ageMs(STATE.events.last.waiting) < DET.waitingGraceMs && toNum(t.aheadSec, 0) > 2.0) return false;
+    if (waitingAge < DET.waitingGraceMs) {
+      var aliveMs = Math.max(1500, Math.floor(hangBufMs * 0.35));
+      if (progAge < aliveMs) return false;
+      if (aheadAge < aliveMs) return false;
+    }
 
     setPhase(ST.HUNG, 'watchdog_hang');
     logLine('WRN', 'hang_detected', {
       ctAge: ctAge,
       progAge: progAge,
       aheadAge: aheadAge,
+      waitingAge: waitingAge,
+      resumeAge: resumeAge,
+      hangTimeMs: hangTimeMs,
+      hangBufMs: hangBufMs,
       ahead: toNum(t.aheadSec, 0).toFixed(1)
     });
 
@@ -1621,6 +1795,8 @@
         truthCommitMs: toInt(CFG.truthCommitMs, 0),
         hangTimeMs: toInt(CFG.hangTimeMs, 0),
         hangBufMs: toInt(CFG.hangBufMs, 0),
+        resumeGuardMs: toInt(CFG.resumeGuardMs, 0),
+        falseEndStaleAllow: !!CFG.falseEndStaleAllow,
         softAttempts: toInt(CFG.softAttempts, 0),
         inplayerAttempts: toInt(CFG.inplayerAttempts, 0),
         inplayerMode: String(CFG.inplayerMode || ''),
@@ -1749,7 +1925,7 @@
           try {
             if (!e || !e.name) return;
             var n = String(e.name || '');
-            if (n === K.enabled || n === K.debugOnOpen || n === K.popupOpacity || n === K.protectNext || n === K.storeTruth || n === K.truthCommitMs || n === K.hangTimeMs || n === K.hangBufMs || n === K.softAttempts || n === K.inplayerAttempts || n === K.inplayerMode || n === K.escalateToReopen || n === K.reopenCooldownMs || n === K.oldEnabled || n === K.oldDebugOnOpen || n === K.oldHangTimeMs || n === K.oldHangBufMs) API.refresh();
+            if (n === K.enabled || n === K.debugOnOpen || n === K.popupOpacity || n === K.protectNext || n === K.storeTruth || n === K.truthCommitMs || n === K.hangTimeMs || n === K.hangBufMs || n === K.resumeGuardMs || n === K.falseEndStaleAllow || n === K.softAttempts || n === K.inplayerAttempts || n === K.inplayerMode || n === K.escalateToReopen || n === K.reopenCooldownMs || n === K.oldEnabled || n === K.oldDebugOnOpen || n === K.oldHangTimeMs || n === K.oldHangBufMs) API.refresh();
           } catch (_) { }
         });
       }
