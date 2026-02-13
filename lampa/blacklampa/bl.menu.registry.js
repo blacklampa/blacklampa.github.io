@@ -277,8 +277,10 @@
     filesystem_scan: { id: 'filesystem_scan', parent: 'utils', title: 'Scanner', descKey: 'menu.root.filescan.desc', screen: 'action', action: function () { try { if (window.BL && BL.FileScanner && BL.FileScanner.open) BL.FileScanner.open(); } catch (_) { } } },
     localstorage: { id: 'localstorage', parent: 'utils', title: 'LocalStorage', desc: 'LocalStorage Manager (keys + values).', screen: 'action', action: function () { try { if (window.BL && BL.LocalStorageManager && BL.LocalStorageManager.open) BL.LocalStorageManager.open(); } catch (_) { } } },
     danger: { id: 'danger', parent: 'root', titleKey: 'menu.root.danger.title', descKey: 'menu.root.danger.desc', screen: 'danger' },
-    ui: { id: 'ui', parent: 'root', titleKey: 'menu.root.ui.title', descKey: 'menu.root.ui.desc', screen: 'ui' },
-    ui_playerguard: { id: 'ui_playerguard', parent: 'ui', menu: false, title: 'PlayerGuard', desc: 'PlayerGuard settings', screen: 'ui_playerguard' },
+    ui: { id: 'ui', parent: 'root', titleKey: 'menu.root.ui.title', descKey: 'menu.root.ui.desc', screen: 'ui', children: ['ui_pg_legacy', 'ui_pg_overlay'] },
+    ui_pg_legacy: { id: 'ui_pg_legacy', parent: 'ui', title: 'PG (legacy)', desc: 'Старые настройки PlayerGuard (не Overlay).', screen: 'ui_pg_legacy' },
+    ui_pg_overlay: { id: 'ui_pg_overlay', parent: 'ui', title: 'PG Overlay', desc: 'Новый Overlay-плеер (идеальный защитник).', screen: 'ui_pg_overlay' },
+    ui_playerguard: { id: 'ui_playerguard', parent: 'ui', menu: false, title: 'PlayerGuard', desc: 'PlayerGuard settings', screen: 'ui_pg_legacy' },
     status: { id: 'status', parent: 'root', titleKey: 'menu.root.status.title', param: { name: 'bl_pi_root_status', type: 'static', values: '', default: '' }, screen: 'status', rootRender: rootStatusRender }
   };
 
@@ -406,7 +408,9 @@
     network_status: buildNetworkStatusScreen,
     jsqp: buildJsqpScreen,
     ui: buildUiScreen,
-    ui_playerguard: buildUiPlayerGuardScreen,
+    ui_pg_legacy: buildUiPlayerGuardLegacyScreen,
+    ui_pg_overlay: buildUiPlayerGuardOverlayScreen,
+    ui_playerguard: buildUiPlayerGuardLegacyScreen,
     logging: buildLoggingScreen,
     ua_presets: buildUaPresetsScreen,
     ua_effective: buildUaEffectiveScreen,
@@ -986,12 +990,19 @@
     } catch (_) { }
   }
 
-  function refreshPlayerGuardSettings() {
+  function refreshPlayerGuardLegacySettings() {
     try { if (window.BL && BL.PlayerGuard && BL.PlayerGuard.refresh) BL.PlayerGuard.refresh(); } catch (_) { }
+  }
+
+  function refreshPlayerOverlaySettings() {
     try { if (window.BL && BL.PlayerOverlay && BL.PlayerOverlay.refresh) BL.PlayerOverlay.refresh(); } catch (_) { }
   }
 
-  function buildUiPlayerGuardScreen(ctx) {
+  function refreshPlayerGuardSettings() {
+    refreshPlayerGuardLegacySettings();
+  }
+
+  function buildUiPlayerGuardLegacyScreen(ctx) {
     try {
       P(ctx, {
         id: 'player_guard_enabled',
@@ -999,8 +1010,8 @@
         values: { 0: 'OFF', 1: 'ON' },
         default: 0,
         name: 'Защита плеера от обрывов (PlayerGuard)',
-        desc: 'Double-guard: защита от ложного конца/сессионных сбросов (t=0/dur=0) + анти-автопереход к следующему. По умолчанию OFF.',
-        onChange: refreshPlayerGuardSettings
+        desc: 'Legacy-механика PlayerGuard. Не управляет Overlay.',
+        onChange: refreshPlayerGuardLegacySettings
       });
 
       P(ctx, {
@@ -1010,7 +1021,7 @@
         default: 'auto',
         name: 'PlayerGuard: Стратегия HARD recovery',
         desc: 'off: отключить новую hard-стратегию (fallback на старую логику). auto: сначала in-player reconnect, затем reopen (если разрешён). inplayer: без закрытия UI плеера. reopen: классический close/play.',
-        onChange: refreshPlayerGuardSettings
+        onChange: refreshPlayerGuardLegacySettings
       });
 
       P(ctx, {
@@ -1020,7 +1031,7 @@
         default: 1,
         name: 'PlayerGuard: Перезапускать плеер при обрыве (reopen)',
         desc: 'Разрешает fallback через close/play. Если OFF, reopen не используется.',
-        onChange: refreshPlayerGuardSettings
+        onChange: refreshPlayerGuardLegacySettings
       });
 
       P(ctx, {
@@ -1030,7 +1041,7 @@
         default: 1,
         name: 'PlayerGuard: Автовосстановление по fault',
         desc: 'Автоматически запускает recovery после обрыва из буфера/fault событий.',
-        onChange: refreshPlayerGuardSettings
+        onChange: refreshPlayerGuardLegacySettings
       });
 
       P(ctx, {
@@ -1040,7 +1051,7 @@
         default: 1,
         name: 'PlayerGuard: Разрешить SOFT recovery',
         desc: 'Быстрые попытки (seek/play/load) перед HARD стратегией.',
-        onChange: refreshPlayerGuardSettings
+        onChange: refreshPlayerGuardLegacySettings
       });
 
       P(ctx, {
@@ -1050,7 +1061,7 @@
         default: 0,
         name: 'PlayerGuard: Разрешить HARD reset',
         desc: 'Разрешает тяжёлый reset PlayerVideo (destroy/url).',
-        onChange: refreshPlayerGuardSettings
+        onChange: refreshPlayerGuardLegacySettings
       });
 
       P(ctx, {
@@ -1060,7 +1071,7 @@
         default: '2',
         name: 'Попыток восстановления (SOFT)',
         desc: 'Мягкие попытки: seek/play, load, reload URL. Бюджет не сбрасывается при повторных fault в коротком окне.',
-        onChange: refreshPlayerGuardSettings
+        onChange: refreshPlayerGuardLegacySettings
       });
 
       P(ctx, {
@@ -1070,7 +1081,7 @@
         default: '1',
         name: 'Попыток восстановления (HARD)',
         desc: 'Бюджет HARD шагов: in-player/reopen/hard-reset (зависит от стратегии).',
-        onChange: refreshPlayerGuardSettings
+        onChange: refreshPlayerGuardLegacySettings
       });
 
       P(ctx, {
@@ -1080,7 +1091,7 @@
         default: '2',
         name: 'Пауза между попытками (сек)',
         desc: 'Задержка между шагами восстановления (чтобы не дёргать плеер слишком часто).',
-        onChange: refreshPlayerGuardSettings
+        onChange: refreshPlayerGuardLegacySettings
       });
 
       P(ctx, {
@@ -1090,20 +1101,20 @@
         default: '2',
         name: 'Мин. показ попапа (сек)',
         desc: 'Минимальное время показа каждого шага (1–5 сек).',
-        onChange: refreshPlayerGuardSettings
+        onChange: refreshPlayerGuardLegacySettings
       });
 
       try {
-        var pg_ac = [];
-        for (var pg_i = 0; pg_i <= 60; pg_i++) pg_ac.push(String(pg_i));
+        var pgAc = [];
+        for (var pgI = 0; pgI <= 60; pgI++) pgAc.push(String(pgI));
         P(ctx, {
           id: 'player_guard_popup_autoclose_sec',
           type: 'select',
-          values: pg_ac,
+          values: pgAc,
           default: '10',
           name: 'PlayerGuard popup: автозакрытие (сек)',
           desc: 'Автозакрытие попапа при бездействии. 0 = выключено.',
-          onChange: refreshPlayerGuardSettings
+          onChange: refreshPlayerGuardLegacySettings
         });
       } catch (_) { }
 
@@ -1114,7 +1125,7 @@
         default: 1,
         name: 'Блокировать авто-переход к следующему',
         desc: 'В режиме guardLock блокирует autoplay next при ложном конце/сбросе сессии.',
-        onChange: refreshPlayerGuardSettings
+        onChange: refreshPlayerGuardLegacySettings
       });
 
       P(ctx, {
@@ -1124,7 +1135,7 @@
         default: 1,
         name: 'Отладка в попапе',
         desc: 'Показывает readyState/networkState/srcSig/reason.',
-        onChange: refreshPlayerGuardSettings
+        onChange: refreshPlayerGuardLegacySettings
       });
 
       P(ctx, {
@@ -1133,48 +1144,8 @@
         values: { 0: 'OFF', 1: 'ON' },
         default: 0,
         name: 'PG: Debug popup on open',
-        desc: 'Автоматически открывает debug popup при старте плеера и показывает live-статус (buffer/ranges/events/recovery). Закрывается Back/Esc.',
-        onChange: refreshPlayerGuardSettings
-      });
-
-      P(ctx, {
-        id: 'player_guard_overlay_enabled',
-        type: 'toggle',
-        values: { 0: 'OFF', 1: 'ON' },
-        default: 1,
-        name: 'PG Overlay: Enable',
-        desc: 'Включает слой Player Overlay/Wrapper (watchdog hang + сериализация recovery).',
-        onChange: refreshPlayerGuardSettings
-      });
-
-      P(ctx, {
-        id: 'player_guard_overlay_debug_on_open',
-        type: 'toggle',
-        values: { 0: 'OFF', 1: 'ON' },
-        default: 0,
-        name: 'PG Overlay: Debug on open',
-        desc: 'Автоматически открывать overlay debug popup при старте плеера.',
-        onChange: refreshPlayerGuardSettings
-      });
-
-      P(ctx, {
-        id: 'player_guard_overlay_hang_time_ms',
-        type: 'select',
-        values: { '4000': '4000', '6000': '6000', '8000': '8000', '10000': '10000', '12000': '12000', '15000': '15000', '20000': '20000' },
-        default: '10000',
-        name: 'PG Overlay: Hang time (ms)',
-        desc: 'Порог зависания по currentTime (если время не движется).',
-        onChange: refreshPlayerGuardSettings
-      });
-
-      P(ctx, {
-        id: 'player_guard_overlay_hang_buf_ms',
-        type: 'select',
-        values: { '4000': '4000', '6000': '6000', '8000': '8000', '10000': '10000', '12000': '12000', '15000': '15000', '20000': '20000' },
-        default: '8000',
-        name: 'PG Overlay: Hang buffer (ms)',
-        desc: 'Порог отсутствия progress/buffer изменений для подтверждения hang.',
-        onChange: refreshPlayerGuardSettings
+        desc: 'Автоматически открывает debug popup при старте плеера и показывает live-статус (buffer/ranges/events/recovery).',
+        onChange: refreshPlayerGuardLegacySettings
       });
 
       P(ctx, {
@@ -1184,13 +1155,153 @@
         default: 1,
         name: 'Сохранять позицию в localStorage',
         desc: 'Truth позиция (throttle) хранится как backup и используется для recovery.',
-        onChange: refreshPlayerGuardSettings
+        onChange: refreshPlayerGuardLegacySettings
+      });
+    } catch (_) { }
+  }
+
+  function buildUiPlayerGuardOverlayScreen(ctx) {
+    try {
+      P(ctx, {
+        id: 'player_overlay_enabled',
+        type: 'toggle',
+        values: { 0: 'OFF', 1: 'ON' },
+        default: 1,
+        name: 'Overlay: Enable',
+        desc: 'Независимое включение PlayerGuard Overlay.',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
+        id: 'player_overlay_debug_on_open',
+        type: 'toggle',
+        values: { 0: 'OFF', 1: 'ON' },
+        default: 0,
+        name: 'Overlay: Debug on open',
+        desc: 'Авто-открытие debug overlay при старте плеера.',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      try {
+        var opVals = {};
+        for (var op = 20; op <= 100; op += 5) opVals[String(op)] = String(op) + '%';
+        P(ctx, {
+          id: 'player_overlay_popup_opacity',
+          type: 'select',
+          values: opVals,
+          default: '85',
+          name: 'Overlay: Popup opacity',
+          desc: 'Прозрачность debug popup (20–100%).',
+          onChange: refreshPlayerOverlaySettings
+        });
+      } catch (_) { }
+
+      P(ctx, {
+        id: 'player_overlay_protect_next',
+        type: 'toggle',
+        values: { 0: 'OFF', 1: 'ON' },
+        default: 1,
+        name: 'Overlay: Protect next / false-end',
+        desc: 'Блокировать ложный переход к следующему и восстанавливать truth time.',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
+        id: 'player_overlay_store_truth',
+        type: 'toggle',
+        values: { 0: 'OFF', 1: 'ON' },
+        default: 1,
+        name: 'Overlay: Store truth',
+        desc: 'Хранить реальное время и подпись источника в localStorage.',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
+        id: 'player_overlay_truth_commit_ms',
+        type: 'select',
+        values: { '250': '250', '500': '500', '1000': '1000' },
+        default: '500',
+        name: 'Overlay: Truth commit (ms)',
+        desc: 'Интервал записи truth в localStorage.',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
+        id: 'player_overlay_hang_time_ms',
+        type: 'select',
+        values: { '4000': '4000', '6000': '6000', '8000': '8000', '10000': '10000', '12000': '12000', '15000': '15000', '20000': '20000' },
+        default: '10000',
+        name: 'Overlay: Hang time (ms)',
+        desc: 'Порог зависания по currentTime.',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
+        id: 'player_overlay_hang_buf_ms',
+        type: 'select',
+        values: { '4000': '4000', '6000': '6000', '8000': '8000', '10000': '10000', '12000': '12000', '15000': '15000', '20000': '20000' },
+        default: '8000',
+        name: 'Overlay: Hang buffer (ms)',
+        desc: 'Порог отсутствия progress/изменения buffer.',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
+        id: 'player_overlay_soft_attempts',
+        type: 'select',
+        values: { '0': '0', '1': '1', '2': '2', '3': '3', '4': '4', '5': '5' },
+        default: '2',
+        name: 'Overlay: Soft attempts',
+        desc: 'Количество soft попыток перед in-player.',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
+        id: 'player_overlay_inplayer_attempts',
+        type: 'select',
+        values: { '0': '0', '1': '1', '2': '2', '3': '3', '4': '4', '5': '5', '6': '6' },
+        default: '3',
+        name: 'Overlay: In-player attempts',
+        desc: 'Количество in-player rebuild попыток.',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
+        id: 'player_overlay_inplayer_rebuild_mode',
+        type: 'select',
+        values: { refresh_src: 'refresh_src', destroy_url: 'destroy_url', video_src: 'video_src' },
+        default: 'refresh_src',
+        name: 'Overlay: In-player rebuild mode',
+        desc: 'Метод пересборки потока внутри плеера.',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
+        id: 'player_overlay_escalate_to_reopen',
+        type: 'toggle',
+        values: { 0: 'OFF', 1: 'ON' },
+        default: 1,
+        name: 'Overlay: Escalate to reopen',
+        desc: 'После in-player попыток эскалировать в reopen через PG.',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
+        id: 'player_overlay_reopen_cooldown_ms',
+        type: 'select',
+        values: { '3000': '3000', '5000': '5000', '8000': '8000', '12000': '12000', '15000': '15000', '20000': '20000' },
+        default: '8000',
+        name: 'Overlay: Reopen cooldown (ms)',
+        desc: 'Кулдаун между reopen-эскалациями.',
+        onChange: refreshPlayerOverlaySettings
       });
     } catch (_) { }
   }
 
   function buildUiScreen(ctx) {
     try {
+      buildMenu(ctx, 'ui');
+
       P(ctx, {
         id: 'blacklampa_ui_extended_interface_sizes',
         type: 'toggle',
@@ -1198,17 +1309,6 @@
         default: 1,
         name: 'Расширенные размеры интерфейса',
         desc: 'Добавляет xsmall/xxsmall (0.8/0.7) к настройке \"Размер интерфейса\".'
-      });
-
-      P(ctx, {
-        id: 'bl_ui_playerguard_open',
-        type: 'button',
-        name: 'PlayerGuard',
-        desc: 'Открыть подменю PlayerGuard: recovery, попытки, popup и хранение позиции.',
-        onChange: function () {
-          try { if (ctx && ctx.push) ctx.push('ui_playerguard', null, 0); } catch (_) { }
-          return false;
-        }
       });
 
       P(ctx, {
