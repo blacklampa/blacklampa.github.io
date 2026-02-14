@@ -1000,6 +1000,79 @@
     try { if (window.BL && BL.PlayerOverlay && BL.PlayerOverlay.refresh) BL.PlayerOverlay.refresh(); } catch (_) { }
   }
 
+  function overlayDefaultFallbacks() {
+    return {
+      enabled: 1,
+      debug_on_open: 0,
+      debug_opacity: 0.85,
+      protect_next: 1,
+      store_truth: 1,
+      truth_commit_ms: 500,
+      hang_time_ms: 3500,
+      hang_buf_ms: 4500,
+      resume_guard_ms: 180000,
+      false_end_stale_allow: 1,
+      fake_full_enabled: 1,
+      fake_full_no_prog_ms: 6500,
+      fake_full_no_move_ms: 6500,
+      min_ahead_sec: 0.6,
+      underrun_no_prog_ms: 4500,
+      underrun_no_ahead_move_ms: 4500,
+      soft_attempts: 1,
+      inplayer_attempts: 2,
+      inplayer_rebuild_mode: 'refresh_src',
+      escalate_to_reopen: 1,
+      reopen_cooldown_ms: 8000
+    };
+  }
+
+  function overlayDefaults() {
+    var d = null;
+    try {
+      if (window.BL && BL.PlayerOverlay && typeof BL.PlayerOverlay.defaults === 'function') {
+        d = BL.PlayerOverlay.defaults();
+      }
+    } catch (_) { d = null; }
+    if (!isPlainObject(d)) d = overlayDefaultFallbacks();
+    return d || overlayDefaultFallbacks();
+  }
+
+  function overlayStorageDefaults() {
+    var list = null;
+    try {
+      if (window.BL && BL.PlayerOverlay && typeof BL.PlayerOverlay.storageDefaults === 'function') {
+        list = BL.PlayerOverlay.storageDefaults();
+      }
+    } catch (_) { list = null; }
+    if (Array.isArray(list) && list.length) return list;
+
+    var d = overlayDefaults();
+    var p = String(pref() || 'blacklampa_');
+    return [
+      { key: p + 'player_overlay_enabled', def: d.enabled ? 1 : 0 },
+      { key: p + 'player_overlay_debug_on_open', def: d.debug_on_open ? 1 : 0 },
+      { key: p + 'player_overlay_popup_opacity', def: Math.max(20, Math.min(100, Math.round((Number(d.debug_opacity) || 0.85) * 100))) },
+      { key: p + 'player_overlay_protect_next', def: d.protect_next ? 1 : 0 },
+      { key: p + 'player_overlay_store_truth', def: d.store_truth ? 1 : 0 },
+      { key: p + 'player_overlay_truth_commit_ms', def: String(d.truth_commit_ms || 500) },
+      { key: p + 'player_overlay_hang_time_ms', def: String(d.hang_time_ms || 3500) },
+      { key: p + 'player_overlay_hang_buf_ms', def: String(d.hang_buf_ms || 4500) },
+      { key: p + 'player_overlay_resume_guard_ms', def: String(d.resume_guard_ms || 180000) },
+      { key: p + 'player_overlay_false_end_stale_allow', def: d.false_end_stale_allow ? 1 : 0 },
+      { key: p + 'player_overlay_fake_full_enabled', def: d.fake_full_enabled ? 1 : 0 },
+      { key: p + 'player_overlay_fake_full_no_prog_ms', def: String(d.fake_full_no_prog_ms || 6500) },
+      { key: p + 'player_overlay_fake_full_no_move_ms', def: String(d.fake_full_no_move_ms || 6500) },
+      { key: p + 'player_overlay_min_ahead_sec', def: String(d.min_ahead_sec || 0.6) },
+      { key: p + 'player_overlay_underrun_no_prog_ms', def: String(d.underrun_no_prog_ms || 4500) },
+      { key: p + 'player_overlay_underrun_no_ahead_move_ms', def: String(d.underrun_no_ahead_move_ms || 4500) },
+      { key: p + 'player_overlay_soft_attempts', def: String(d.soft_attempts || 1) },
+      { key: p + 'player_overlay_inplayer_attempts', def: String(d.inplayer_attempts || 2) },
+      { key: p + 'player_overlay_inplayer_rebuild_mode', def: String(d.inplayer_rebuild_mode || 'refresh_src') },
+      { key: p + 'player_overlay_escalate_to_reopen', def: d.escalate_to_reopen ? 1 : 0 },
+      { key: p + 'player_overlay_reopen_cooldown_ms', def: String(d.reopen_cooldown_ms || 8000) }
+    ];
+  }
+
   function refreshPlayerGuardSettings() {
     refreshPlayerGuardLegacySettings();
   }
@@ -1164,11 +1237,14 @@
 
   function buildUiPlayerGuardOverlayScreen(ctx) {
     try {
+      var od = overlayDefaults();
+      var opacityPct = Math.max(20, Math.min(100, Math.round((Number(od.debug_opacity) || 0.85) * 100)));
+
       P(ctx, {
         id: 'player_overlay_enabled',
         type: 'toggle',
         values: { 0: 'OFF', 1: 'ON' },
-        default: 1,
+        default: od.enabled ? 1 : 0,
         name: 'Overlay: Enable',
         desc: 'Независимое включение PlayerGuard Overlay.',
         onChange: refreshPlayerOverlaySettings
@@ -1178,10 +1254,53 @@
         id: 'player_overlay_debug_on_open',
         type: 'toggle',
         values: { 0: 'OFF', 1: 'ON' },
-        default: 0,
+        default: od.debug_on_open ? 1 : 0,
         name: 'Overlay: Debug on open',
         desc: 'Авто-открытие debug overlay при старте плеера.',
         onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
+        id: 'player_overlay_reset_defaults',
+        type: 'button',
+        name: 'Сбросить настройки PG Overlay',
+        desc: 'Сбросить все настройки PG Overlay к оптимальным значениям по умолчанию.',
+        onChange: function () {
+          var doReset = function () {
+            try {
+              var done = false;
+              try {
+                if (window.BL && BL.PlayerOverlay && typeof BL.PlayerOverlay.applyDefaults === 'function') {
+                  BL.PlayerOverlay.applyDefaults();
+                  done = true;
+                }
+              } catch (_) { done = false; }
+
+              if (!done) {
+                var list = overlayStorageDefaults();
+                for (var i = 0; i < list.length; i++) {
+                  var it = list[i] || {};
+                  if (!it.key) continue;
+                  sSet(String(it.key), it.def);
+                }
+              }
+
+              refreshPlayerOverlaySettings();
+              try { if (ctx && ctx.refresh) ctx.refresh({ keepFocus: true }); } catch (_) { }
+              try { if (ctx && ctx.notify) ctx.notify('[[BlackLampa]] Настройки PG Overlay сброшены'); } catch (_) { }
+            } catch (_) { }
+            return false;
+          };
+
+          try {
+            if (ctx && typeof ctx.confirm === 'function') {
+              ctx.confirm('PG Overlay', 'Сбросить настройки PG Overlay к дефолтам?', function () { doReset(); });
+              return false;
+            }
+          } catch (_) { }
+
+          return doReset();
+        }
       });
 
       try {
@@ -1191,7 +1310,7 @@
           id: 'player_overlay_popup_opacity',
           type: 'select',
           values: opVals,
-          default: '85',
+          default: String(opacityPct),
           name: 'Overlay: Popup opacity',
           desc: 'Прозрачность debug popup (20–100%).',
           onChange: refreshPlayerOverlaySettings
@@ -1202,7 +1321,7 @@
         id: 'player_overlay_protect_next',
         type: 'toggle',
         values: { 0: 'OFF', 1: 'ON' },
-        default: 1,
+        default: od.protect_next ? 1 : 0,
         name: 'Overlay: Protect next / false-end',
         desc: 'Блокировать ложный переход к следующему и восстанавливать truth time.',
         onChange: refreshPlayerOverlaySettings
@@ -1212,7 +1331,7 @@
         id: 'player_overlay_store_truth',
         type: 'toggle',
         values: { 0: 'OFF', 1: 'ON' },
-        default: 1,
+        default: od.store_truth ? 1 : 0,
         name: 'Overlay: Store truth',
         desc: 'Хранить реальное время и подпись источника в localStorage.',
         onChange: refreshPlayerOverlaySettings
@@ -1222,7 +1341,7 @@
         id: 'player_overlay_truth_commit_ms',
         type: 'select',
         values: { '250': '250', '500': '500', '1000': '1000' },
-        default: '500',
+        default: String(od.truth_commit_ms || 500),
         name: 'Overlay: Truth commit (ms)',
         desc: 'Интервал записи truth в localStorage.',
         onChange: refreshPlayerOverlaySettings
@@ -1231,8 +1350,8 @@
       P(ctx, {
         id: 'player_overlay_hang_time_ms',
         type: 'select',
-        values: { '4000': '4000', '6000': '6000', '8000': '8000', '10000': '10000', '12000': '12000', '15000': '15000', '20000': '20000' },
-        default: '10000',
+        values: { '3500': '3500', '4000': '4000', '4500': '4500', '6000': '6000', '8000': '8000', '10000': '10000', '12000': '12000', '15000': '15000', '20000': '20000' },
+        default: String(od.hang_time_ms || 3500),
         name: 'Overlay: Hang time (ms)',
         desc: 'Порог зависания по currentTime.',
         onChange: refreshPlayerOverlaySettings
@@ -1241,8 +1360,8 @@
       P(ctx, {
         id: 'player_overlay_hang_buf_ms',
         type: 'select',
-        values: { '4000': '4000', '6000': '6000', '8000': '8000', '10000': '10000', '12000': '12000', '15000': '15000', '20000': '20000' },
-        default: '8000',
+        values: { '3500': '3500', '4000': '4000', '4500': '4500', '6000': '6000', '8000': '8000', '10000': '10000', '12000': '12000', '15000': '15000', '20000': '20000' },
+        default: String(od.hang_buf_ms || 4500),
         name: 'Overlay: Hang buffer (ms)',
         desc: 'Порог отсутствия progress/изменения buffer.',
         onChange: refreshPlayerOverlaySettings
@@ -1252,7 +1371,7 @@
         id: 'player_overlay_resume_guard_ms',
         type: 'select',
         values: { '60000': '60000', '120000': '120000', '180000': '180000', '240000': '240000', '300000': '300000' },
-        default: '180000',
+        default: String(od.resume_guard_ms || 180000),
         name: 'Overlay: Resume guard window (ms)',
         desc: 'Окно усиленной защиты после resume (агрессивнее hang/false-end guard).',
         onChange: refreshPlayerOverlaySettings
@@ -1262,7 +1381,7 @@
         id: 'player_overlay_false_end_stale_allow',
         type: 'toggle',
         values: { 0: 'OFF', 1: 'ON' },
-        default: 1,
+        default: od.false_end_stale_allow ? 1 : 0,
         name: 'Overlay: Allow stale false-end',
         desc: 'Разрешить loose false-end даже при stale truth, если есть stall-сигналы.',
         onChange: refreshPlayerOverlaySettings
@@ -1272,7 +1391,7 @@
         id: 'player_overlay_fake_full_enabled',
         type: 'toggle',
         values: { 0: 'OFF', 1: 'ON' },
-        default: 1,
+        default: od.fake_full_enabled ? 1 : 0,
         name: 'Overlay: Fake-full detector',
         desc: 'Ловить фейковую «полную буферизацию» (range 0..dur без движения прогресса/буфера).',
         onChange: refreshPlayerOverlaySettings
@@ -1281,8 +1400,8 @@
       P(ctx, {
         id: 'player_overlay_fake_full_no_prog_ms',
         type: 'select',
-        values: { '3000': '3000', '4000': '4000', '5000': '5000', '6000': '6000', '8000': '8000', '10000': '10000', '12000': '12000' },
-        default: '6000',
+        values: { '3000': '3000', '4000': '4000', '5000': '5000', '6000': '6000', '6500': '6500', '8000': '8000', '10000': '10000', '12000': '12000' },
+        default: String(od.fake_full_no_prog_ms || 6500),
         name: 'Overlay: Fake-full no-progress (ms)',
         desc: 'Сколько ждать без progress перед fake-full детектом.',
         onChange: refreshPlayerOverlaySettings
@@ -1291,8 +1410,8 @@
       P(ctx, {
         id: 'player_overlay_fake_full_no_move_ms',
         type: 'select',
-        values: { '3000': '3000', '4000': '4000', '5000': '5000', '6000': '6000', '8000': '8000', '10000': '10000', '12000': '12000' },
-        default: '6000',
+        values: { '3000': '3000', '4000': '4000', '5000': '5000', '6000': '6000', '6500': '6500', '8000': '8000', '10000': '10000', '12000': '12000' },
+        default: String(od.fake_full_no_move_ms || 6500),
         name: 'Overlay: Fake-full no-buffer-move (ms)',
         desc: 'Сколько ждать без движения buffered-end перед fake-full детектом.',
         onChange: refreshPlayerOverlaySettings
@@ -1301,8 +1420,8 @@
       P(ctx, {
         id: 'player_overlay_min_ahead_sec',
         type: 'select',
-        values: { '0.25': '0.25', '0.5': '0.5', '0.75': '0.75', '1.0': '1.0', '1.5': '1.5', '2.0': '2.0' },
-        default: '0.5',
+        values: { '0.25': '0.25', '0.5': '0.5', '0.6': '0.6', '0.75': '0.75', '1.0': '1.0', '1.5': '1.5', '2.0': '2.0' },
+        default: String(od.min_ahead_sec || 0.6),
         name: 'Overlay: Min ahead (sec)',
         desc: 'Порог ahead для underrun-детектора.',
         onChange: refreshPlayerOverlaySettings
@@ -1311,8 +1430,8 @@
       P(ctx, {
         id: 'player_overlay_underrun_no_prog_ms',
         type: 'select',
-        values: { '2000': '2000', '3000': '3000', '4000': '4000', '5000': '5000', '6000': '6000', '8000': '8000', '10000': '10000' },
-        default: '4000',
+        values: { '2000': '2000', '3000': '3000', '4000': '4000', '4500': '4500', '5000': '5000', '6000': '6000', '8000': '8000', '10000': '10000' },
+        default: String(od.underrun_no_prog_ms || 4500),
         name: 'Overlay: Underrun no-progress (ms)',
         desc: 'Сколько ждать без progress для buffer underrun.',
         onChange: refreshPlayerOverlaySettings
@@ -1321,8 +1440,8 @@
       P(ctx, {
         id: 'player_overlay_underrun_no_ahead_move_ms',
         type: 'select',
-        values: { '2000': '2000', '3000': '3000', '4000': '4000', '5000': '5000', '6000': '6000', '8000': '8000', '10000': '10000' },
-        default: '4000',
+        values: { '2000': '2000', '3000': '3000', '4000': '4000', '4500': '4500', '5000': '5000', '6000': '6000', '8000': '8000', '10000': '10000' },
+        default: String(od.underrun_no_ahead_move_ms || 4500),
         name: 'Overlay: Underrun no-ahead-move (ms)',
         desc: 'Сколько ждать без изменения ahead для buffer underrun.',
         onChange: refreshPlayerOverlaySettings
@@ -1332,7 +1451,7 @@
         id: 'player_overlay_soft_attempts',
         type: 'select',
         values: { '0': '0', '1': '1', '2': '2', '3': '3', '4': '4', '5': '5' },
-        default: '2',
+        default: String(od.soft_attempts || 1),
         name: 'Overlay: Soft attempts',
         desc: 'Количество soft попыток перед in-player.',
         onChange: refreshPlayerOverlaySettings
@@ -1342,7 +1461,7 @@
         id: 'player_overlay_inplayer_attempts',
         type: 'select',
         values: { '0': '0', '1': '1', '2': '2', '3': '3', '4': '4', '5': '5', '6': '6' },
-        default: '3',
+        default: String(od.inplayer_attempts || 2),
         name: 'Overlay: In-player attempts',
         desc: 'Количество in-player rebuild попыток.',
         onChange: refreshPlayerOverlaySettings
@@ -1352,7 +1471,7 @@
         id: 'player_overlay_inplayer_rebuild_mode',
         type: 'select',
         values: { refresh_src: 'refresh_src', destroy_url: 'destroy_url', video_src: 'video_src' },
-        default: 'refresh_src',
+        default: String(od.inplayer_rebuild_mode || 'refresh_src'),
         name: 'Overlay: In-player rebuild mode',
         desc: 'Метод пересборки потока внутри плеера.',
         onChange: refreshPlayerOverlaySettings
@@ -1362,7 +1481,7 @@
         id: 'player_overlay_escalate_to_reopen',
         type: 'toggle',
         values: { 0: 'OFF', 1: 'ON' },
-        default: 1,
+        default: od.escalate_to_reopen ? 1 : 0,
         name: 'Overlay: Escalate to reopen',
         desc: 'После in-player попыток эскалировать в reopen через PG.',
         onChange: refreshPlayerOverlaySettings
@@ -1372,7 +1491,7 @@
         id: 'player_overlay_reopen_cooldown_ms',
         type: 'select',
         values: { '3000': '3000', '5000': '5000', '8000': '8000', '12000': '12000', '15000': '15000', '20000': '20000' },
-        default: '8000',
+        default: String(od.reopen_cooldown_ms || 8000),
         name: 'Overlay: Reopen cooldown (ms)',
         desc: 'Кулдаун между reopen-эскалациями.',
         onChange: refreshPlayerOverlaySettings

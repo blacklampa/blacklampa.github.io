@@ -106,6 +106,87 @@
     frameGraceMs: 6000
   };
 
+  var OVERLAY_DEFAULTS = {
+    enabled: 1,
+    debug_on_open: 0,
+    debug_opacity: 0.85,
+
+    protect_next: 1,
+    store_truth: 1,
+    truth_commit_ms: 500,
+
+    min_ahead_sec: 0.6,
+    underrun_no_prog_ms: 4500,
+    underrun_no_ahead_move_ms: 4500,
+
+    fake_full_enabled: 1,
+    fake_full_no_prog_ms: 6500,
+    fake_full_no_move_ms: 6500,
+
+    hang_time_ms: 3500,
+    hang_buf_ms: 4500,
+    resume_guard_ms: 180000,
+    false_end_stale_allow: 1,
+
+    frame_hang_ms: 3500,
+    frame_ct_delta_sec: 1.0,
+    frame_grace_ms: 6000,
+
+    critical_window_ms: 30000,
+    block_next_ms: 30000,
+
+    seek_verify_delay_ms: 900,
+    seek_delta_sec: 3.0,
+
+    user_seek_window_ms: 2500,
+    user_nav_window_ms: 2500,
+    pause_hold_ms: 15000,
+
+    soft_attempts: 1,
+    inplayer_attempts: 2,
+    reopen_attempts: 2,
+    inplayer_rebuild_mode: 'refresh_src',
+    escalate_to_reopen: 1,
+    reopen_cooldown_ms: 8000
+  };
+
+  function overlayDefaultsCopy() {
+    var out = {};
+    var kx;
+    for (kx in OVERLAY_DEFAULTS) {
+      if (!Object.prototype.hasOwnProperty.call(OVERLAY_DEFAULTS, kx)) continue;
+      out[kx] = OVERLAY_DEFAULTS[kx];
+    }
+    return out;
+  }
+
+  function overlayStorageDefaultsList() {
+    var d = overlayDefaultsCopy();
+    return [
+      { key: K.enabled, def: toInt(d.enabled, 1) ? 1 : 0 },
+      { key: K.debugOnOpen, def: toInt(d.debug_on_open, 0) ? 1 : 0 },
+      { key: K.popupOpacity, def: clampInt(Math.round(toNum(d.debug_opacity, 0.85) * 100), 20, 100) },
+      { key: K.protectNext, def: toInt(d.protect_next, 1) ? 1 : 0 },
+      { key: K.storeTruth, def: toInt(d.store_truth, 1) ? 1 : 0 },
+      { key: K.truthCommitMs, def: clampInt(toInt(d.truth_commit_ms, 500), 250, 2000) },
+      { key: K.hangTimeMs, def: clampInt(toInt(d.hang_time_ms, 3500), 3000, 60000) },
+      { key: K.hangBufMs, def: clampInt(toInt(d.hang_buf_ms, 4500), 3000, 60000) },
+      { key: K.resumeGuardMs, def: clampInt(toInt(d.resume_guard_ms, 180000), 30000, 600000) },
+      { key: K.falseEndStaleAllow, def: toInt(d.false_end_stale_allow, 1) ? 1 : 0 },
+      { key: K.fakeFullEnabled, def: toInt(d.fake_full_enabled, 1) ? 1 : 0 },
+      { key: K.fakeFullNoProgMs, def: clampInt(toInt(d.fake_full_no_prog_ms, 6500), 1000, 30000) },
+      { key: K.fakeFullNoMoveMs, def: clampInt(toInt(d.fake_full_no_move_ms, 6500), 1000, 30000) },
+      { key: K.minAheadSec, def: Math.max(0, Math.min(3, toNum(d.min_ahead_sec, 0.6))) },
+      { key: K.underrunNoProgMs, def: clampInt(toInt(d.underrun_no_prog_ms, 4500), 1000, 30000) },
+      { key: K.underrunNoAheadMoveMs, def: clampInt(toInt(d.underrun_no_ahead_move_ms, 4500), 1000, 30000) },
+      { key: K.softAttempts, def: clampInt(toInt(d.soft_attempts, 1), 0, 5) },
+      { key: K.inplayerAttempts, def: clampInt(toInt(d.inplayer_attempts, 2), 0, 6) },
+      { key: K.inplayerMode, def: normalizeInplayerMode(d.inplayer_rebuild_mode || 'refresh_src') },
+      { key: K.escalateToReopen, def: toInt(d.escalate_to_reopen, 1) ? 1 : 0 },
+      { key: K.reopenCooldownMs, def: clampInt(toInt(d.reopen_cooldown_ms, 8000), 1000, 60000) }
+    ];
+  }
+
   var STATE = {
     installed: false,
     patched: { player: false, playlist: false, controller: false },
@@ -858,43 +939,61 @@
   }
 
   function readSettingsFromStorage() {
+    var defs = overlayStorageDefaultsList();
+    var defMap = {};
+    var i = 0;
+    for (i = 0; i < defs.length; i++) {
+      try {
+        var di = defs[i] || {};
+        var dk = String(di.key || '');
+        if (!dk) continue;
+        defMap[dk] = di.def;
+      } catch (_) { }
+    }
+    function d(key, fallback) {
+      key = String(key || '');
+      if (!key) return fallback;
+      if (Object.prototype.hasOwnProperty.call(defMap, key)) return defMap[key];
+      return fallback;
+    }
+
     var enRaw = sGet(K.enabled, null);
-    if (enRaw === null || enRaw === undefined || enRaw === '') enRaw = sGet(K.oldEnabled, '1');
-    CFG.enabled = parseBool(enRaw, true);
+    if (enRaw === null || enRaw === undefined || enRaw === '') enRaw = sGet(K.oldEnabled, String(d(K.enabled, 1)));
+    CFG.enabled = parseBool(enRaw, !!toInt(d(K.enabled, 1), 1));
 
     var dbgRaw = sGet(K.debugOnOpen, null);
-    if (dbgRaw === null || dbgRaw === undefined || dbgRaw === '') dbgRaw = sGet(K.oldDebugOnOpen, '0');
-    CFG.debugOnOpen = parseBool(dbgRaw, false);
+    if (dbgRaw === null || dbgRaw === undefined || dbgRaw === '') dbgRaw = sGet(K.oldDebugOnOpen, String(d(K.debugOnOpen, 0)));
+    CFG.debugOnOpen = parseBool(dbgRaw, !!toInt(d(K.debugOnOpen, 0), 0));
 
-    CFG.popupOpacity = clampInt(sGet(K.popupOpacity, '85'), 20, 100);
-    CFG.protectNext = parseBool(sGet(K.protectNext, '1'), true);
-    CFG.storeTruth = parseBool(sGet(K.storeTruth, '1'), true);
-    CFG.truthCommitMs = clampInt(sGet(K.truthCommitMs, '500'), 250, 2000);
+    CFG.popupOpacity = clampInt(sGet(K.popupOpacity, String(d(K.popupOpacity, 85))), 20, 100);
+    CFG.protectNext = parseBool(sGet(K.protectNext, String(d(K.protectNext, 1))), !!toInt(d(K.protectNext, 1), 1));
+    CFG.storeTruth = parseBool(sGet(K.storeTruth, String(d(K.storeTruth, 1))), !!toInt(d(K.storeTruth, 1), 1));
+    CFG.truthCommitMs = clampInt(sGet(K.truthCommitMs, String(d(K.truthCommitMs, 500))), 250, 2000);
 
     var htRaw = sGet(K.hangTimeMs, null);
-    if (htRaw === null || htRaw === undefined || htRaw === '') htRaw = sGet(K.oldHangTimeMs, '10000');
+    if (htRaw === null || htRaw === undefined || htRaw === '') htRaw = sGet(K.oldHangTimeMs, String(d(K.hangTimeMs, 3500)));
     CFG.hangTimeMs = clampInt(htRaw, 3000, 60000);
 
     var hbRaw = sGet(K.hangBufMs, null);
-    if (hbRaw === null || hbRaw === undefined || hbRaw === '') hbRaw = sGet(K.oldHangBufMs, '8000');
+    if (hbRaw === null || hbRaw === undefined || hbRaw === '') hbRaw = sGet(K.oldHangBufMs, String(d(K.hangBufMs, 4500)));
     CFG.hangBufMs = clampInt(hbRaw, 3000, 60000);
-    CFG.resumeGuardMs = clampInt(sGet(K.resumeGuardMs, '180000'), 30000, 600000);
-    CFG.falseEndStaleAllow = parseBool(sGet(K.falseEndStaleAllow, '1'), true);
-    CFG.fakeFullEnabled = parseBool(sGet(K.fakeFullEnabled, '1'), true);
-    CFG.fakeFullNoProgMs = clampInt(sGet(K.fakeFullNoProgMs, '6000'), 1000, 30000);
-    CFG.fakeFullNoMoveMs = clampInt(sGet(K.fakeFullNoMoveMs, '6000'), 1000, 30000);
-    CFG.minAheadSec = Math.max(0, Math.min(3, toNum(sGet(K.minAheadSec, '0.5'), 0.5)));
-    CFG.underrunNoProgMs = clampInt(sGet(K.underrunNoProgMs, '4000'), 1000, 30000);
-    CFG.underrunNoAheadMoveMs = clampInt(sGet(K.underrunNoAheadMoveMs, '4000'), 1000, 30000);
+    CFG.resumeGuardMs = clampInt(sGet(K.resumeGuardMs, String(d(K.resumeGuardMs, 180000))), 30000, 600000);
+    CFG.falseEndStaleAllow = parseBool(sGet(K.falseEndStaleAllow, String(d(K.falseEndStaleAllow, 1))), !!toInt(d(K.falseEndStaleAllow, 1), 1));
+    CFG.fakeFullEnabled = parseBool(sGet(K.fakeFullEnabled, String(d(K.fakeFullEnabled, 1))), !!toInt(d(K.fakeFullEnabled, 1), 1));
+    CFG.fakeFullNoProgMs = clampInt(sGet(K.fakeFullNoProgMs, String(d(K.fakeFullNoProgMs, 6500))), 1000, 30000);
+    CFG.fakeFullNoMoveMs = clampInt(sGet(K.fakeFullNoMoveMs, String(d(K.fakeFullNoMoveMs, 6500))), 1000, 30000);
+    CFG.minAheadSec = Math.max(0, Math.min(3, toNum(sGet(K.minAheadSec, String(d(K.minAheadSec, 0.6))), toNum(d(K.minAheadSec, 0.6), 0.6))));
+    CFG.underrunNoProgMs = clampInt(sGet(K.underrunNoProgMs, String(d(K.underrunNoProgMs, 4500))), 1000, 30000);
+    CFG.underrunNoAheadMoveMs = clampInt(sGet(K.underrunNoAheadMoveMs, String(d(K.underrunNoAheadMoveMs, 4500))), 1000, 30000);
 
-    CFG.softAttempts = clampInt(sGet(K.softAttempts, '2'), 0, 5);
-    CFG.inplayerAttempts = clampInt(sGet(K.inplayerAttempts, '3'), 0, 6);
-    CFG.inplayerMode = normalizeInplayerMode(sGet(K.inplayerMode, 'refresh_src'));
-    CFG.escalateToReopen = parseBool(sGet(K.escalateToReopen, '1'), true);
-    CFG.reopenCooldownMs = clampInt(sGet(K.reopenCooldownMs, '8000'), 1000, 60000);
-    CFG.frameHangMs = clampInt(toInt(CFG.frameHangMs, 3200), 1200, 15000);
-    CFG.frameCtDeltaSec = Math.max(0.2, Math.min(5, toNum(CFG.frameCtDeltaSec, 1.0)));
-    CFG.frameGraceMs = clampInt(toInt(CFG.frameGraceMs, 6000), 1000, 20000);
+    CFG.softAttempts = clampInt(sGet(K.softAttempts, String(d(K.softAttempts, 1))), 0, 5);
+    CFG.inplayerAttempts = clampInt(sGet(K.inplayerAttempts, String(d(K.inplayerAttempts, 2))), 0, 6);
+    CFG.inplayerMode = normalizeInplayerMode(sGet(K.inplayerMode, String(d(K.inplayerMode, 'refresh_src'))));
+    CFG.escalateToReopen = parseBool(sGet(K.escalateToReopen, String(d(K.escalateToReopen, 1))), !!toInt(d(K.escalateToReopen, 1), 1));
+    CFG.reopenCooldownMs = clampInt(sGet(K.reopenCooldownMs, String(d(K.reopenCooldownMs, 8000))), 1000, 60000);
+    CFG.frameHangMs = clampInt(toInt(CFG.frameHangMs, toInt(OVERLAY_DEFAULTS.frame_hang_ms, 3500)), 1200, 15000);
+    CFG.frameCtDeltaSec = Math.max(0.2, Math.min(5, toNum(CFG.frameCtDeltaSec, toNum(OVERLAY_DEFAULTS.frame_ct_delta_sec, 1.0))));
+    CFG.frameGraceMs = clampInt(toInt(CFG.frameGraceMs, toInt(OVERLAY_DEFAULTS.frame_grace_ms, 6000)), 1000, 20000);
 
     STATE.lastCfgReadTs = now();
     return CFG;
@@ -4579,6 +4678,43 @@
         return out;
       }, [])
     };
+  };
+
+  API.defaults = function () {
+    return overlayDefaultsCopy();
+  };
+
+  API.storageDefaults = function () {
+    var src = overlayStorageDefaultsList();
+    var out = [];
+    var i = 0;
+    for (i = 0; i < src.length; i++) {
+      var it = src[i] || {};
+      out.push({ key: String(it.key || ''), def: it.def });
+    }
+    return out;
+  };
+
+  API.applyDefaults = function () {
+    var items = overlayStorageDefaultsList();
+    var i = 0;
+    for (i = 0; i < items.length; i++) {
+      var it = items[i] || {};
+      if (!it.key) continue;
+      sSet(String(it.key), it.def);
+    }
+    readSettingsFromStorage();
+    STATE.life.exitIntent = 0;
+    if (CFG.enabled) {
+      var v = STATE.video || getVideo();
+      if (v) {
+        markLifeOpen('apply_defaults');
+        ensureTickTimer('apply_defaults');
+      }
+    }
+    if (STATE.ui.open) uiRender('apply_defaults');
+    logLine('OK', 'defaults_applied', { count: items.length });
+    return API.state();
   };
 
   API.cancel = function (reason) {
