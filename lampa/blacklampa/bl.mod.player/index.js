@@ -191,38 +191,18 @@
   function showSourcesDiag(diag) {
     var lines = [];
     lines.push('BL-Mod: sources_empty');
-    lines.push('hasLampa=' + (diag && diag.hasLampa ? 1 : 0));
-    lines.push('hasApi=' + (diag && diag.hasApi ? 1 : 0));
-    lines.push('hasApiSources=' + (diag && diag.hasApiSources ? 1 : 0));
-    lines.push('apiKeysCount=' + toInt(diag && diag.apiKeysCount, 0));
-    lines.push('apiPlayableCount=' + toInt(diag && diag.apiPlayableCount, 0));
-    lines.push('apiExcludedCount=' + toInt(diag && diag.apiExcludedCount, 0));
-    lines.push('autoLoadDonors=' + (diag && diag.autoLoadDonors ? 1 : 0));
+    lines.push('hasSourceKit=' + (diag && diag.hasSourceKit ? 1 : 0));
+    lines.push('componentRegistered=' + (diag && diag.componentRegistered ? 1 : 0));
+    lines.push('sourceCount=' + toInt(diag && diag.sourceCount, 0));
+    lines.push('cacheRawLen=' + toInt(diag && diag.cacheRawLen, 0));
+    lines.push('cacheErr=' + str(diag && diag.cacheErr || ''));
 
     try {
-      var counts = obj(diag && diag.snapshot && diag.snapshot.counts);
-      lines.push('snapshot: all=' + toInt(counts.all, 0) + ', enabled=' + toInt(counts.enabled, 0) + ', playable=' + toInt(counts.enabledPlayable, 0));
+      var ids = (diag && diag.sourceIds && diag.sourceIds.length) ? diag.sourceIds.join(', ') : '';
+      if (ids) lines.push('sourceIds=' + ids);
     } catch (_) { }
 
-    try {
-      var flags = obj(diag && diag.scripts && diag.scripts.flags);
-      var comp = obj(diag && diag.scripts && diag.scripts.components);
-      lines.push('loaded_modss=' + (flags.loaded_modss ? 1 : 0));
-      lines.push('smotrolet_plugin=' + (flags.smotrolet_plugin ? 1 : 0));
-      lines.push('onlyskaz_plugin=' + (flags.onlyskaz_plugin ? 1 : 0));
-      lines.push('components=' + Object.keys(comp).map(function (k) { return k + ':' + (comp[k] ? 1 : 0); }).join(', '));
-    } catch (_) { }
-
-    try {
-      var donors = Array.isArray(diag && diag.donors) ? diag.donors : [];
-      if (donors.length) lines.push('donors=' + donors.map(function (d) { return str(d.id) + ':' + (d.enabled ? 1 : 0) + '/' + (d.loaded ? 1 : 0); }).join(', '));
-    } catch (_) { }
-
-    try {
-      if (diag && diag.apiKeys && diag.apiKeys.length) lines.push('apiKeys=' + diag.apiKeys.join(', '));
-    } catch (_) { }
-
-    lines.push('hint: проверь загрузку modsxfull.js / online*.js');
+    lines.push('hint: проверь извлечение all_sources из /lampa/scripts/online_mod.js');
     showNoty('BL-Mod: sources_empty');
 
     try {
@@ -332,7 +312,7 @@
   }
 
   function ensureDeps() {
-    return !!(MP.SourcesHub && MP.UI && MP.UI.Picker && MP.UI.Button);
+    return !!(MP.OnlineCore && MP.SourceKit && MP.Player && MP.UI && MP.UI.Button);
   }
 
   function toPickerRows(list, mapFn) {
@@ -493,9 +473,6 @@
     var key = ctxKey(ctx);
     var saved = recall(LS.lastSource, key);
     var preferredObj = null;
-    try {
-      if (MP.SourcesHub && typeof MP.SourcesHub.pickDefault === 'function') preferredObj = MP.SourcesHub.pickDefault(sources);
-    } catch (_) { }
 
     var rows = toPickerRows(sources, function (s) {
       var sub = [];
@@ -602,46 +579,28 @@
     STATE.busy = true;
     log('INF', 'flow_start', { ctx: ctx.ctxSig, title: ctx.movie.title || ctx.movie.name || '' });
 
-    return MP.SourcesHub.resolveForMovie(ctx, {}).then(function (resolved) {
-      var sources = resolved && resolved.sources ? resolved.sources : [];
-      if (!resolved || !resolved.ok || !sources.length) {
-        var diagP = (MP.SourcesHub && typeof MP.SourcesHub.diagnose === 'function')
-          ? MP.SourcesHub.diagnose(ctx, { force: false })
-          : Promise.resolve(MP.SourcesHub && MP.SourcesHub.diag ? MP.SourcesHub.diag(ctx) : null);
-        return diagP.then(function (diag) {
+    return MP.OnlineCore.getSources({ force: false }).then(function (sources) {
+      if (!sources || !sources.length) {
+        return MP.OnlineCore.diagnose().then(function (diag) {
           log('ERR', 'sources_empty', diag || {});
           showSourcesDiag(diag);
           throw new Error('sources_empty');
         });
       }
-      log('INF', 'sources_ready', {
+      log('INF', 'online_sources_ready', {
         count: sources.length,
-        keys: sources.map(function (s) { return str(s.id || s.key); }).slice(0, 50)
+        keys: sources.map(function (s) { return str(s.id || s.key || s.title); }).slice(0, 50)
       });
-      return chooseSource(ctx, sources);
-    }).then(function (source) {
-      if (!source) return null;
-
-      return delegatePlayToInstalledComponent(ctx, source).then(function (delegated) {
-        if (delegated) {
-          STATE.lastPlaybackMeta = {
-            sourceId: str(source.id || source.key || ''),
-            origin: str(source.origin || ''),
-            ctxSig: str(ctx.ctxSig || ''),
-            mode: 'delegate',
-            ts: nowMs()
-          };
-          return true;
-        }
-
-        if (source && source.delegateOnly) {
-          throw new Error('delegate_only_unavailable');
-        }
-
-        return playViaLegacySourceKit(ctx, source).then(function (ok) {
-          if (ok) return true;
-          throw new Error('delegate_unavailable');
-        });
+      return MP.OnlineCore.openResultsScreen(ctx.movie, { autoSearch: true }).then(function (ok) {
+        if (!ok) throw new Error('open_results_screen_failed');
+        STATE.lastPlaybackMeta = {
+          sourceId: '',
+          origin: 'online_core',
+          ctxSig: str(ctx.ctxSig || ''),
+          mode: 'results_screen',
+          ts: nowMs()
+        };
+        return true;
       });
     }).then(function (ok) {
       STATE.busy = false;
@@ -655,10 +614,7 @@
       STATE.busy = false;
       var err = str(e && (e.message || e.msg || e.c || 'unknown'));
       log('ERR', 'flow_failed', { err: err });
-      if (err !== 'sources_empty') {
-        if (err === 'delegate_only_unavailable') showNoty('BL-Mod: источник доступен только через online-компонент, но он недоступен');
-        else showNoty('BL-Mod: ' + err);
-      }
+      if (err !== 'sources_empty') showNoty('BL-Mod: ' + err);
       return false;
     });
   }
@@ -700,19 +656,16 @@
   MP.open = MP.openFromCard;
 
   MP.ensureDonorsLoaded = function (force) {
-    if (!MP.SourcesHub || typeof MP.SourcesHub.ensureDonorsLoaded !== 'function') return Promise.resolve(null);
-    return MP.SourcesHub.ensureDonorsLoaded({ force: !!force });
+    return Promise.resolve(null);
   };
 
   MP.sourcesDump = function () {
-    if (!MP.SourcesHub || typeof MP.SourcesHub.dump !== 'function') return {};
-    return MP.SourcesHub.dump();
+    return MP.OnlineCore && MP.OnlineCore.state ? MP.OnlineCore.state() : {};
   };
 
   MP.sourcesDiag = function (ctx, force) {
-    if (!MP.SourcesHub) return Promise.resolve(null);
-    if (typeof MP.SourcesHub.diagnose === 'function') return MP.SourcesHub.diagnose(ctx || null, { force: !!force });
-    if (typeof MP.SourcesHub.diag === 'function') return Promise.resolve(MP.SourcesHub.diag(ctx || null));
+    if (!MP.OnlineCore || !MP.OnlineCore.diagnose) return Promise.resolve(null);
+    return MP.OnlineCore.diagnose();
     return Promise.resolve(null);
   };
 

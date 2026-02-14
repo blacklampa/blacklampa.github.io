@@ -191,57 +191,13 @@
 
     var st = donorState(id);
     timeoutMs = toInt(timeoutMs, 12000);
-
-    if (st.loaded || hasScriptTag(path)) {
-      st.loaded = true;
-      st.loading = false;
-      st.err = '';
-      st.ts = nowMs();
-      return Promise.resolve({ id: id, path: path, status: 'already_loaded' });
-    }
-
-    if (RUNTIME.donorPromises[id]) return RUNTIME.donorPromises[id];
-
-    st.loading = true;
+    st.loading = false;
     st.attempts += 1;
     st.ts = nowMs();
-
-    RUNTIME.donorPromises[id] = new Promise(function (resolve) {
-      var done = false;
-      var script = null;
-      var timer = null;
-
-      function finish(status, err) {
-        if (done) return;
-        done = true;
-        try { if (timer) clearTimeout(timer); } catch (_) { }
-        st.loading = false;
-        st.loaded = (status === 'loaded' || status === 'already_loaded');
-        st.err = st.loaded ? '' : str(err || '');
-        st.ts = nowMs();
-        if (status !== 'loaded' && status !== 'already_loaded') log('WRN', 'donor_load_fail', { donor: id, path: path, err: st.err });
-        else log('INF', 'donor_load_ok', { donor: id, path: path, status: status });
-        resolve({ id: id, path: path, status: status, err: st.err });
-      }
-
-      try {
-        script = document.createElement('script');
-        script.async = true;
-        script.defer = true;
-        script.src = path;
-        script.onload = function () { finish('loaded', ''); };
-        script.onerror = function () { finish('error', 'script_error'); };
-        timer = setTimeout(function () { finish('timeout', 'timeout'); }, timeoutMs);
-        (document.head || document.documentElement || document.body).appendChild(script);
-      } catch (e) {
-        finish('exception', str(e && e.message));
-      }
-    }).then(function (res) {
-      delete RUNTIME.donorPromises[id];
-      return res;
-    });
-
-    return RUNTIME.donorPromises[id];
+    st.loaded = hasScriptTag(path);
+    st.err = '';
+    log('INF', 'donor_load_skipped', { donor: id, path: path, timeout: timeoutMs, loaded: st.loaded ? 1 : 0 });
+    return Promise.resolve({ id: id, path: path, status: st.loaded ? 'already_loaded' : 'skipped', err: '' });
   }
 
   function parseSourceIdsFromText(text) {
@@ -539,7 +495,7 @@
   };
 
   API.getAutoLoadDonors = function () {
-    return toBool(sGet(LS.autoLoadDonors, '1'), true);
+    return toBool(sGet(LS.autoLoadDonors, '0'), false);
   };
 
   API.setAutoLoadDonors = function (enabled) {
