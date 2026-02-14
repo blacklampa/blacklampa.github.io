@@ -151,6 +151,19 @@
       lastAutoPlaySuppressed: '',
       lastAutoPlaySuppressedTs: 0
     },
+    session: {
+      id: 0,
+      srcSig: '',
+      startedTs: 0
+    },
+    intent: {
+      userSeekUntilTs: 0,
+      guardSeekUntilTs: 0,
+      userNavUntilTs: 0,
+      userPausedIntent: 0,
+      guardPlayLockUntilTs: 0,
+      userLastSeekTs: 0
+    },
 
     rec: {
       active: false,
@@ -605,14 +618,96 @@
 
   function setUserPauseIntent(on, why) {
     var val = on ? 1 : 0;
+    var ts = nowMs();
     STATE.user.pauseIntent = val;
-    STATE.user.lastIntentTs = nowMs();
+    STATE.user.lastIntentTs = ts;
     STATE.userPausedIntent = !!val; // legacy mirror
-    if (why) logLine('DBG', 'pause_intent', { on: val, why: String(why || '') });
+    STATE.intent.userPausedIntent = val;
+    if (val) {
+      STATE.intent.guardPlayLockUntilTs = Math.max(toInt(STATE.intent.guardPlayLockUntilTs, 0), ts + 60000);
+    } else {
+      STATE.intent.guardPlayLockUntilTs = 0;
+    }
+    if (why) logLine('DBG', 'pause_intent', {
+      on: val,
+      why: String(why || ''),
+      lockLeftMs: Math.max(0, toInt(STATE.intent.guardPlayLockUntilTs, 0) - ts)
+    });
   }
 
   function isUserPauseIntent() {
     return !!(STATE.user && toInt(STATE.user.pauseIntent, 0));
+  }
+
+  function markUserSeekIntent(ms, why) {
+    ms = clampInt(ms || 2500, 300, 15000);
+    STATE.intent.userSeekUntilTs = Math.max(toInt(STATE.intent.userSeekUntilTs, 0), nowMs() + ms);
+    STATE.intent.userLastSeekTs = nowMs();
+    if (why) logLine('INF', 'USER_SEEK intent', { ms: ms, why: String(why || '') });
+  }
+
+  function markGuardSeekIntent(ms, why) {
+    ms = clampInt(ms || 2500, 300, 15000);
+    STATE.intent.guardSeekUntilTs = Math.max(toInt(STATE.intent.guardSeekUntilTs, 0), nowMs() + ms);
+    if (why) logLine('DBG', 'GUARD_SEEK intent', { ms: ms, why: String(why || '') });
+  }
+
+  function isUserSeekWindowActive() {
+    return nowMs() < toInt(STATE.intent.userSeekUntilTs, 0);
+  }
+
+  function markUserNavIntent(ms, why) {
+    ms = clampInt(ms || 2500, 300, 15000);
+    var ts = nowMs();
+    STATE.intent.userNavUntilTs = Math.max(toInt(STATE.intent.userNavUntilTs, 0), ts + ms);
+    if (STATE.rec.active) recoveryCancel('user_nav');
+    if (STATE.resume && STATE.resume.carry) clearCarry('user_nav', true);
+    if (STATE.resume && STATE.resume.ticket) {
+      STATE.resume.ticket = null;
+      syncResumeTicket({
+        id: '',
+        recToken: toInt(STATE.rec.token, 0),
+        sec: null,
+        srcSig: '',
+        createdTs: ts,
+        reason: 'user_nav',
+        kind: 'discard',
+        source: 'user_nav',
+        applied: 0,
+        applyTs: 0,
+        lastApplyErr: 'user_nav',
+        verifyOk: 0,
+        verifyDelta: NaN
+      });
+    }
+    truthFreeze(false, 'user_nav');
+    logLine('INF', 'USER_NAV intent', { ms: ms, why: String(why || '') });
+  }
+
+  function isUserNavWindowActive() {
+    return nowMs() < toInt(STATE.intent.userNavUntilTs, 0);
+  }
+
+  function isNavType(type) {
+    var t = String(type || '').toLowerCase();
+    if (!t) return false;
+    if (t === 'next' || t === 'select' || t === 'start' || t === 'open' || t === 'open_episode') return true;
+    if (t.indexOf('next') >= 0) return true;
+    if (t.indexOf('select') >= 0) return true;
+    if (t.indexOf('open') >= 0 && t.indexOf('popup') < 0) return true;
+    return false;
+  }
+
+  function isLikelyManualNavPayload(payload) {
+    if (!payload || typeof payload !== 'object') return false;
+    try {
+      if (payload.manual === true || payload.user === true) return true;
+      if (String(payload.by || '').toLowerCase() === 'user') return true;
+      if (String(payload.source || '').toLowerCase() === 'user') return true;
+      if (String(payload.origin || '').toLowerCase() === 'user') return true;
+      if (String(payload.reason || '').toLowerCase().indexOf('manual') >= 0) return true;
+    } catch (_) { }
+    return false;
   }
 
   function isPlayingLike(tick) {
@@ -689,10 +784,21 @@
   }
 
   function shouldAutoPlay(reason) {
-    if (STATE.tick && STATE.tick.hasVideo && STATE.tick.paused) {
-      STATE.life.lastAutoPlaySuppressed = String(reason || 'media_paused');
+    var why = '';
+    if (STATE.tick && STATE.tick.hasVideo && STATE.tick.paused) why = 'media_paused';
+    else if (!toInt(STATE.life.active, 0)) why = 'inactive';
+    else if (toInt(STATE.life.exitIntent, 0)) why = 'exit_intent';
+    else if (isUserPauseIntent()) why = 'user_paused';
+    else if (nowMs() < toInt(STATE.intent.guardPlayLockUntilTs, 0)) why = 'guard_play_lock';
+
+    if (why) {
+      STATE.life.lastAutoPlaySuppressed = String(reason || why);
       STATE.life.lastAutoPlaySuppressedTs = nowMs();
-      logLine('DBG', 'SUPPRESS play', { reason: 'media_paused', ctx: String(reason || '') });
+      logLine('DBG', 'SUPPRESS play', {
+        reason: why,
+        ctx: String(reason || ''),
+        lockLeftMs: Math.max(0, toInt(STATE.intent.guardPlayLockUntilTs, 0) - nowMs())
+      });
       return false;
     }
     var st = detectorsAllowedInfo();
@@ -903,6 +1009,112 @@
     if (had) logLine('DBG', 'CARRY clear', { why: String(why || ''), unfreeze: unfreeze ? 1 : 0 });
   }
 
+  function resolveSessionSig(payload) {
+    var sig = '';
+    try { sig = String(extractStartSig(payload) || ''); } catch (_) { sig = ''; }
+    if (!sig) {
+      try { sig = String(STATE.tick && STATE.tick.srcSig ? STATE.tick.srcSig : ''); } catch (_) { sig = ''; }
+    }
+    if (!sig) {
+      try { sig = String(srcSig(getCurrentSrc(STATE.video || getVideo())) || ''); } catch (_) { sig = ''; }
+    }
+    return String(sig || '');
+  }
+
+  function resetTransientForSessionSwitch(newSig, why) {
+    var reason = String(why || 'session_switch');
+    newSig = String(newSig || '');
+
+    clearResumeUnfreezeTimer();
+    STATE.guard.falseEndCriticalUntilTs = 0;
+    STATE.guard.preventStartUntilTs = 0;
+    STATE.guard.preventEndedUntilTs = 0;
+    STATE.guard.blockNextUntilTs = 0;
+    STATE.guard.allowStartUntilTs = 0;
+    STATE.guard.allowStartSig = '';
+
+    STATE.intent.userSeekUntilTs = 0;
+    STATE.intent.guardSeekUntilTs = 0;
+    STATE.intent.userNavUntilTs = 0;
+
+    if (STATE.rec.active) recoveryCancel('session_switch');
+    else STATE.rec.token = toInt(STATE.rec.token, 0) + 1;
+    STATE.rec.active = false;
+    STATE.rec.step = '';
+    STATE.rec.reason = '';
+
+    var carry = STATE.resume && STATE.resume.carry ? STATE.resume.carry : null;
+    if (carry) {
+      var carrySig = String(carry.srcSig || '');
+      if (!carrySig || !newSig || carrySig !== newSig) clearCarry('session_switch', true);
+    }
+
+    var ticket = STATE.resume ? STATE.resume.ticket : null;
+    if (ticket) {
+      var ticketSig = String(ticket.srcSig || '');
+      if (ticketSig && newSig && ticketSig !== newSig) {
+        STATE.resume.ticket = null;
+        syncResumeTicket({
+          id: '',
+          recToken: toInt(STATE.rec.token, 0),
+          sec: null,
+          srcSig: newSig,
+          createdTs: nowMs(),
+          reason: 'session_switch',
+          kind: 'discard',
+          source: 'session',
+          applied: 0,
+          applyTs: 0,
+          lastApplyErr: 'session_switch',
+          verifyOk: 0,
+          verifyDelta: NaN
+        });
+      }
+    }
+
+    truthFreeze(false, 'session_switch');
+    logLine('INF', 'SESSION reset transient', { sig: newSig, why: reason });
+  }
+
+  function onSessionStart(payload, why) {
+    var sig = resolveSessionSig(payload);
+    var prev = String(STATE.session && STATE.session.srcSig ? STATE.session.srcSig : '');
+    var ts = nowMs();
+
+    if (!prev && sig) {
+      STATE.session.id = toInt(STATE.session.id, 0) + 1;
+      STATE.session.srcSig = sig;
+      STATE.session.startedTs = ts;
+      logLine('INF', 'SESSION init', { id: toInt(STATE.session.id, 0), sig: sig, why: String(why || '') });
+      return sig;
+    }
+
+    if (sig && prev && sig !== prev) {
+      STATE.session.id = toInt(STATE.session.id, 0) + 1;
+      STATE.session.srcSig = sig;
+      STATE.session.startedTs = ts;
+      resetTransientForSessionSwitch(sig, String(why || 'player_start'));
+      logLine('WRN', 'SESSION new', { id: toInt(STATE.session.id, 0), sig: sig, prevSig: prev, why: String(why || '') });
+      return sig;
+    }
+
+    if (sig && !prev) {
+      STATE.session.id = toInt(STATE.session.id, 0) + 1;
+      STATE.session.srcSig = sig;
+      STATE.session.startedTs = ts;
+      logLine('INF', 'SESSION seed', { id: toInt(STATE.session.id, 0), sig: sig, why: String(why || '') });
+      return sig;
+    }
+
+    if (toInt(STATE.session.id, 0) <= 0) {
+      STATE.session.id = 1;
+      STATE.session.startedTs = ts;
+    } else {
+      STATE.session.startedTs = ts;
+    }
+    return sig || prev || '';
+  }
+
   function isValidTruthFrame(video, ct, dur) {
     if (!isFinite(ct) || ct < 2) return false;
     if (!isFinite(dur) || dur < 10) return false;
@@ -1064,6 +1276,11 @@
     on('error', function () { bumpEvent('error'); });
     on('seeking', function (e) {
       bumpEvent('seeking');
+      try {
+        if (nowMs() > toInt(STATE.intent.guardSeekUntilTs, 0)) {
+          markUserSeekIntent(2500, 'video_seeking');
+        }
+      } catch (_) { }
       try { tryTailJumpClamp(video, e, 'seeking'); } catch (_) { }
     });
     on('seeked', function () { bumpEvent('seeked'); });
@@ -1075,7 +1292,7 @@
       STATE.user.pauseHoldUntilTs = 0;
       STATE.user.pauseHoldWhy = '';
       if (!toInt(STATE.life.exitIntent, 0)) STATE.life.suspendDetectors = 0;
-      if (!STATE.rec.active && isUserPauseIntent()) setUserPauseIntent(false, 'media_play');
+      if (!STATE.rec.active && isUserPauseIntent() && String(STATE.user.lastCmdNorm || '') === 'play' && ageMs(STATE.user.lastCmdTs) < 4000) setUserPauseIntent(false, 'media_play');
     });
     on('playing', function () {
       bumpEvent('playing');
@@ -1085,7 +1302,7 @@
       STATE.user.pauseHoldUntilTs = 0;
       STATE.user.pauseHoldWhy = '';
       if (!toInt(STATE.life.exitIntent, 0)) STATE.life.suspendDetectors = 0;
-      if (!STATE.rec.active && isUserPauseIntent()) setUserPauseIntent(false, 'media_playing');
+      if (!STATE.rec.active && isUserPauseIntent() && String(STATE.user.lastCmdNorm || '') === 'play' && ageMs(STATE.user.lastCmdTs) < 4000) setUserPauseIntent(false, 'media_playing');
     });
     on('pause', function () {
       bumpEvent('pause');
@@ -1120,6 +1337,7 @@
               if (STATE.pos && isFinite(toNum(STATE.pos.lastStableSec, NaN)) && toNum(STATE.pos.lastStableSec, NaN) >= 2) sec = toNum(STATE.pos.lastStableSec, NaN);
               else if (isFinite(toNum(STATE.truth.lastGoodSec, NaN)) && toNum(STATE.truth.lastGoodSec, NaN) >= 2) sec = toNum(STATE.truth.lastGoodSec, NaN);
               if (v && isFinite(sec)) {
+                markGuardSeekIntent(2500, 'ended_block_seek');
                 v.currentTime = sec;
                 armFrameGrace(CFG.frameGraceMs, 'ended_block_seek');
               }
@@ -2073,6 +2291,7 @@
     if (cmd === 'toggle' || cmd.indexOf('toggle') >= 0) return 'toggle';
     if (cmd.indexOf('pause') >= 0) return 'pause';
     if ((cmd.indexOf('play') >= 0 || cmd.indexOf('resume') >= 0) && cmd !== 'playlist') return 'play';
+    if (cmd === 'next' || cmd === 'select' || cmd === 'open' || cmd === 'open_episode' || cmd === 'episode_select') return 'nav';
     if (cmd.indexOf('seek') >= 0 || cmd === 'rewind' || cmd === 'forward' || cmd === 'backward' || cmd === 'to' || cmd === 'totime' || cmd === 'to_time') return 'seek';
 
     return '';
@@ -2213,6 +2432,8 @@
   function shouldClampTailJump(t, stableSec) {
     if (!t || !t.hasVideo) return false;
     if (!CFG.enabled || !CFG.protectNext) return false;
+    if (isUserSeekWindowActive()) return false;
+    if (nowMs() < toInt(STATE.intent.guardSeekUntilTs, 0)) return false;
     if (!isTail(t.ct, t.dur)) return false;
     if (!isStableFarFromTail(stableSec, t.dur)) return false;
 
@@ -2251,6 +2472,7 @@
     try { if (e && e.stopImmediatePropagation) e.stopImmediatePropagation(); } catch (_) { }
     try { if (e && e.preventDefault) e.preventDefault(); } catch (_) { }
     try {
+      markGuardSeekIntent(2500, source === 'seeking' ? 'tail_jump_seek' : 'tail_jump');
       video.currentTime = stable;
       armFrameGrace(CFG.frameGraceMs, source === 'seeking' ? 'tail_jump_seek' : 'tail_jump');
     } catch (_) { }
@@ -2580,6 +2802,7 @@
         var dur = toNum(video.duration, NaN);
         if (isFinite(dur) && dur > 0) target = Math.min(Math.max(0, sec), Math.max(0, dur - 0.5));
         armFrameGrace(CFG.frameGraceMs, 'seek_after_ready:' + String(why || ''));
+        markGuardSeekIntent(2500, 'seek_after_ready:' + String(why || ''));
         video.currentTime = target;
       } catch (e) {
         ok = false;
@@ -2637,6 +2860,7 @@
     var target = Math.max(0, toNum(resumeSecFromTicketOrTruth(), 0));
     try {
       armFrameGrace(CFG.frameGraceMs, String(tag || 'seek_truth'));
+      markGuardSeekIntent(2500, String(tag || 'seek_truth'));
       v.currentTime = target;
     } catch (_) { }
 
@@ -2730,6 +2954,7 @@
     if (idx <= 1) {
       try {
         armFrameGrace(CFG.frameGraceMs, 'soft_attempt_1');
+        markGuardSeekIntent(2500, 'soft_attempt_1');
         v.currentTime = Math.max(0, target);
       } catch (_) { }
       if (shouldAutoPlay('soft_attempt_1')) {
@@ -2748,6 +2973,7 @@
       if (!STATE.rec.active || !toInt(STATE.life.active, 0) || toInt(STATE.life.exitIntent, 0)) return;
       try {
         armFrameGrace(CFG.frameGraceMs, 'soft_attempt_2');
+        markGuardSeekIntent(2500, 'soft_attempt_2');
         v.currentTime = Math.max(0, target);
       } catch (_) { }
       if (shouldAutoPlay('soft_attempt_2')) {
@@ -3014,6 +3240,7 @@
         why: reason
       });
       armFalseEndCritical(30000, 'carry_sig_mismatch');
+      clearCarry('carry_discard_mismatch', true);
       return false;
     }
 
@@ -3344,6 +3571,14 @@
       }
       setPhase(ST.PLAYING, 'cmd_play');
     }
+    else if (norm === 'seek') {
+      markUserSeekIntent(2500, 'cmd_seek');
+      if (STATE.rec.active) recoveryCancel('user:seek');
+    }
+    else if (norm === 'nav') {
+      markUserNavIntent(2500, 'cmd_nav');
+      if (STATE.rec.active) recoveryCancel('user:nav');
+    }
     else if (norm === 'exit') {
       softShutdownOnExit('user_exit');
       try { logLine('DBG', 'user_command', { cmd: norm, src: payload && payload.type ? String(payload.type) : '' }); } catch (_) { }
@@ -3415,6 +3650,7 @@
   function maybeHandleFalseEnd(reason) {
     if (!CFG.enabled || !CFG.protectNext) return false;
     if (STATE.rec.active) return false;
+    if (isUserSeekWindowActive()) return false;
     if (!detectorsAllowed()) return false;
 
     var t = STATE.tick;
@@ -3437,6 +3673,7 @@
     try {
       if (v) {
         armFrameGrace(CFG.frameGraceMs, 'false_end_prevented');
+        markGuardSeekIntent(2500, 'false_end_prevented');
         v.currentTime = target;
       }
     } catch (_) { }
@@ -3473,6 +3710,7 @@
   function maybeHandleForcedNext(reason, payload) {
     if (!CFG.enabled || !CFG.protectNext) return false;
     if (STATE.rec.active) return false;
+    if (isUserSeekWindowActive()) return false;
     if (!detectorsAllowed()) return false;
 
     var t = STATE.tick;
@@ -3499,6 +3737,7 @@
     try {
       if (v) {
         armFrameGrace(CFG.frameGraceMs, 'forced_next_prevented');
+        markGuardSeekIntent(2500, 'forced_next_prevented');
         v.currentTime = target;
       }
     } catch (_) { }
@@ -3545,13 +3784,14 @@
 
     if (tl === 'start') {
       ensureTickTimer('player_start');
+      var sessionSig = onSessionStart(payload, 'player_start');
       markLifeOpen('player_start');
       STATE.life.suspendDetectors = 0;
       STATE.life.exitIntent = 0;
-      setUserPauseIntent(false, 'player_start');
+      if (!isUserPauseIntent()) setUserPauseIntent(false, 'player_start');
       if (STATE.resume && STATE.resume.carry && CFG.protectNext) armFalseEndCritical(20000, 'carry_start');
       setPhase(ST.PLAYING, 'player_start');
-      logLine('INF', 'player_start', { hasPayload: payload ? 1 : 0 });
+      logLine('INF', 'player_start', { hasPayload: payload ? 1 : 0, sig: String(sessionSig || '') });
       if (CFG.enabled && CFG.debugOnOpen) uiShow('player_start');
       maybeApplyCarryOnPlayerStart('player_start');
       return;
@@ -3573,7 +3813,9 @@
       return;
     }
 
-    if (isLikelyUserCmdType(tl)) handleUserCommand(tl, { type: t, payload: payload });
+    if (isLikelyUserCmdType(tl) || (isNavType(tl) && isLikelyManualNavPayload(payload))) {
+      handleUserCommand(tl, { type: t, payload: payload });
+    }
   }
 
   function patchPlayerSend() {
@@ -3591,9 +3833,13 @@
       var type = (arguments && arguments.length) ? arguments[0] : '';
       var payload = (arguments && arguments.length > 1) ? arguments[1] : undefined;
       var lowerType = String(type || '').toLowerCase();
+      try {
+        if (isNavType(lowerType) && isLikelyManualNavPayload(payload)) markUserNavIntent(2500, 'player.send:' + lowerType);
+      } catch (_) { }
+      var manualNav = isUserNavWindowActive() && isNavType(lowerType);
 
       try {
-        if (CFG.enabled && CFG.protectNext && lowerType === 'start') {
+        if (CFG.enabled && CFG.protectNext && lowerType === 'start' && !manualNav) {
           var untilStart = Math.max(toInt(STATE.guard.preventStartUntilTs, 0), toInt(STATE.guard.falseEndCriticalUntilTs, 0));
           if (untilStart && now() < untilStart) {
             var allowUntil = toInt(STATE.guard.allowStartUntilTs, 0);
@@ -3628,7 +3874,7 @@
       try { handlePlayerSend(type, payload); } catch (_) { }
 
       try {
-        if (CFG.enabled && CFG.protectNext && shouldBlockNextType(type)) {
+        if (CFG.enabled && CFG.protectNext && shouldBlockNextType(type) && !manualNav) {
           if (STATE.rec.active) {
             armBlockNext(5000, 'rec_active_player');
             logLine('WRN', 'BLOCK next/select while recovering', { where: 'player.send', type: String(type || '') });
@@ -3641,6 +3887,9 @@
             logLine('WRN', 'prevent_next_overlay', { where: 'player.send', type: String(type || ''), untilTs: toInt(STATE.guard.blockNextUntilTs, 0) });
             return;
           }
+        }
+        if (CFG.enabled && CFG.protectNext && manualNav && isNavType(lowerType)) {
+          logLine('INF', 'ALLOW manual nav', { where: 'player.send', type: String(type || '') });
         }
       } catch (_) { }
 
@@ -3668,9 +3917,13 @@
       var type = (arguments && arguments.length) ? arguments[0] : '';
       var payload = (arguments && arguments.length > 1) ? arguments[1] : undefined;
       var lowerType = String(type || '').toLowerCase();
+      try {
+        if (isNavType(lowerType) && isLikelyManualNavPayload(payload)) markUserNavIntent(2500, 'playlist.send:' + lowerType);
+      } catch (_) { }
+      var manualNav = isUserNavWindowActive() && isNavType(lowerType);
 
       try {
-        if (CFG.enabled && CFG.protectNext && lowerType === 'start') {
+        if (CFG.enabled && CFG.protectNext && lowerType === 'start' && !manualNav) {
           var untilStart = Math.max(toInt(STATE.guard.preventStartUntilTs, 0), toInt(STATE.guard.falseEndCriticalUntilTs, 0));
           if (untilStart && now() < untilStart) {
             var allowUntil = toInt(STATE.guard.allowStartUntilTs, 0);
@@ -3700,7 +3953,7 @@
             }
           }
         }
-        if (CFG.enabled && CFG.protectNext && shouldBlockNextType(type)) {
+        if (CFG.enabled && CFG.protectNext && shouldBlockNextType(type) && !manualNav) {
           if (STATE.rec.active) {
             armBlockNext(5000, 'rec_active_playlist');
             logLine('WRN', 'BLOCK next/select while recovering', { where: 'playlist.send', type: String(type || '') });
@@ -3713,6 +3966,9 @@
             logLine('WRN', 'prevent_next_overlay', { where: 'playlist.send', type: String(type || ''), untilTs: toInt(STATE.guard.blockNextUntilTs, 0) });
             return;
           }
+        }
+        if (CFG.enabled && CFG.protectNext && manualNav && isNavType(lowerType)) {
+          logLine('INF', 'ALLOW manual nav', { where: 'playlist.send', type: String(type || '') });
         }
       } catch (_) { }
 
@@ -4180,6 +4436,20 @@
         lastAutoPlaySuppressed: String(STATE.life.lastAutoPlaySuppressed || ''),
         lastAutoPlaySuppressedTs: toInt(STATE.life.lastAutoPlaySuppressedTs, 0)
       },
+      session: {
+        id: toInt(STATE.session.id, 0),
+        srcSig: String(STATE.session.srcSig || ''),
+        startedTs: toInt(STATE.session.startedTs, 0),
+        startedAge: ageMs(STATE.session.startedTs)
+      },
+      intent: {
+        userSeekLeftMs: Math.max(0, toInt(STATE.intent.userSeekUntilTs, 0) - nowMs()),
+        guardSeekLeftMs: Math.max(0, toInt(STATE.intent.guardSeekUntilTs, 0) - nowMs()),
+        userNavLeftMs: Math.max(0, toInt(STATE.intent.userNavUntilTs, 0) - nowMs()),
+        userPausedIntent: toInt(STATE.intent.userPausedIntent, 0),
+        guardPlayLockLeftMs: Math.max(0, toInt(STATE.intent.guardPlayLockUntilTs, 0) - nowMs()),
+        userLastSeekTs: toInt(STATE.intent.userLastSeekTs, 0)
+      },
       rec: {
         step: String(STATE.rec.step || ''),
         softTry: toInt(STATE.rec.softTry, 0),
@@ -4360,9 +4630,15 @@
       try {
         if (v && isFinite(sec) && sec >= 0) {
           armFrameGrace(CFG.frameGraceMs, 'api_seek');
+          markGuardSeekIntent(2500, 'api_seek');
           v.currentTime = sec;
         }
       } catch (_) { }
+      return true;
+    }
+
+    if (cmd === 'nav') {
+      markUserNavIntent(2500, 'api_nav');
       return true;
     }
 
