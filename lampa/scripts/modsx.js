@@ -257,6 +257,7 @@ if (!window.loaded_modss) {
             network.silent(currentUrl, function(json) {
                 try {
                     console.log('Modss', 'push', 'START - ' + currentUrl);
+                    console.log('MODSXXX',json + '//# sourceURL=' + window.location.origin + '/plugin_modss.js');
                     eval(json + '//# sourceURL=' + window.location.origin + '/plugin_modss.js');
                     window.loaded_modss = true;
                 } catch (error) {
