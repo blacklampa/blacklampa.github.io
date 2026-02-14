@@ -6,15 +6,29 @@
   if (MP.__loaded) return;
   MP.__loaded = true;
 
-  var VERSION = '2.1.0';
+  var VERSION = '2.2.0';
   var LOG_CAP = 120;
 
   var LS = {
     enabled: 'blmod.enabled',
     debug: 'blmod.debug',
     logLevel: 'blmod.log_level',
+    preferredBalancer: 'blmod.preferred_balanser',
     lastOpen: 'blmod.last_open'
   };
+
+  var BUILTIN_BALANCERS = [
+    { id: 'vibix', title: 'Vibix', stable: true },
+    { id: 'kodik', title: 'Kodik', stable: true },
+    { id: 'cdnvideohub', title: 'CDNVideoHub', stable: true },
+    { id: 'collaps', title: 'Collaps', stable: true },
+    { id: 'rezka2', title: 'HDrezka', stable: true },
+    { id: 'filmix', title: 'Filmix', stable: false },
+    { id: 'lumex', title: 'Lumex', stable: false },
+    { id: 'fancdn2', title: 'FanCDN (ID)', stable: false },
+    { id: 'anilibria2', title: 'AniLibria.top', stable: false },
+    { id: 'kinopub', title: 'KinoPub', stable: false }
+  ];
 
   var LOG = {
     rows: [],
@@ -60,6 +74,11 @@
         localStorage.setItem(String(k), (typeof v === 'object') ? JSON.stringify(v) : String(v));
       }
     } catch (_) { }
+  }
+
+  function sDel(k) {
+    try { if (window.Lampa && Lampa.Storage && Lampa.Storage.set) Lampa.Storage.set(String(k), null); } catch (_) { }
+    try { if (window.localStorage) localStorage.removeItem(String(k)); } catch (_) { }
   }
 
   function normalizeLogLevel(v) {
@@ -128,6 +147,63 @@
     return raw === true || raw === 1 || raw === '1' || raw === 'true';
   }
 
+  function sourceKey(id) {
+    return 'blmod.source.enabled.' + str(id || '');
+  }
+
+  function findBalancer(id) {
+    var sid = str(id || '').toLowerCase();
+    var i;
+    for (i = 0; i < BUILTIN_BALANCERS.length; i++) {
+      if (str(BUILTIN_BALANCERS[i].id).toLowerCase() === sid) return BUILTIN_BALANCERS[i];
+    }
+    return null;
+  }
+
+  function sourceEnabled(id, defEnabled) {
+    var raw = sGet(sourceKey(id), null);
+    if (raw === null || raw === undefined || raw === '') return !!defEnabled;
+    return toBool(raw, !!defEnabled);
+  }
+
+  function balancersState() {
+    return BUILTIN_BALANCERS.map(function (row) {
+      return {
+        id: row.id,
+        title: row.title,
+        stable: !!row.stable,
+        enabled: sourceEnabled(row.id, !!row.stable)
+      };
+    });
+  }
+
+  function enabledBalancers() {
+    return balancersState().filter(function (row) { return !!row.enabled; });
+  }
+
+  function preferredBalancerRaw() {
+    return str(sGet(LS.preferredBalancer, BUILTIN_BALANCERS[0] && BUILTIN_BALANCERS[0].id || ''));
+  }
+
+  function preferredBalancer() {
+    var preferred = preferredBalancerRaw();
+    var rows = enabledBalancers();
+    if (!rows.length) return '';
+    if (findBalancer(preferred) && sourceEnabled(preferred, !!findBalancer(preferred).stable)) return preferred;
+    return str(rows[0].id || '');
+  }
+
+  function syncOnlineModSettings() {
+    var preferred = preferredBalancer();
+    if (!preferred) return false;
+    try {
+      if (window.Lampa && Lampa.Storage && typeof Lampa.Storage.set === 'function') {
+        Lampa.Storage.set('online_mod_balanser', preferred);
+      }
+    } catch (_) { }
+    return true;
+  }
+
   function onlineModTitle() {
     try {
       if (window.Lampa && Lampa.Lang && typeof Lampa.Lang.translate === 'function') {
@@ -165,11 +241,15 @@
 
   function buildOpenMarker(movie, reason) {
     movie = movie || {};
+    var enabled = enabledBalancers();
+    var preferred = preferredBalancer();
     return {
       ts: nowMs(),
       from: 'blmod',
       reason: str(reason || 'button'),
       component: 'online_mod',
+      preferred_balanser: preferred,
+      enabled_count: enabled.length,
       cardId: str(movie.id || movie.tmdb_id || movie.imdb_id || movie.kinopoisk_id || ''),
       title: str(movie.title || movie.name || ''),
       original_title: str(movie.original_title || movie.original_name || ''),
@@ -207,6 +287,13 @@
       return Promise.resolve(false);
     }
 
+    var enabled = enabledBalancers();
+    if (!enabled.length) {
+      showNoty('BL-Mod: нет включённых балансеров (BL -> BL-Mod)');
+      log('WRN', 'no_enabled_balancers', null);
+      return Promise.resolve(false);
+    }
+
     var payload = {
       url: '',
       title: onlineModTitle(),
@@ -221,6 +308,7 @@
     STATE.busy = true;
 
     try {
+      syncOnlineModSettings();
       var marker = buildOpenMarker(movie, reason || 'button');
       setLastOpen(marker);
       Lampa.Activity.push(payload);
@@ -252,6 +340,8 @@
       debug: toBool(sGet(LS.debug, '0'), false),
       logLevel: currentLogLevel(),
       hasOnlineMod: hasOnlineModComponent(),
+      preferredBalancer: preferredBalancer(),
+      balancers: balancersState(),
       lastOpen: STATE.lastOpen || sGet(LS.lastOpen, null)
     };
   };
@@ -264,6 +354,9 @@
       debug: toBool(sGet(LS.debug, '0'), false),
       hasLampa: !!window.Lampa,
       hasOnlineMod: hasOnlineModComponent(),
+      preferredBalancer: preferredBalancer(),
+      enabledBalancers: enabledBalancers().map(function (row) { return row.id; }),
+      allBalancers: balancersState(),
       activeCard: !!movie,
       activeCardId: str(movie && (movie.id || movie.tmdb_id || movie.imdb_id || movie.kinopoisk_id) || ''),
       lastOpen: STATE.lastOpen || sGet(LS.lastOpen, null)
@@ -274,7 +367,51 @@
     sSet(LS.enabled, 'true');
     sSet(LS.debug, '0');
     sSet(LS.logLevel, 'normal');
+    sSet(LS.preferredBalancer, BUILTIN_BALANCERS[0] && BUILTIN_BALANCERS[0].id || 'vibix');
+    BUILTIN_BALANCERS.forEach(function (row) {
+      sSet(sourceKey(row.id), row.stable ? '1' : '0');
+    });
     return true;
+  };
+
+  MP.defaults = function () {
+    var out = {
+      enabled: 1,
+      debug: 0,
+      log_level: 'normal',
+      preferred_balanser: BUILTIN_BALANCERS[0] && BUILTIN_BALANCERS[0].id || 'vibix',
+      sources: {}
+    };
+    BUILTIN_BALANCERS.forEach(function (row) {
+      out.sources[row.id] = row.stable ? 1 : 0;
+    });
+    return out;
+  };
+
+  MP.builtinBalancers = function () {
+    return BUILTIN_BALANCERS.map(function (row) { return { id: row.id, title: row.title, stable: !!row.stable }; });
+  };
+
+  MP.listBalancers = balancersState;
+  MP.getPreferredBalancer = preferredBalancer;
+  MP.setPreferredBalancer = function (id) {
+    var row = findBalancer(id);
+    if (!row) return false;
+    sSet(LS.preferredBalancer, row.id);
+    return true;
+  };
+
+  MP.setSourceEnabled = function (id, enabled) {
+    var row = findBalancer(id);
+    if (!row) return false;
+    sSet(sourceKey(row.id), toBool(enabled, false) ? '1' : '0');
+    return true;
+  };
+
+  MP.clearSourceState = function () {
+    BUILTIN_BALANCERS.forEach(function (row) {
+      sDel(sourceKey(row.id));
+    });
   };
 
   MP.openOnlineMod = openOnlineMod;
@@ -282,11 +419,6 @@
     return openOnlineMod(movie, 'button');
   };
   MP.open = MP.openFromCard;
-
-  // Compatibility no-ops for legacy menu/flows.
-  MP.ensureDonorsLoaded = function () { return Promise.resolve(null); };
-  MP.sourcesDump = function () { return {}; };
-  MP.sourcesDiag = function () { return MP.diagnose(); };
 
   MP.install = function () {
     if (STATE.installed) return true;

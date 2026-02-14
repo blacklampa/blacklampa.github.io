@@ -17,12 +17,17 @@ BL-Mod — тонкий автономный wrapper вокруг нативно
 - `blmod.enabled` (`true|false`) — включение кнопки BL-Mod.
 - `blmod.debug` (`1|0`) — debug режим BL-Mod.
 - `blmod.log_level` (`silent|normal|trace`) — уровень логов.
+- `blmod.preferred_balanser` (`string`) — балансер по умолчанию.
+- `blmod.source.enabled.<id>` (`1|0`) — включение встроенного балансера.
 - `blmod.last_open` (object/json) — последний запуск через BL-Mod.
 
 ## Меню BL
 `BL -> BL-Mod`:
 - `BL-Mod: Enable`
 - `BL-Mod: Debug`
+- `BL-Mod: Preferred balancer`
+- `BL-Mod source: ...` (переключатели встроенных балансеров)
+- `BL-Mod: Show sources`
 - `BL-Mod: Open Online-Mod (test)`
 - `BL-Mod: Reset defaults`
 

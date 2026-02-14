@@ -1119,6 +1119,8 @@
       lines.push('BL-Mod diagnose');
       lines.push('enabled=' + (diag && diag.enabled ? 1 : 0) + ' debug=' + (diag && diag.debug ? 1 : 0));
       lines.push('hasLampa=' + (diag && diag.hasLampa ? 1 : 0) + ' hasOnlineMod=' + (diag && diag.hasOnlineMod ? 1 : 0));
+      lines.push('preferred=' + String(diag && diag.preferredBalancer || ''));
+      lines.push('enabledBalancers=' + String((diag && diag.enabledBalancers && diag.enabledBalancers.join(',')) || ''));
       lines.push('activeCard=' + (diag && diag.activeCard ? 1 : 0) + ' activeCardId=' + String(diag && diag.activeCardId || ''));
     } catch (_) { }
     return lines;
@@ -1146,6 +1148,55 @@
         default: 0,
         name: 'BL-Mod: Debug',
         desc: 'Расширенные логи BL-Mod.'
+      });
+
+      var rows = [];
+      try { if (h && h.builtinBalancers) rows = h.builtinBalancers() || []; } catch (_) { rows = []; }
+
+      if (rows.length) {
+        var vals = {};
+        rows.forEach(function (r) { vals[String(r.id)] = String(r.title || r.id); });
+
+        P(ctx, {
+          id: 'blmod_preferred_balanser',
+          key: 'blmod.preferred_balanser',
+          type: 'select',
+          values: vals,
+          default: String(rows[0].id),
+          name: 'BL-Mod: Preferred balancer',
+          desc: 'Балансер по умолчанию для открытия online_mod.'
+        });
+
+        rows.forEach(function (r) {
+          P(ctx, {
+            id: 'blmod_source_' + String(r.id),
+            key: 'blmod.source.enabled.' + String(r.id),
+            type: 'toggle',
+            values: { 0: 'OFF', 1: 'ON' },
+            default: r.stable ? 1 : 0,
+            name: 'BL-Mod source: ' + String(r.title || r.id),
+            desc: 'Вкл/выкл источник в BL-Mod.'
+          });
+        });
+      }
+
+      P(ctx, {
+        id: 'blmod_sources_dump',
+        type: 'button',
+        name: 'BL-Mod: Show sources',
+        desc: 'Показать встроенный список источников и их состояние.',
+        onChange: function () {
+          var lines = ['BL-Mod sources'];
+          try {
+            var state = (h && h.listBalancers) ? (h.listBalancers() || []) : [];
+            state.forEach(function (row) {
+              lines.push((row.enabled ? '[ON] ' : '[OFF] ') + String(row.id) + ' :: ' + String(row.title || row.id));
+            });
+            lines.push('');
+            lines.push('preferred=' + String((h && h.getPreferredBalancer) ? (h.getPreferredBalancer() || '') : ''));
+          } catch (_) { lines.push('no data'); }
+          blmodOpenText('BL-Mod: Sources', lines);
+        }
       });
 
       P(ctx, {
