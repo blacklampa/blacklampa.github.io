@@ -1081,14 +1081,9 @@
 
   function blmodHub() {
     try {
-      if (window.BL && BL.ModPlayer && BL.ModPlayer.OnlineCore) return BL.ModPlayer.OnlineCore;
+      if (window.BL && BL.ModPlayer) return BL.ModPlayer;
     } catch (_) { }
     return null;
-  }
-
-  function blmodInt(v, d) {
-    var n = parseInt(v, 10);
-    return isFinite(n) ? n : d;
   }
 
   function blmodNotify(ctx, text) {
@@ -1123,11 +1118,8 @@
     try {
       lines.push('BL-Mod diagnose');
       lines.push('enabled=' + (diag && diag.enabled ? 1 : 0) + ' debug=' + (diag && diag.debug ? 1 : 0));
-      lines.push('sources enabled=' + blmodInt(diag && diag.sourceEnabled, 0) + '/' + blmodInt(diag && diag.sourceTotal, 0));
-      lines.push('preferred=' + String(diag && diag.preferred || ''));
-      lines.push('hasSourceKit=' + (diag && diag.hasSourceKit ? 1 : 0) + ' componentRegistered=' + (diag && diag.componentRegistered ? 1 : 0));
-      var ids = Array.isArray(diag && diag.sourceIds) ? diag.sourceIds.slice(0, 120) : [];
-      if (ids.length) lines.push('sourceIds: ' + ids.join(', '));
+      lines.push('hasLampa=' + (diag && diag.hasLampa ? 1 : 0) + ' hasOnlineMod=' + (diag && diag.hasOnlineMod ? 1 : 0));
+      lines.push('activeCard=' + (diag && diag.activeCard ? 1 : 0) + ' activeCardId=' + String(diag && diag.activeCardId || ''));
     } catch (_) { }
     return lines;
   }
@@ -1143,7 +1135,7 @@
         values: { 0: 'OFF', 1: 'ON' },
         default: 1,
         name: 'BL-Mod: Enable',
-        desc: 'Включает кнопку BL-Mod и его results-screen.'
+        desc: 'Включает кнопку BL-Mod.'
       });
 
       P(ctx, {
@@ -1156,88 +1148,16 @@
         desc: 'Расширенные логи BL-Mod.'
       });
 
-      var all = [];
-      try { all = (h && h.builtinSources) ? (h.builtinSources() || []) : []; } catch (_) { all = []; }
-      if (!Array.isArray(all)) all = [];
-      var enabled = all.filter(function (s) { return !!(s && s.enabled); });
-
-      var prefValues = {};
-      enabled.forEach(function (s) {
-        var id = String(s && s.id || '');
-        if (!id) return;
-        prefValues[id] = String(s.title || id);
-      });
-      if (!Object.keys(prefValues).length) prefValues[''] = '— all sources disabled —';
-
-      P(ctx, {
-        id: 'blmod_preferred_source',
-        key: 'blmod.preferred_source',
-        type: 'select',
-        values: prefValues,
-        default: (h && h.getPreferredSource) ? String(h.getPreferredSource() || '') : '',
-        name: 'BL-Mod: Preferred source',
-        desc: 'Источник по умолчанию для автозапуска results-screen.',
-        onChange: function (v) {
-          try { if (h && h.setPreferredSource) h.setPreferredSource(String(v || '')); } catch (_) { }
-        }
-      });
-
-      all.forEach(function (s, i) {
-        var id = String(s && s.id || '');
-        if (!id) return;
-        var k = (h && h.sourceEnabledKey) ? String(h.sourceEnabledKey(id)) : ('blmod.source.enabled.' + id);
-        P(ctx, {
-          id: 'blmod_source_enable_' + i,
-          key: k,
-          type: 'toggle',
-          values: { 0: 'OFF', 1: 'ON' },
-          default: (s && s.enabled) ? 1 : 0,
-          name: 'Source: ' + String(s.title || id),
-          desc: 'id=' + id + ' [' + String(s.origin || 'builtin') + ']',
-          onChange: function (v) {
-            try { if (h && h.setSourceEnabled) h.setSourceEnabled(id, parseBool(v, true)); } catch (_) { }
-          }
-        });
-      });
-
-      P(ctx, {
-        id: 'blmod_show_sources',
-        type: 'button',
-        name: 'BL-Mod: Show builtin sources',
-        desc: 'Показать встроенный реестр источников BL-Mod.',
-        onChange: function () {
-          try {
-            if (!h || !h.showSources) return blmodNotify(ctx, 'BL-Mod: OnlineCore missing');
-            h.showSources();
-          } catch (_) { }
-        }
-      });
-
       P(ctx, {
         id: 'blmod_results_test',
         type: 'button',
-        name: 'BL-Mod: Open results screen (test)',
-        desc: 'Открыть BL-Mod results screen для активной карточки.',
+        name: 'BL-Mod: Open Online-Mod (test)',
+        desc: 'Открыть нативный online_mod для активной карточки.',
         onChange: function () {
           try {
-            if (!h || !h.openResultsScreen) return blmodNotify(ctx, 'BL-Mod: OnlineCore missing');
-            h.openResultsScreen(null).then(function (ok) {
-              if (!ok) blmodNotify(ctx, 'BL-Mod: открой карточку и нажми BL-Mod');
-            });
-          } catch (_) { }
-        }
-      });
-
-      P(ctx, {
-        id: 'blmod_diag_now',
-        type: 'button',
-        name: 'BL-Mod: Diagnose now',
-        desc: 'Показать внутреннюю диагностику BL-Mod.',
-        onChange: function () {
-          try {
-            if (!h || !h.diagnose) return blmodNotify(ctx, 'BL-Mod: OnlineCore missing');
-            h.diagnose().then(function (diag) {
-              blmodOpenText('BL-Mod Diagnose', blmodDiagLines(diag));
+            if (!h || !h.openOnlineMod) return blmodNotify(ctx, 'BL-Mod: ModPlayer missing');
+            h.openOnlineMod(null, 'menu_test').then(function (ok) {
+              if (!ok) blmodNotify(ctx, 'BL-Mod: открой карточку и повтори');
             });
           } catch (_) { }
         }
