@@ -142,7 +142,7 @@
     user_nav_window_ms: 2500,
     pause_hold_ms: 15000,
 
-    soft_attempts: 1,
+    soft_attempts: 0,
     inplayer_attempts: 2,
     reopen_attempts: 2,
     inplayer_rebuild_mode: 'refresh_src',
@@ -179,7 +179,7 @@
       { key: K.minAheadSec, def: Math.max(0, Math.min(3, toNum(d.min_ahead_sec, 0.6))) },
       { key: K.underrunNoProgMs, def: clampInt(toInt(d.underrun_no_prog_ms, 4500), 1000, 30000) },
       { key: K.underrunNoAheadMoveMs, def: clampInt(toInt(d.underrun_no_ahead_move_ms, 4500), 1000, 30000) },
-      { key: K.softAttempts, def: clampInt(toInt(d.soft_attempts, 1), 0, 5) },
+      { key: K.softAttempts, def: clampInt(toInt(d.soft_attempts, 0), 0, 5) },
       { key: K.inplayerAttempts, def: clampInt(toInt(d.inplayer_attempts, 2), 0, 6) },
       { key: K.inplayerMode, def: normalizeInplayerMode(d.inplayer_rebuild_mode || 'refresh_src') },
       { key: K.escalateToReopen, def: toInt(d.escalate_to_reopen, 1) ? 1 : 0 },
@@ -259,7 +259,8 @@
       lastAction: '',
       lastErr: '',
       startedTs: 0,
-      lastReopenTs: 0
+      lastReopenTs: 0,
+      lastSoftTs: 0
     },
 
     guard: {
@@ -346,6 +347,19 @@
       lastAheadSec: NaN,
       lastAheadChangeTs: 0,
       lastProgressSignalTs: 0
+    },
+
+    det: {
+      warmupUntilTs: 0,
+      lastStartTs: 0,
+      lastReadyTs: 0,
+      hadTimeupdate: 0,
+      hadProgress: 0,
+      hadBufferMove: 0,
+      lastRecoverTs: 0,
+      recoverLoopCount: 0,
+      recoverBackoffUntilTs: 0,
+      lastResetSignalsReason: ''
     },
 
     hang: {
@@ -730,6 +744,7 @@
   function markGuardSeekIntent(ms, why) {
     ms = clampInt(ms || 2500, 300, 15000);
     STATE.intent.guardSeekUntilTs = Math.max(toInt(STATE.intent.guardSeekUntilTs, 0), nowMs() + ms);
+    armWarmup(6000, String(why || 'guard_seek'));
     if (why) logLine('DBG', 'GUARD_SEEK intent', { ms: ms, why: String(why || '') });
   }
 
@@ -892,6 +907,86 @@
     return true;
   }
 
+  function warmupLeftMs() {
+    return Math.max(0, toInt(STATE.det.warmupUntilTs, 0) - nowMs());
+  }
+
+  function inWarmup() {
+    return warmupLeftMs() > 0;
+  }
+
+  function armWarmup(ms, why) {
+    ms = clampInt(ms, 1000, 60000);
+    STATE.det.warmupUntilTs = Math.max(toInt(STATE.det.warmupUntilTs, 0), nowMs() + ms);
+    logLine('INF', 'WARMUP armed', { ms: ms, why: String(why || '') });
+  }
+
+  function recoverBackoffLeftMs() {
+    return Math.max(0, toInt(STATE.det.recoverBackoffUntilTs, 0) - nowMs());
+  }
+
+  function hasPlaybackEvidence() {
+    if (toInt(STATE.det.hadTimeupdate, 0)) return true;
+    if (toInt(STATE.det.hadProgress, 0)) return true;
+    if (toInt(STATE.det.hadBufferMove, 0)) return true;
+    return false;
+  }
+
+  function resetSignalAges(why) {
+    var ts = nowMs();
+    var reason = String(why || '');
+
+    STATE.events.last.timeupdate = ts;
+    STATE.events.last.progress = ts;
+    STATE.events.last.waiting = 0;
+    STATE.events.last.stalled = 0;
+    STATE.events.last.seeking = ts;
+    STATE.events.last.seeked = ts;
+    STATE.events.last.canplay = ts;
+    STATE.events.last.loadeddata = ts;
+
+    STATE.ev.lastTimeupdateTs = ts;
+    STATE.ev.lastProgressTs = ts;
+    STATE.ev.lastWaitingTs = 0;
+    STATE.ev.lastStalledTs = 0;
+
+    STATE.buf.lastProgTs = ts;
+    STATE.buf.lastTimeupdateTs = ts;
+    STATE.buf.lastRangesTs = ts;
+    STATE.buf.lastAheadMoveTs = ts;
+    STATE.buf.lastBufferedEndMoveTs = ts;
+
+    STATE.monitor.lastProgressSignalTs = ts;
+    STATE.monitor.lastAheadChangeTs = ts;
+    STATE.monitor.lastCtChangeTs = ts;
+    STATE.ct.lastChangeTs = ts;
+    STATE.ct.lastSampleTs = ts;
+    STATE.ct.stuckMs = 0;
+
+    STATE.det.hadTimeupdate = 0;
+    STATE.det.hadProgress = 0;
+    STATE.det.hadBufferMove = 0;
+    STATE.det.lastResetSignalsReason = reason;
+
+    logLine('DBG', 'signal ages reset', { why: reason });
+  }
+
+  function canRunDetectors() {
+    var d = detectAllowedInfo();
+    if (!d.ok) return { ok: false, reason: String(d.reason || 'blocked') };
+    if (toInt(STATE.user.pauseHoldUntilTs, 0) > nowMs()) return { ok: false, reason: 'pause_hold' };
+    if (STATE.tick && STATE.tick.hasVideo && STATE.tick.paused) return { ok: false, reason: 'media_paused' };
+    if (isUserPauseIntent()) return { ok: false, reason: 'paused_by_user' };
+    if (toInt(STATE.life.suspendDetectors, 0)) return { ok: false, reason: 'suspended' };
+    if (String(STATE.phase || '') === ST.IDLE) return { ok: false, reason: 'idle' };
+    if (STATE.rec.active) return { ok: false, reason: 'recovering' };
+    if (inWarmup()) return { ok: false, reason: 'warmup' };
+    if (recoverBackoffLeftMs() > 0) return { ok: false, reason: 'recover_backoff' };
+    var sinceStart = ageMs(STATE.det.lastStartTs);
+    if (sinceStart < 12000 && !hasPlaybackEvidence()) return { ok: false, reason: 'no_evidence_startup' };
+    return { ok: true, reason: 'ok' };
+  }
+
   function flagSet(name, on, details) {
     name = String(name || '');
     if (!name || !STATE.flags || !STATE.flags[name]) return;
@@ -934,7 +1029,12 @@
       fc: toNum(STATE.frames.lastFrames, -1),
       frameStuckMs: toInt(STATE.frames.frameStuckMs, 0),
       frameCtDelta: toNum(STATE.frames.ctDeltaSinceFrame, 0).toFixed(2),
-      frameGraceLeftMs: frameGraceLeftMs()
+      frameGraceLeftMs: frameGraceLeftMs(),
+      warmupLeftMs: warmupLeftMs(),
+      backoffLeftMs: recoverBackoffLeftMs(),
+      hadTU: toInt(STATE.det.hadTimeupdate, 0),
+      hadProg: toInt(STATE.det.hadProgress, 0),
+      hadBuf: toInt(STATE.det.hadBufferMove, 0)
     });
   }
 
@@ -986,7 +1086,7 @@
     CFG.underrunNoProgMs = clampInt(sGet(K.underrunNoProgMs, String(d(K.underrunNoProgMs, 4500))), 1000, 30000);
     CFG.underrunNoAheadMoveMs = clampInt(sGet(K.underrunNoAheadMoveMs, String(d(K.underrunNoAheadMoveMs, 4500))), 1000, 30000);
 
-    CFG.softAttempts = clampInt(sGet(K.softAttempts, String(d(K.softAttempts, 1))), 0, 5);
+    CFG.softAttempts = clampInt(sGet(K.softAttempts, String(d(K.softAttempts, 0))), 0, 5);
     CFG.inplayerAttempts = clampInt(sGet(K.inplayerAttempts, String(d(K.inplayerAttempts, 2))), 0, 6);
     CFG.inplayerMode = normalizeInplayerMode(sGet(K.inplayerMode, String(d(K.inplayerMode, 'refresh_src'))));
     CFG.escalateToReopen = parseBool(sGet(K.escalateToReopen, String(d(K.escalateToReopen, 1))), !!toInt(d(K.escalateToReopen, 1), 1));
@@ -1023,12 +1123,19 @@
       STATE.monitor.lastProgressSignalTs = t;
     }
 
-    if (name === 'timeupdate') STATE.ev.lastTimeupdateTs = t;
-    else if (name === 'progress') STATE.ev.lastProgressTs = t;
+    if (name === 'timeupdate') {
+      STATE.ev.lastTimeupdateTs = t;
+      STATE.det.hadTimeupdate = 1;
+    }
+    else if (name === 'progress') {
+      STATE.ev.lastProgressTs = t;
+      STATE.det.hadProgress = 1;
+    }
     else if (name === 'play' || name === 'playing') STATE.ev.lastPlayingTs = t;
     else if (name === 'waiting') STATE.ev.lastWaitingTs = t;
     else if (name === 'stalled') STATE.ev.lastStalledTs = t;
     else if (name === 'error') STATE.ev.lastErrorTs = t;
+    else if (name === 'canplay' || name === 'loadeddata') STATE.det.lastReadyTs = t;
 
     if (name === 'progress') STATE.buf.lastProgTs = t;
     if (name === 'timeupdate') STATE.buf.lastTimeupdateTs = t;
@@ -1452,6 +1559,7 @@
     });
 
     truthSeedFromStorage(video);
+    resetSignalAges('video_listeners_bound');
     logLine('INF', 'video_listeners_bound', { ok: 1 });
     return true;
   }
@@ -1636,6 +1744,7 @@
       } else if (s.rangesSig !== STATE.buf.lastRangesSig) {
         STATE.buf.lastRangesSig = s.rangesSig;
         STATE.buf.lastRangesTs = ts;
+        STATE.det.hadBufferMove = 1;
       }
 
       if (STATE.buf.lastAhead === null || !isFinite(toNum(STATE.buf.lastAhead, NaN))) {
@@ -1644,6 +1753,7 @@
       } else if (Math.abs(toNum(s.aheadSec, 0) - toNum(STATE.buf.lastAhead, 0)) >= 0.25) {
         STATE.buf.lastAhead = s.aheadSec;
         STATE.buf.lastAheadMoveTs = ts;
+        STATE.det.hadBufferMove = 1;
       }
 
       if (STATE.buf.lastBufferedEnd === null || !isFinite(toNum(STATE.buf.lastBufferedEnd, NaN))) {
@@ -1652,6 +1762,7 @@
       } else if (isFinite(toNum(s.bufferedEndAtCt, NaN)) && Math.abs(toNum(s.bufferedEndAtCt, 0) - toNum(STATE.buf.lastBufferedEnd, 0)) >= 0.25) {
         STATE.buf.lastBufferedEnd = s.bufferedEndAtCt;
         STATE.buf.lastBufferedEndMoveTs = ts;
+        STATE.det.hadBufferMove = 1;
       }
 
       if (CFG.storeTruth) truthUpdate(video, 'tick');
@@ -1888,6 +1999,13 @@
       + ' reason=' + String(det.reason || '')
       + ' pauseIntent(user)=' + (isUserPauseIntent() ? '1' : '0')
       + ' mediaPaused=' + (t.paused ? '1' : '0'));
+    lines.push('warmupLeftMs=' + String(warmupLeftMs())
+      + ' hadTU=' + String(toInt(STATE.det.hadTimeupdate, 0))
+      + ' hadProg=' + String(toInt(STATE.det.hadProgress, 0))
+      + ' hadBuf=' + String(toInt(STATE.det.hadBufferMove, 0))
+      + ' backoffLeftMs=' + String(recoverBackoffLeftMs())
+      + ' loopCount=' + String(toInt(STATE.det.recoverLoopCount, 0))
+      + ' lastResetSignals=' + String(STATE.det.lastResetSignalsReason || ''));
     lines.push('pauseHoldLeftMs=' + String(Math.max(0, toInt(STATE.user.pauseHoldUntilTs, 0) - nowMs()))
       + ' pauseHoldWhy=' + String(STATE.user.pauseHoldWhy || ''));
     lines.push('lastCmdRaw=' + String(STATE.user.lastCmdRaw || '')
@@ -2531,6 +2649,7 @@
   function shouldClampTailJump(t, stableSec) {
     if (!t || !t.hasVideo) return false;
     if (!CFG.enabled || !CFG.protectNext) return false;
+    if (!canRunDetectors().ok) return false;
     if (isUserSeekWindowActive()) return false;
     if (nowMs() < toInt(STATE.intent.guardSeekUntilTs, 0)) return false;
     if (!isTail(t.ct, t.dur)) return false;
@@ -3063,6 +3182,7 @@
         } catch (_) { }
       }
       STATE.rec.lastAction = 'soft_seek_play';
+      STATE.rec.lastSoftTs = nowMs();
       return true;
     }
 
@@ -3084,6 +3204,7 @@
     }, 120);
 
     STATE.rec.lastAction = 'soft_pause_load_seek_play';
+    STATE.rec.lastSoftTs = nowMs();
     return true;
   }
 
@@ -3161,6 +3282,8 @@
     }
 
     if (ok) {
+      resetSignalAges('inplayer_rebuild');
+      armWarmup(8000, 'inplayer_rebuild');
       armFrameGrace(CFG.frameGraceMs, 'inplayer_rebuild:' + String(mode || ''));
       var ticketSec = resumeSecFromTicketOrTruth();
       logLine('INF', 'INPLAYER set src ok', { mode: mode, seek: isFinite(ticketSec) ? toNum(ticketSec, 0).toFixed(2) : '' });
@@ -3231,6 +3354,8 @@
       source: String(ticket && ticket.source ? ticket.source : ''),
       ticketId: String(ticket && ticket.id ? ticket.id : '')
     });
+    resetSignalAges('reopen_request');
+    armWarmup(8000, 'reopen_request');
 
     beginCritical('overlay_recover', 2500);
     var r = null;
@@ -3432,6 +3557,9 @@
     STATE.rec.step = '';
     STATE.rec.reason = '';
     armFrameGrace(CFG.frameGraceMs, 'recover_finish:' + String(ok ? 'ok' : 'fail'));
+    if (ok) armWarmup(12000, 'recovery_done');
+    else armWarmup(8000, 'recovery_fail');
+    resetSignalAges('recovery_finish:' + String(ok ? 'ok' : 'fail'));
     if (ok) {
       setPhase(ST.PLAYING, 'recovered:' + String(why || 'ok'));
       logLine('OK', 'recover_done', { why: String(why || 'ok') });
@@ -3460,6 +3588,29 @@
     if (was) logLine('WRN', 'recover_cancel', { reason: String(reason || '') });
     resumeFinalizeDelayed(800, 'cancel');
     return was;
+  }
+
+  function isAutoRecoveryReason(reason) {
+    reason = String(reason || '');
+    return reason === 'playing_stuck'
+      || reason === 'render_freeze'
+      || reason === 'fake_full_buffer'
+      || reason === 'buffer_underrun'
+      || reason === 'false_end'
+      || reason === 'forced_next'
+      || reason === 'ended_blocked'
+      || reason === 'tail_jump'
+      || reason === 'tail_jump_seek';
+  }
+
+  function isSoftAttemptAllowed(reason) {
+    if (toInt(CFG.softAttempts, 0) <= 0) return false;
+    if (!toInt(STATE.det.hadProgress, 0)) return false;
+    if (isUserPauseIntent()) return false;
+    if (toInt(STATE.tick && STATE.tick.readyState, 0) < 2) return false;
+    if ((nowMs() - toInt(STATE.rec.lastSoftTs, 0)) < 20000) return false;
+    if (reason === 'fake_full_buffer' || reason === 'buffer_underrun') return false;
+    return true;
   }
 
   function runReopenStep(token) {
@@ -3529,6 +3680,17 @@
     if (token !== toInt(STATE.rec.token, 0)) return;
 
     if (STATE.rec.softTry >= STATE.rec.softMax) return runInplayerStep(token);
+    if (!isSoftAttemptAllowed(String(STATE.rec.reason || ''))) {
+      logLine('DBG', 'soft_skip', {
+        reason: String(STATE.rec.reason || ''),
+        hadProgress: toInt(STATE.det.hadProgress, 0),
+        readyState: toInt(STATE.tick && STATE.tick.readyState, 0),
+        warmupLeftMs: warmupLeftMs(),
+        sinceLastSoftMs: nowMs() - toInt(STATE.rec.lastSoftTs, 0)
+      });
+      STATE.rec.softTry = STATE.rec.softMax;
+      return runInplayerStep(token);
+    }
 
     STATE.rec.softTry++;
     STATE.rec.step = 'soft';
@@ -3560,6 +3722,7 @@
 
   function startRecovery(reason) {
     reason = String(reason || 'hang');
+    var autoReason = isAutoRecoveryReason(reason);
 
     if (!CFG.enabled) {
       STATE.rec.lastErr = 'disabled';
@@ -3591,6 +3754,31 @@
       logLine('DBG', 'REC skip', { reason: reason, why: 'busy', step: String(STATE.rec.step || '') });
       return false;
     }
+    if (autoReason) {
+      var can = canRunDetectors();
+      if (!can.ok) {
+        STATE.rec.lastErr = String(can.reason || 'gated');
+        logLine('DBG', 'REC skip', { reason: reason, why: String(can.reason || 'gated') });
+        return false;
+      }
+    }
+
+    var nowTs = nowMs();
+    if ((nowTs - toInt(STATE.det.lastRecoverTs, 0)) < 15000) {
+      STATE.det.recoverLoopCount = toInt(STATE.det.recoverLoopCount, 0) + 1;
+    } else {
+      STATE.det.recoverLoopCount = 0;
+    }
+    STATE.det.lastRecoverTs = nowTs;
+    var backoffSeq = [0, 5000, 10000, 20000, 40000, 60000];
+    var bi = Math.min(toInt(STATE.det.recoverLoopCount, 0), backoffSeq.length - 1);
+    var backoff = backoffSeq[bi];
+    STATE.det.recoverBackoffUntilTs = nowTs + backoff;
+    logLine('WRN', 'RECOVERY backoff', {
+      loop: toInt(STATE.det.recoverLoopCount, 0),
+      backoffMs: backoff,
+      reason: reason
+    });
 
     STATE.rec.active = true;
     STATE.rec.token = toInt(STATE.rec.token, 0) + 1;
@@ -3600,8 +3788,7 @@
     STATE.rec.inpTry = 0;
     STATE.rec.reopenTry = 0;
     STATE.rec.softMax = clampInt(CFG.softAttempts, 0, 5);
-    if (reason === 'fake_full_buffer') STATE.rec.softMax = Math.min(1, STATE.rec.softMax);
-    if (reason === 'buffer_underrun') STATE.rec.softMax = Math.min(1, STATE.rec.softMax);
+    if (STATE.rec.softMax > 0 && !isSoftAttemptAllowed(reason)) STATE.rec.softMax = 0;
     STATE.rec.inpMax = clampInt(CFG.inplayerAttempts, 0, 6);
     STATE.rec.lastAction = '';
     STATE.rec.lastErr = '';
@@ -3609,6 +3796,8 @@
     clearResumeUnfreezeTimer();
     var ticket = makeResumeTicket(reason, 'recovery');
     truthFreeze(true, 'recover:' + reason);
+    armWarmup(8000, 'recovery_begin');
+    resetSignalAges('recovery_begin');
     armFrameGrace(CFG.frameGraceMs, 'recover_start:' + reason);
     if (CFG.protectNext) {
       var criticalMs = criticalMsForReason(reason);
@@ -3750,7 +3939,8 @@
     if (!CFG.enabled || !CFG.protectNext) return false;
     if (STATE.rec.active) return false;
     if (isUserSeekWindowActive()) return false;
-    if (!detectorsAllowed()) return false;
+    var canDet = canRunDetectors();
+    if (!canDet.ok) return false;
 
     var t = STATE.tick;
     var ct = toNum(t && t.ct, NaN);
@@ -3810,7 +4000,8 @@
     if (!CFG.enabled || !CFG.protectNext) return false;
     if (STATE.rec.active) return false;
     if (isUserSeekWindowActive()) return false;
-    if (!detectorsAllowed()) return false;
+    var canDet = canRunDetectors();
+    if (!canDet.ok) return false;
 
     var t = STATE.tick;
     var ct = toNum(t && t.ct, NaN);
@@ -3884,6 +4075,9 @@
     if (tl === 'start') {
       ensureTickTimer('player_start');
       var sessionSig = onSessionStart(payload, 'player_start');
+      STATE.det.lastStartTs = nowMs();
+      resetSignalAges('player_start');
+      armWarmup(8000, 'player_start');
       markLifeOpen('player_start');
       STATE.life.suspendDetectors = 0;
       STATE.life.exitIntent = 0;
@@ -4149,6 +4343,12 @@
       flagSet('playingStuck', false, '');
       return false;
     }
+    var canDet = canRunDetectors();
+    if (!canDet.ok) {
+      hangUpdate(false, String(canDet.reason || 'gated'), runtimeAges());
+      flagSet('playingStuck', false, '');
+      return false;
+    }
     if (STATE.rec.active) {
       hangUpdate(false, 'recovering', runtimeAges());
       return false;
@@ -4161,6 +4361,11 @@
     }
     if (isUserPauseIntent()) {
       hangUpdate(false, 'paused', runtimeAges());
+      return false;
+    }
+    if (!toInt(STATE.det.hadTimeupdate, 0) && !toInt(STATE.det.hadBufferMove, 0)) {
+      hangUpdate(false, 'no_evidence', runtimeAges());
+      flagSet('playingStuck', false, '');
       return false;
     }
 
@@ -4225,7 +4430,7 @@
     if (!CFG.enabled) return false;
     if (STATE.rec.active) return false;
 
-    var det = detectAllowedInfo();
+    var det = canRunDetectors();
     if (!det.ok) return false;
 
     var t = STATE.tick || {};
@@ -4278,7 +4483,8 @@
   function maybeDetectFakeFullBuffer() {
     if (!CFG.enabled || !CFG.fakeFullEnabled) return false;
     if (STATE.rec.active) return false;
-    if (!detectAllowedInfo().ok) return false;
+    if (!canRunDetectors().ok) return false;
+    if (!toInt(STATE.det.hadProgress, 0)) return false;
 
     var t = STATE.tick || {};
     if (!t.hasVideo) return false;
@@ -4329,7 +4535,8 @@
   function maybeDetectBufferUnderrun() {
     if (!CFG.enabled) return false;
     if (STATE.rec.active) return false;
-    if (!detectAllowedInfo().ok) return false;
+    if (!canRunDetectors().ok) return false;
+    if (!toInt(STATE.det.hadProgress, 0)) return false;
     if (!isPlayingLike(STATE.tick)) return false;
 
     var t = STATE.tick || {};
@@ -4370,7 +4577,7 @@
 
   function maybeStartRecoveryFromFlags() {
     if (STATE.rec.active) return false;
-    var rec = detectorsAllowedInfo();
+    var rec = canRunDetectors();
     if (!rec.ok) return false;
 
     var ts = nowMs();
@@ -4475,7 +4682,7 @@
       maybeDetectFakeFullBuffer();
       maybeDetectBufferUnderrun();
       maybeStartRecoveryFromFlags();
-      if (detectorsAllowedInfo().ok) maybeHandleFalseEnd('tick_check');
+      if (canRunDetectors().ok) maybeHandleFalseEnd('tick_check');
       trackReopenApply();
 
       if (STATE.ui.open) uiRender('tick');
@@ -4548,6 +4755,17 @@
         userPausedIntent: toInt(STATE.intent.userPausedIntent, 0),
         guardPlayLockLeftMs: Math.max(0, toInt(STATE.intent.guardPlayLockUntilTs, 0) - nowMs()),
         userLastSeekTs: toInt(STATE.intent.userLastSeekTs, 0)
+      },
+      det: {
+        warmupLeftMs: warmupLeftMs(),
+        lastStartTs: toInt(STATE.det.lastStartTs, 0),
+        lastReadyTs: toInt(STATE.det.lastReadyTs, 0),
+        hadTimeupdate: toInt(STATE.det.hadTimeupdate, 0),
+        hadProgress: toInt(STATE.det.hadProgress, 0),
+        hadBufferMove: toInt(STATE.det.hadBufferMove, 0),
+        recoverLoopCount: toInt(STATE.det.recoverLoopCount, 0),
+        recoverBackoffLeftMs: recoverBackoffLeftMs(),
+        lastResetSignalsReason: String(STATE.det.lastResetSignalsReason || '')
       },
       rec: {
         step: String(STATE.rec.step || ''),
