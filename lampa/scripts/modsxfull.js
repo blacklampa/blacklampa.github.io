@@ -29840,7 +29840,7 @@
             }
           }
           if (!window.plugin_modss) startPlugin();
-        })();
+        })(),
         //# sourceURL=https://lampa.stream/plugin_modss.js
       });
     }
