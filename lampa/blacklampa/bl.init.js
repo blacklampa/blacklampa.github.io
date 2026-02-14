@@ -846,6 +846,8 @@
 	        'bl.player.guard.js',
 	        'bl.player.overlay.js',
 	        'bl.mod.player/sourcekit.js',
+	        'bl.mod.player/scripts_registry.js',
+	        'bl.mod.player/sourceshub.js',
 	        'bl.mod.player/resolver.js',
 	        'bl.mod.player/player.js',
 	        'bl.mod.player/ui/picker.js',

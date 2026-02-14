@@ -4,7 +4,7 @@
 
 ## Что делает
 - Добавляет кнопку `BL-Mod` на карточке (рядом с `Play`/`Torrent`).
-- Загружает список доступных источников через lampac-эндпоинты (`lite/events`, `lifeevents`).
+- Загружает список источников в приоритете из `Lampa.Api.sources` (общий реестр, который заполняют скрипты из `lampa/scripts/*.js`), при пустом реестре использует legacy fallback SourceKit.
 - Показывает пошаговый выбор: источник -> раздел/озвучка -> файл.
 - Резолвит ссылку и запускает `Lampa.Player.play()` с payload, совместимым с online/onlines.
 - Передает метаданные в payload:
@@ -24,6 +24,13 @@
 - `blmod.lastChoice.voice` — последние озвучки (map).
 - `blmod.lastChoice.branch` — последние разделы/сезоны (map).
 - `blmod.lastChoice.file` — последние файлы (map).
+
+## Диагностика `sources_empty`
+Если источники не найдены, BL-Mod показывает диагностику:
+- состояние `Lampa.Api.sources`
+- количество и список ключей
+- флаги загруженных online-скриптов
+- доступность online-компонентов (`modss_online`, `online_mod`, `smotrolet`, ...)
 
 ## Добавление нового источника
 Источник в BL-Mod — это запись SourceKit (`id/title/url`) из `lite/events`/`lifeevents`.

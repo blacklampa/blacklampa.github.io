@@ -18,12 +18,6 @@
     lastFile: 'blmod.lastChoice.file'
   };
 
-  var LEVELS = {
-    silent: 0,
-    normal: 1,
-    trace: 2
-  };
-
   var LOG = {
     rows: [],
     cap: LOG_CAP
@@ -185,8 +179,149 @@
     } catch (_) { }
   }
 
+  function escHtml(s) {
+    return str(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/\"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function showSourcesDiag(diag) {
+    var lines = [];
+    lines.push('BL-Mod: sources_empty');
+    lines.push('hasLampa=' + (diag && diag.hasLampa ? 1 : 0));
+    lines.push('hasApi=' + (diag && diag.hasApi ? 1 : 0));
+    lines.push('hasApiSources=' + (diag && diag.hasApiSources ? 1 : 0));
+    lines.push('apiKeysCount=' + toInt(diag && diag.apiKeysCount, 0));
+    lines.push('apiPlayableCount=' + toInt(diag && diag.apiPlayableCount, 0));
+    lines.push('apiExcludedCount=' + toInt(diag && diag.apiExcludedCount, 0));
+
+    try {
+      var flags = obj(diag && diag.scripts && diag.scripts.flags);
+      var comp = obj(diag && diag.scripts && diag.scripts.components);
+      lines.push('loaded_modss=' + (flags.loaded_modss ? 1 : 0));
+      lines.push('smotrolet_plugin=' + (flags.smotrolet_plugin ? 1 : 0));
+      lines.push('onlyskaz_plugin=' + (flags.onlyskaz_plugin ? 1 : 0));
+      lines.push('components=' + Object.keys(comp).map(function (k) { return k + ':' + (comp[k] ? 1 : 0); }).join(', '));
+    } catch (_) { }
+
+    try {
+      if (diag && diag.apiKeys && diag.apiKeys.length) lines.push('apiKeys=' + diag.apiKeys.join(', '));
+    } catch (_) { }
+
+    lines.push('hint: проверь загрузку modsxfull.js / online*.js');
+    showNoty('BL-Mod: sources_empty');
+
+    try {
+      if (window.Lampa && Lampa.Modal && typeof Lampa.Modal.open === 'function') {
+        Lampa.Modal.open({
+          title: 'BL-Mod Diagnostics',
+          align: 'center',
+          html: '<div class="about"><pre style="white-space:pre-wrap;word-break:break-word;max-height:70vh;overflow:auto">' + escHtml(lines.join('\n')) + '</pre></div>'
+        });
+        return;
+      }
+    } catch (_) { }
+  }
+
+  function hasComponent(name) {
+    try {
+      return !!(window.Lampa && Lampa.Component && typeof Lampa.Component.get === 'function' && Lampa.Component.get(name));
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function applySourceSelection(source) {
+    var key = str(source && (source.key || source.id) || '');
+    if (!key) return;
+    try { Lampa.Storage.set('source', key); } catch (_) { }
+    try { Lampa.Storage.set('active_balanser', key); } catch (_) { }
+    try { Lampa.Storage.set('online_balanser', key); } catch (_) { }
+    try { Lampa.Storage.set('online_mod_balanser', key); } catch (_) { }
+    try { if (Lampa.Params && typeof Lampa.Params.trigger === 'function') Lampa.Params.trigger('source', key); } catch (_) { }
+  }
+
+  function onlinePushData(ctx, componentName) {
+    var movie = obj(ctx && ctx.movie);
+    var title = str(movie.title || movie.name || '');
+    return {
+      url: '',
+      title: title ? ('BL-Mod: ' + title) : 'BL-Mod',
+      component: componentName,
+      search: title,
+      search_one: title,
+      search_two: str(movie.original_title || movie.original_name || ''),
+      movie: movie,
+      page: 1
+    };
+  }
+
+  function delegateCandidates() {
+    var list = [];
+    var add = function (name) {
+      if (!name) return;
+      if (list.indexOf(name) >= 0) return;
+      list.push(name);
+    };
+
+    try {
+      var diag = MP.ScriptsRegistry && MP.ScriptsRegistry.inspect ? MP.ScriptsRegistry.inspect() : null;
+      var flags = obj(diag && diag.flags);
+      if (flags.loaded_modss) add('modss_online');
+      if (flags.smotrolet_plugin) add('smotrolet');
+      if (flags.onlyskaz_plugin) {
+        add('lampacskaz');
+        add('iptvskaz');
+      }
+    } catch (_) { }
+
+    add('modss_online');
+    add('online_mod');
+    add('smotrolet');
+    add('lampacskaz');
+    add('iptvskaz');
+    add('lampac');
+
+    return list.filter(function (name) { return hasComponent(name); });
+  }
+
+  function delegatePlayToInstalledComponent(ctx, source) {
+    var candidates = delegateCandidates();
+    if (!candidates.length) return Promise.resolve(false);
+
+    applySourceSelection(source);
+
+    try {
+      log('INF', 'delegate_source', {
+        source: str(source && (source.key || source.id)),
+        origin: str(source && source.origin || ''),
+        candidates: candidates
+      });
+    } catch (_) { }
+
+    return new Promise(function (resolve) {
+      var ok = false;
+      var i;
+      for (i = 0; i < candidates.length; i++) {
+        var componentName = candidates[i];
+        try {
+          Lampa.Activity.push(onlinePushData(ctx, componentName));
+          log('OK', 'delegate_open_component', { component: componentName });
+          ok = true;
+          break;
+        } catch (e) {
+          log('WRN', 'delegate_component_fail', { component: componentName, err: str(e && e.message) });
+        }
+      }
+      resolve(ok);
+    });
+  }
+
   function ensureDeps() {
-    return !!(MP.SourceKit && MP.Resolver && MP.Player && MP.UI && MP.UI.Picker && MP.UI.Button);
+    return !!(MP.SourcesHub && MP.UI && MP.UI.Picker && MP.UI.Button);
   }
 
   function toPickerRows(list, mapFn) {
@@ -346,23 +481,88 @@
 
     var key = ctxKey(ctx);
     var saved = recall(LS.lastSource, key);
+    var preferredObj = null;
+    try {
+      if (MP.SourcesHub && typeof MP.SourcesHub.pickDefault === 'function') preferredObj = MP.SourcesHub.pickDefault(sources);
+    } catch (_) { }
 
     var rows = toPickerRows(sources, function (s) {
+      var sub = [];
+      if (s && s.kind) sub.push(str(s.kind));
+      if (s && s.origin) sub.push(str(s.origin));
       return {
         title: str(s.title || s.id),
-        subtitle: str(s.kind || 'source'),
+        subtitle: sub.join(' • '),
         value: s,
         id: str(s.id || '')
       };
     });
 
-    var preferred = pickBySaved(rows, saved, ['id', 'title']) || rows[0];
+    var preferred = pickBySaved(rows, saved, ['id', 'title']);
+    if (!preferred && preferredObj) preferred = pickBySaved(rows, str(preferredObj.id || preferredObj.key || ''), ['id']);
+    if (!preferred) preferred = rows[0];
     if (preferred) rows = [preferred].concat(rows.filter(function (r) { return r !== preferred; }));
 
     return choose('BL-Mod: Источники', rows, { subtitle: str((ctx.movie && (ctx.movie.title || ctx.movie.name)) || '') }).then(function (selected) {
       if (!selected) return null;
       remember(LS.lastSource, key, str(selected.id));
       return selected;
+    });
+  }
+
+  function buildContext(movieArg) {
+    if (MP.SourceKit && typeof MP.SourceKit.buildContext === 'function') {
+      var ctx = MP.SourceKit.buildContext(movieArg);
+      if (ctx && ctx.movie) return ctx;
+    }
+
+    var movie = movieArg || null;
+    try {
+      if (!movie && window.Lampa && Lampa.Activity && typeof Lampa.Activity.active === 'function') {
+        var act = Lampa.Activity.active();
+        movie = (act && (act.card || (act.activity && act.activity.card) || (act.activity && act.activity.movie))) || null;
+      }
+    } catch (_) { }
+    if (!movie) return null;
+
+    var copy = $.extend(true, {}, movie);
+    var seed = str(copy.id || copy.tmdb_id || copy.imdb_id || copy.kinopoisk_id || (copy.title || copy.name || '') + '|' + nowMs());
+    var sig = (MP.SourceKit && typeof MP.SourceKit.hashSig === 'function') ? MP.SourceKit.hashSig(seed) : seed;
+
+    return {
+      movie: copy,
+      queryTitle: str(copy.title || copy.name || ''),
+      clarification: false,
+      similar: false,
+      ctxSig: sig,
+      createdTs: nowMs(),
+      memkey: ''
+    };
+  }
+
+  function playViaLegacySourceKit(ctx, source) {
+    if (!(MP.SourceKit && MP.Resolver && MP.Player)) return Promise.resolve(false);
+    if (!(MP.SourceKit.resolveCatalog && MP.SourceKit.resolveFile)) return Promise.resolve(false);
+
+    return MP.SourceKit.resolveCatalog(ctx, source.id).then(function (catalog) {
+      if (!catalog) return null;
+      return chooseVoiceIfNeeded(ctx, source, catalog).then(function (voiceCatalog) {
+        return chooseBranchUntilPlayable(ctx, source, voiceCatalog || catalog).then(function (finalCatalog) {
+          if (!finalCatalog) return null;
+          return chooseFile(ctx, source, finalCatalog).then(function (selectedFile) {
+            if (!selectedFile) return null;
+            return MP.SourceKit.resolveFile(ctx, source.id, selectedFile).then(function (resolved) {
+              return MP.Player.playResolved(ctx, source, selectedFile, resolved, finalCatalog).then(function (payload) {
+                STATE.lastPlaybackMeta = payload && payload.blmod ? payload.blmod : null;
+                return true;
+              });
+            });
+          });
+        });
+      });
+    })['catch'](function (e) {
+      log('WRN', 'legacy_sourcekit_fail', { err: str(e && (e.message || e.msg || e.c || 'unknown')) });
+      return false;
     });
   }
 
@@ -382,7 +582,7 @@
       return Promise.resolve(false);
     }
 
-    var ctx = MP.SourceKit.buildContext(movieArg);
+    var ctx = buildContext(movieArg);
     if (!ctx || !ctx.movie) {
       showNoty('BL-Mod: не удалось получить контекст карточки');
       return Promise.resolve(false);
@@ -391,25 +591,36 @@
     STATE.busy = true;
     log('INF', 'flow_start', { ctx: ctx.ctxSig, title: ctx.movie.title || ctx.movie.name || '' });
 
-    return MP.SourceKit.listSources(ctx).then(function (sources) {
-      if (!sources || !sources.length) throw new Error('sources_empty');
+    return MP.SourcesHub.list(ctx).then(function (sources) {
+      if (!sources || !sources.length) {
+        var diag = MP.SourcesHub && MP.SourcesHub.diag ? MP.SourcesHub.diag(ctx) : null;
+        log('ERR', 'sources_empty', diag || {});
+        showSourcesDiag(diag);
+        throw new Error('sources_empty');
+      }
+      log('INF', 'sources_ready', {
+        count: sources.length,
+        keys: sources.map(function (s) { return str(s.id || s.key); }).slice(0, 50)
+      });
       return chooseSource(ctx, sources);
     }).then(function (source) {
       if (!source) return null;
-      return MP.SourceKit.resolveCatalog(ctx, source.id).then(function (catalog) {
-        return chooseVoiceIfNeeded(ctx, source, catalog).then(function (voiceCatalog) {
-          return chooseBranchUntilPlayable(ctx, source, voiceCatalog || catalog).then(function (finalCatalog) {
-            if (!finalCatalog) return null;
-            return chooseFile(ctx, source, finalCatalog).then(function (selectedFile) {
-              if (!selectedFile) return null;
-              return MP.SourceKit.resolveFile(ctx, source.id, selectedFile).then(function (resolved) {
-                return MP.Player.playResolved(ctx, source, selectedFile, resolved, finalCatalog).then(function (payload) {
-                  STATE.lastPlaybackMeta = payload && payload.blmod ? payload.blmod : null;
-                  return true;
-                });
-              });
-            });
-          });
+
+      return delegatePlayToInstalledComponent(ctx, source).then(function (delegated) {
+        if (delegated) {
+          STATE.lastPlaybackMeta = {
+            sourceId: str(source.id || source.key || ''),
+            origin: str(source.origin || ''),
+            ctxSig: str(ctx.ctxSig || ''),
+            mode: 'delegate',
+            ts: nowMs()
+          };
+          return true;
+        }
+
+        return playViaLegacySourceKit(ctx, source).then(function (ok) {
+          if (ok) return true;
+          throw new Error('delegate_unavailable');
         });
       });
     }).then(function (ok) {
@@ -424,7 +635,7 @@
       STATE.busy = false;
       var err = str(e && (e.message || e.msg || e.c || 'unknown'));
       log('ERR', 'flow_failed', { err: err });
-      showNoty('BL-Mod: ' + err);
+      if (err !== 'sources_empty') showNoty('BL-Mod: ' + err);
       return false;
     });
   }
