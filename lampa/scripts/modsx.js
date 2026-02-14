@@ -209,12 +209,12 @@ if (!window.loaded_modss) {
             return window.location.protocol == 'https:' ? 'https://' : 'http://';
         }
         var TRASH_R = ['$$$####!!!!!!!', '^^^^^^##@', '@!^^!@#@@$$$$$', '^^#@@!!@#!$', '@#!@@@##$$@@'];
-        var version_modss = '3.3', API = Protocol() + 'api.lampa.stream/', type = '', jackets = {}, cards, ping_auth, manifest, menu_list = [], vip = false, leftVipD = '', user_id = '', uid = '145e884a14a0724a6b0ea55ed', IP, logged = false, cashe = encodeURIComponent(Lampa.Base64.encode(window.location.origin));
+        var version_modss = '3.3', API = Protocol() + 'api.lampa.stream/', type = '', jackets = {}, cards, ping_auth, manifest, menu_list = [], vip = false, leftVipD = '', user_id = 'localhost', uid = '145e884a14a0724a6b0ea55ed', IP, logged = false, cashe = encodeURIComponent(Lampa.Base64.encode('lampa.stream')); //window.location.origin));
 
         var urls = [Protocol() + 'lampa.stream/modss', Protocol() + 'modss.tv', Protocol() + 'n.modss.tv'];
 
         console.log('Modss', 'protocol:', Protocol());
-        console.log('Modss', 'origin', window.location.origin);
+        console.log('Modss', 'origin', 'lampa.stream'); //window.location.origin);
         console.log('Modss', 'init', 'LOADED - EE [5.45.126.29] - [GET] ' + urls[0]);
         window.loaded_modss = true;
 
@@ -223,7 +223,7 @@ if (!window.loaded_modss) {
         var loadErrors = [];
         var requestData = {
             user_id: user_id,
-            uid: uid,
+            uid: '',
             ips: '5.45.126.29',
             cas: cashe,
             cache: false,
@@ -238,7 +238,7 @@ if (!window.loaded_modss) {
                     return String(e.status != null ? e.status : '?');
                 }).join(', ');
                 console.log('Modss', 'init', 'EE [5.45.126.29] - все URL недоступны. Статусы ответов:', statusCodes, loadErrors);
-                Lampa.Noty.show('EE [5.45.126.29] - MODSs ОШИБКА ЗАГРУЗКИ ПЛАГИНА -> все серверы недоступны.<br>Статусы: ' + (statusCodes || '—') + '<br>Lampa: ' + window.location.origin, {
+                Lampa.Noty.show('EE [5.45.126.29] - MODSs ОШИБКА ЗАГРУЗКИ ПЛАГИНА -> все серверы недоступны.<br>Статусы: ' + (statusCodes || '—') + '<br>Lampa: ' + 'window.location.origin', {
                     time: 10000
                 });
                 window.loaded_modss = false;
@@ -258,7 +258,7 @@ if (!window.loaded_modss) {
                 try {
                     console.log('Modss', 'push', 'START - ' + currentUrl);
                     console.log('MODSXXX',json + '//# sourceURL=' + window.location.origin + '/plugin_modss.js');
-                    eval(json + '//# sourceURL=' + window.location.origin + '/plugin_modss.js');
+                    eval(json + '//# sourceURL=' + 'lampa.stream' + '/plugin_modss.js');
                     window.loaded_modss = true;
                 } catch (error) {
                     Lampa.Noty.show('MODSs ОШИБКА ЗАГРУЗКИ -> ' + error.message);
