@@ -11,22 +11,36 @@
   var LS = {
     enabled: 'blmod.enabled',
     debug: 'blmod.debug',
-    preferredSource: 'blmod.online.source'
+    preferredSource: 'blmod.preferred_source',
+    logLevel: 'blmod.log_level'
   };
 
-  var CACHE = {
-    ts: 0,
-    sources: [],
-    rawLen: 0,
-    err: '',
-    lastPath: ''
-  };
-
-  var TTL_MS = 3 * 60 * 1000;
-  var ONLINE_MOD_PATHS = [
-    '/lampa/scripts/online_mod.js',
-    '/scripts/online_mod.js',
-    'scripts/online_mod.js'
+  // Built-in registry derived from online_mod.js all_sources.
+  // Runtime must not read /lampa/scripts/*.js.
+  var BUILTIN_SOURCES = [
+    { id: 'lumex', title: 'Lumex', origin: 'builtin', kind: 'balancer' },
+    { id: 'lumex2', title: 'Lumex (Ads)', origin: 'builtin', kind: 'balancer' },
+    { id: 'rezka2', title: 'HDrezka', origin: 'builtin', kind: 'balancer' },
+    { id: 'kinobase', title: 'Kinobase', origin: 'builtin', kind: 'balancer' },
+    { id: 'collaps', title: 'Collaps', origin: 'builtin', kind: 'balancer' },
+    { id: 'collaps-dash', title: 'Collaps (DASH)', origin: 'builtin', kind: 'balancer' },
+    { id: 'cdnmovies', title: 'CDNMovies', origin: 'builtin', kind: 'balancer' },
+    { id: 'filmix', title: 'Filmix', origin: 'builtin', kind: 'balancer' },
+    { id: 'zetflix', title: 'Zetflix', origin: 'builtin', kind: 'balancer' },
+    { id: 'fancdn', title: 'FanCDN', origin: 'builtin', kind: 'balancer' },
+    { id: 'fancdn2', title: 'FanCDN (ID)', origin: 'builtin', kind: 'balancer' },
+    { id: 'fanserials', title: 'FanSerials', origin: 'builtin', kind: 'balancer' },
+    { id: 'videoseed', title: 'VideoSeed', origin: 'builtin', kind: 'balancer' },
+    { id: 'vibix', title: 'Vibix', origin: 'builtin', kind: 'balancer' },
+    { id: 'redheadsound', title: 'RedHeadSound', origin: 'builtin', kind: 'balancer' },
+    { id: 'redheadsound-dash', title: 'RedHeadSound (DASH)', origin: 'builtin', kind: 'balancer' },
+    { id: 'cdnvideohub', title: 'CDNVideoHub', origin: 'builtin', kind: 'balancer' },
+    { id: 'anilibria', title: 'AniLibria', origin: 'builtin', kind: 'balancer' },
+    { id: 'anilibria2', title: 'AniLibria.top', origin: 'builtin', kind: 'balancer' },
+    { id: 'animelib', title: 'AnimeLib', origin: 'builtin', kind: 'balancer' },
+    { id: 'kodik', title: 'Kodik', origin: 'builtin', kind: 'balancer' },
+    { id: 'alloha', title: 'Alloha', origin: 'builtin', kind: 'balancer' },
+    { id: 'kinopub', title: 'KinoPub', origin: 'builtin', kind: 'balancer' }
   ];
 
   function nowMs() {
@@ -35,6 +49,11 @@
 
   function str(v) {
     return v === undefined || v === null ? '' : String(v);
+  }
+
+  function toInt(v, d) {
+    var n = parseInt(v, 10);
+    return isFinite(n) ? n : d;
   }
 
   function toBool(v, d) {
@@ -60,13 +79,16 @@
     try { if (window.localStorage) localStorage.setItem(String(key), (typeof value === 'object') ? JSON.stringify(value) : String(value)); } catch (_) { }
   }
 
-  function log(level, msg, meta) {
-    try {
-      if (MP && typeof MP.log === 'function') return MP.log(level, msg, meta || null);
-    } catch (_) { }
-    try {
-      if (toBool(sGet(LS.debug, '0'), false) && console && console.log) console.log('[BL-Mod][OnlineCore][' + str(level || 'INF') + '] ' + str(msg || ''), meta || null);
-    } catch (_) { }
+  function sourceEnabledKey(id) {
+    return 'blmod.source.enabled.' + str(id || '');
+  }
+
+  function isSourceEnabled(id) {
+    return toBool(sGet(sourceEnabledKey(id), '1'), true);
+  }
+
+  function setSourceEnabled(id, on) {
+    sSet(sourceEnabledKey(id), on ? '1' : '0');
   }
 
   function escHtml(s) {
@@ -92,58 +114,18 @@
     return false;
   }
 
-  function parseObjectsFromBlock(block) {
-    var list = [];
-    if (!block) return list;
-    var re = /\{[^{}]{0,600}\}/g;
-    var m;
-    while ((m = re.exec(block))) list.push(m[0]);
-    return list;
-  }
-
-  function parseSourceObject(rawObj) {
-    var raw = str(rawObj || '');
-    if (!raw) return null;
-    var nameMatch = /name\s*:\s*['"]([^'"]+)['"]/i.exec(raw);
-    var titleMatch = /title\s*:\s*['"]([^'"]+)['"]/i.exec(raw);
-    var balMatch = /(?:balanser|source|id)\s*:\s*['"]([^'"]+)['"]/i.exec(raw);
-    var name = nameMatch ? str(nameMatch[1]) : '';
-    var title = titleMatch ? str(titleMatch[1]) : '';
-    var bal = balMatch ? str(balMatch[1]) : '';
-    var id = (bal || name || title || '').toLowerCase().trim();
-    if (!id) return null;
-    if (id === 'tmdb') return null;
-    return {
-      id: id,
-      key: id,
-      title: title || name || bal || id,
-      origin: 'online_mod.all_sources',
-      kind: 'balancer'
-    };
-  }
-
-  function extractAllSourcesBlock(text) {
-    var src = str(text || '');
-    var idx = src.indexOf('all_sources');
-    if (idx < 0) return '';
-    var from = src.indexOf('[', idx);
-    if (from < 0) return '';
-    var i;
-    var depth = 0;
-    for (i = from; i < src.length; i++) {
-      var ch = src.charAt(i);
-      if (ch === '[') depth++;
-      else if (ch === ']') {
-        depth--;
-        if (depth === 0) return src.slice(from + 1, i);
-      }
-    }
-    return '';
+  function log(level, msg, meta) {
+    try {
+      if (MP && typeof MP.log === 'function') return MP.log(level, msg, meta || null);
+    } catch (_) { }
+    try {
+      if (toBool(sGet(LS.debug, '0'), false) && console && console.log) console.log('[BL-Mod][OnlineCore][' + str(level || 'INF') + '] ' + str(msg || ''), meta || null);
+    } catch (_) { }
   }
 
   function uniqSources(list) {
-    var map = {};
     var out = [];
+    var map = {};
     (list || []).forEach(function (s) {
       var id = str(s && (s.id || s.key) || '');
       if (!id || map[id]) return;
@@ -153,53 +135,38 @@
     return out;
   }
 
-  function fetchTextByPaths(paths, idx) {
-    idx = toInt(idx, 0);
-    if (idx >= paths.length) return Promise.reject(new Error('online_mod_fetch_failed'));
-    var p = str(paths[idx]);
-    return fetch(p, { cache: 'no-store' }).then(function (r) {
-      if (!r || !r.ok) throw new Error('http_' + toInt(r && r.status, 0));
-      return r.text().then(function (text) { return { text: text, path: p }; });
-    })['catch'](function () {
-      return fetchTextByPaths(paths, idx + 1);
+  function allSources() {
+    return BUILTIN_SOURCES.map(function (s) {
+      return {
+        id: str(s.id),
+        key: str(s.id),
+        title: str(s.title || s.id),
+        origin: str(s.origin || 'builtin'),
+        kind: str(s.kind || 'balancer'),
+        enabled: isSourceEnabled(s.id)
+      };
     });
   }
 
-  function fetchOnlineModSources() {
-    if (typeof fetch !== 'function') return Promise.resolve([]);
-    return fetchTextByPaths(ONLINE_MOD_PATHS, 0).then(function (res) {
-      var text = str(res && res.text || '');
-      var block = extractAllSourcesBlock(text);
-      var rows = parseObjectsFromBlock(block).map(parseSourceObject).filter(Boolean);
-      CACHE.rawLen = str(block).length;
-      CACHE.lastPath = str(res && res.path || '');
-      return uniqSources(rows);
-    });
-  }
-
-  function cachedSourcesValid() {
-    return CACHE.sources.length && (nowMs() - CACHE.ts < TTL_MS);
-  }
-
-  function componentId() {
-    return 'blmod_online';
+  function enabledSources() {
+    return allSources().filter(function (s) { return !!s.enabled; });
   }
 
   function choosePreferredSource(sources) {
     sources = Array.isArray(sources) ? sources : [];
     if (!sources.length) return null;
     var preferred = str(sGet(LS.preferredSource, '') || '').toLowerCase();
-    var found = null;
     if (preferred) {
-      sources.some(function (s) {
-        if (str(s.id).toLowerCase() === preferred || str(s.key).toLowerCase() === preferred) {
-          found = s;
-          return true;
-        }
-        return false;
-      });
+      for (var i = 0; i < sources.length; i++) {
+        var sid = str(sources[i] && (sources[i].id || sources[i].key) || '').toLowerCase();
+        if (sid === preferred) return sources[i];
+      }
     }
-    return found || sources[0];
+    return sources[0];
+  }
+
+  function componentId() {
+    return 'blmod_online';
   }
 
   function listRowsContainer() {
@@ -239,6 +206,41 @@
     } catch (_) { }
   }
 
+  function catalogHasRows(cat) {
+    if (!cat || typeof cat !== 'object') return false;
+    if (Array.isArray(cat.videos) && cat.videos.length) return true;
+    if (Array.isArray(cat.links) && cat.links.length) return true;
+    if (Array.isArray(cat.buttons) && cat.buttons.length) return true;
+    return false;
+  }
+
+  function mergeWithRuntimeSources(builtin, runtime) {
+    runtime = Array.isArray(runtime) ? runtime : [];
+    var byId = {};
+    runtime.forEach(function (s) { byId[str(s && s.id || '').toLowerCase()] = s; });
+    return builtin.map(function (s) {
+      var id = str(s && s.id || '').toLowerCase();
+      var rt = byId[id];
+      if (rt) {
+        var out = $.extend(true, {}, rt);
+        out.id = str(out.id || id);
+        out.key = str(out.key || out.id);
+        out.title = str(s.title || out.title || out.id);
+        out.origin = str(out.origin || 'builtin_runtime');
+        out.enabled = true;
+        return out;
+      }
+      return {
+        id: id,
+        key: id,
+        title: str(s.title || id),
+        origin: 'builtin_unresolved',
+        kind: 'balancer',
+        enabled: true
+      };
+    });
+  }
+
   function Component(object) {
     var self = this;
     var scroll = new Lampa.Scroll({ mask: true, over: true });
@@ -252,6 +254,7 @@
     var sources = [];
     var currentSource = null;
     var stack = [];
+    var viewMode = 'idle';
 
     head.append(title).append(sub);
     scroll.body().addClass('blmod-online-body');
@@ -279,14 +282,21 @@
     }
 
     function showLoading(text) {
+      viewMode = 'loading';
       clearList();
       list.append(listRow(text || 'Loading...', '', null));
       focusFirst();
     }
 
     function showError(text) {
+      viewMode = 'error';
       clearList();
       list.append(listRow('Ошибка', text || 'unknown', null));
+      if (sources.length) {
+        list.append(listRow('Сменить источник', 'Открыть список источников', function () {
+          renderSourcesScreen();
+        }));
+      }
       focusFirst();
     }
 
@@ -300,23 +310,6 @@
       });
     }
 
-    function renderSourcesScreen() {
-      clearList();
-      setHead('Источники');
-      list.append(listRow('Источники (' + sources.length + ')', 'Выберите источник для загрузки результатов', null));
-      sources.forEach(function (s) {
-        list.append(listRow(s.title || s.id, 'id=' + str(s.id) + ' • ' + str(s.origin || 'online_mod'), function () {
-          currentSource = s;
-          try { sSet(LS.preferredSource, str(s.id || '')); } catch (_) { }
-          loadCatalogRoot();
-        }));
-      });
-      if (!sources.length) {
-        list.append(listRow('sources_empty', 'Не удалось извлечь источники online_mod', null));
-      }
-      focusFirst();
-    }
-
     function catalogInfo(cat) {
       var line = [];
       try {
@@ -327,8 +320,33 @@
       return line.join(' ');
     }
 
+    function renderSourcesScreen() {
+      viewMode = 'sources';
+      clearList();
+      setHead('Источники');
+
+      if (stack.length) {
+        list.append(listRow('Назад к результатам', 'Вернуться к текущему каталогу', function () {
+          var cat = stack[stack.length - 1];
+          renderCatalog(cat, stack.length === 1);
+        }));
+      }
+
+      list.append(listRow('Источники (' + sources.length + ')', 'Выберите источник для загрузки результатов', null));
+      sources.forEach(function (s) {
+        list.append(listRow(s.title || s.id, 'id=' + str(s.id) + ' • ' + str(s.origin || 'builtin'), function () {
+          currentSource = s;
+          API.setPreferredSource(str(s.id || ''));
+          loadCatalogForSource(s, false);
+        }));
+      });
+      if (!sources.length) list.append(listRow('sources_empty', 'Встроенный список источников пуст', null));
+      focusFirst();
+    }
+
     function renderCatalog(cat, isRoot) {
       cat = cat || null;
+      viewMode = 'catalog';
       clearList();
       setHead((currentSource && currentSource.title) || 'Catalog');
 
@@ -345,12 +363,27 @@
           else renderCatalog(prev, stack.length === 1);
         }));
       } else {
-        list.append(listRow('Сменить источник', 'Вернуться к выбору источника', function () {
+        list.append(listRow('Сменить источник', 'Открыть список источников', function () {
           renderSourcesScreen();
         }));
       }
 
       list.append(listRow('Текущий источник: ' + str(currentSource && currentSource.id || ''), catalogInfo(cat), null));
+
+      (cat.buttons || []).forEach(function (b) {
+        var t = 'Озвучка: ' + str(b.text || b.title || 'Voice');
+        var subline = b.active ? 'active' : 'Открыть';
+        list.append(listRow(t, subline, function () {
+          if (!b.url) return;
+          showLoading('Загрузка озвучки...');
+          MP.SourceKit.resolveCatalogByUrl(ctx, currentSource.id, b.url).then(function (nextCat) {
+            stack.push(nextCat);
+            renderCatalog(nextCat, false);
+          })['catch'](function (e) {
+            showError('Не удалось открыть озвучку: ' + str(e && (e.message || e)));
+          });
+        }));
+      });
 
       (cat.videos || []).forEach(function (v) {
         var t = str(v.title || v.text || 'Файл');
@@ -375,22 +408,49 @@
         }));
       });
 
-      if (!(cat.videos && cat.videos.length) && !(cat.links && cat.links.length)) {
-        list.append(listRow('Нет элементов', 'Попробуйте другой источник', null));
-      }
-
+      if (!catalogHasRows(cat)) list.append(listRow('Нет элементов', 'Попробуйте другой источник', null));
       focusFirst();
     }
 
-    function loadCatalogRoot() {
-      if (!currentSource || !ctx || !MP.SourceKit) return;
-      showLoading('Поиск видео в источнике...');
+    function buildFallbackOrder(startSource) {
+      var order = [];
+      var startId = str(startSource && startSource.id || '');
+      var i;
+      if (startId) {
+        for (i = 0; i < sources.length; i++) if (str(sources[i].id) === startId) order.push(sources[i]);
+      }
+      for (i = 0; i < sources.length; i++) {
+        if (startId && str(sources[i].id) === startId) continue;
+        order.push(sources[i]);
+      }
+      return uniqSources(order);
+    }
+
+    function runFallback(order, idx, maxAttempts) {
+      if (idx >= order.length || idx >= maxAttempts) {
+        showError('Не найдены результаты ни в одном источнике');
+        return;
+      }
+      currentSource = order[idx];
+      showLoading('Поиск видео в источнике: ' + str(currentSource.title || currentSource.id));
       MP.SourceKit.resolveCatalog(ctx, currentSource.id).then(function (cat) {
-        stack = [cat];
-        renderCatalog(cat, true);
+        if (catalogHasRows(cat)) {
+          stack = [cat];
+          renderCatalog(cat, true);
+          return;
+        }
+        log('WRN', 'source_empty_fallback', { source: currentSource.id, index: idx + 1 });
+        runFallback(order, idx + 1, maxAttempts);
       })['catch'](function (e) {
-        showError('Ошибка загрузки источника: ' + str(e && (e.message || e)));
+        log('WRN', 'source_error_fallback', { source: currentSource.id, err: str(e && (e.message || e)) });
+        runFallback(order, idx + 1, maxAttempts);
       });
+    }
+
+    function loadCatalogForSource(source, allowFallback) {
+      if (!source || !ctx || !MP.SourceKit) return;
+      var order = allowFallback ? buildFallbackOrder(source) : [source];
+      runFallback(order, 0, allowFallback ? 5 : 1);
     }
 
     function initialize() {
@@ -400,34 +460,29 @@
         showError('Не удалось получить контекст карточки');
         return;
       }
-      API.getSources().then(function (srcList) {
-        if (!srcList || !srcList.length) {
-          showError('sources_empty (online_mod all_sources)');
+
+      API.getSources().then(function (builtin) {
+        if (!builtin || !builtin.length) {
+          showError('Все источники отключены (BL-Mod -> Sources)');
           return;
         }
         MP.SourceKit.listSources(ctx).then(function (runtimeSources) {
-          runtimeSources = Array.isArray(runtimeSources) ? runtimeSources : [];
-          var byId = {};
-          runtimeSources.forEach(function (s) { byId[str(s.id || '').toLowerCase()] = s; });
-
-          sources = srcList.map(function (s) {
-            var id = str(s.id || '').toLowerCase();
-            var rt = byId[id];
-            if (rt) return rt;
-            return { id: id, key: id, title: s.title || id, kind: 'balancer', origin: 'online_mod.all_sources' };
-          });
-          sources = uniqSources(sources);
+          sources = mergeWithRuntimeSources(builtin, runtimeSources);
           if (!sources.length) {
-            showError('sources_empty (runtime map)');
+            showError('sources_empty');
             return;
           }
-          currentSource = choosePreferredSource(sources);
-          renderSourcesScreen();
+          var preferred = choosePreferredSource(sources);
+          if (!preferred) {
+            showError('Нет доступного preferred source');
+            return;
+          }
+          loadCatalogForSource(preferred, true);
         })['catch'](function (e) {
-          showError('Ошибка runtime источников: ' + str(e && (e.message || e)));
+          showError('Ошибка загрузки runtime источников: ' + str(e && (e.message || e)));
         });
       })['catch'](function (e2) {
-        showError('Ошибка извлечения all_sources: ' + str(e2 && (e2.message || e2)));
+        showError('Ошибка списка источников: ' + str(e2 && (e2.message || e2)));
       });
     }
 
@@ -450,14 +505,14 @@
     };
 
     this.back = function () {
-      if (stack.length > 1) {
-        stack.pop();
-        var prev = stack[stack.length - 1];
-        renderCatalog(prev, stack.length === 1);
+      if (viewMode === 'sources' && stack.length) {
+        var cat = stack[stack.length - 1];
+        renderCatalog(cat, stack.length === 1);
         return;
       }
-      if (stack.length === 1 && list.find('.selector').length && !list.find('.selector').first().text().match(/Сменить источник/i)) {
-        renderSourcesScreen();
+      if (stack.length > 1) {
+        stack.pop();
+        renderCatalog(stack[stack.length - 1], stack.length === 1);
         return;
       }
       Lampa.Activity.backward();
@@ -481,25 +536,37 @@
     }
   }
 
+  API.sourceEnabledKey = function (id) {
+    return sourceEnabledKey(id);
+  };
+
+  API.setSourceEnabled = function (id, enabled) {
+    setSourceEnabled(id, !!enabled);
+    return true;
+  };
+
+  API.builtinSources = function () {
+    return allSources();
+  };
+
+  API.getPreferredSource = function () {
+    var preferred = str(sGet(LS.preferredSource, '') || '');
+    if (!preferred) {
+      var enabled = enabledSources();
+      return enabled.length ? str(enabled[0].id) : '';
+    }
+    return preferred;
+  };
+
+  API.setPreferredSource = function (id) {
+    sSet(LS.preferredSource, str(id || ''));
+    return true;
+  };
+
   API.getSources = function (opts) {
     opts = opts || {};
-    var force = !!opts.force;
-    if (!force && cachedSourcesValid()) return Promise.resolve(CACHE.sources.slice());
-
-    return fetchOnlineModSources().then(function (sources) {
-      CACHE.sources = sources.slice();
-      CACHE.ts = nowMs();
-      CACHE.err = '';
-      log('INF', 'online_sources_loaded', { count: sources.length, rawLen: CACHE.rawLen, path: CACHE.lastPath });
-      return sources.slice();
-    })['catch'](function (e) {
-      CACHE.err = str(e && (e.message || e));
-      CACHE.ts = nowMs();
-      CACHE.sources = [];
-      CACHE.lastPath = '';
-      log('WRN', 'online_sources_failed', { err: CACHE.err });
-      return [];
-    });
+    if (opts.includeDisabled) return Promise.resolve(allSources());
+    return Promise.resolve(enabledSources());
   };
 
   API.search = function (movieCtx, opts) {
@@ -517,8 +584,7 @@
     });
   };
 
-  API.openResultsScreen = function (movieCtx, opts) {
-    opts = opts || {};
+  API.openResultsScreen = function (movieCtx) {
     if (!ensureComponent()) return Promise.resolve(false);
 
     var movie = movieCtx || null;
@@ -548,19 +614,19 @@
   };
 
   API.diagnose = function () {
-    return API.getSources({ force: false }).then(function (sources) {
+    return API.getSources({ includeDisabled: true }).then(function (all) {
+      var enabled = (all || []).filter(function (s) { return !!s.enabled; });
       var hasComponent = false;
       try { hasComponent = !!(window.Lampa && Lampa.Component && Lampa.Component.get && Lampa.Component.get(componentId())); } catch (_) { }
       return {
         ts: nowMs(),
         enabled: toBool(sGet(LS.enabled, '1'), true),
         debug: toBool(sGet(LS.debug, '0'), false),
-        sourceCount: sources.length,
-        sourceIds: sources.map(function (s) { return s.id; }).slice(0, 200),
-        cacheTs: CACHE.ts,
-        cacheRawLen: CACHE.rawLen,
-        cacheErr: CACHE.err,
-        cachePath: CACHE.lastPath,
+        sourceCount: enabled.length,
+        sourceTotal: all.length,
+        sourceEnabled: enabled.length,
+        preferred: API.getPreferredSource(),
+        sourceIds: enabled.map(function (s) { return s.id; }).slice(0, 200),
         hasSourceKit: !!(MP.SourceKit && MP.SourceKit.listSources && MP.SourceKit.resolveCatalog),
         componentRegistered: hasComponent
       };
@@ -568,28 +634,32 @@
   };
 
   API.showSources = function () {
-    return API.getSources({ force: false }).then(function (sources) {
-      var text = 'BL-Mod Online sources: ' + sources.length + '\n\n' + JSON.stringify(sources, null, 2);
-      showModal('BL-Mod Sources', text);
+    return API.getSources({ includeDisabled: true }).then(function (sources) {
+      var text = 'BL-Mod built-in sources: ' + sources.length + '\n\n' + JSON.stringify(sources, null, 2);
+      showModal('BL-Mod Builtin Sources', text);
       return sources;
     });
   };
 
   API.state = function () {
+    var all = allSources();
+    var enabled = all.filter(function (s) { return !!s.enabled; });
     return {
       ts: nowMs(),
-      cacheTs: CACHE.ts,
-      cacheErr: CACHE.err,
-      cacheCount: CACHE.sources.length,
-      cachePath: CACHE.lastPath
+      sourceTotal: all.length,
+      sourceEnabled: enabled.length,
+      preferred: API.getPreferredSource()
     };
   };
 
   API.resetDefaults = function () {
     sSet(LS.enabled, 'true');
     sSet(LS.debug, '0');
-    sSet('blmod.log_level', 'normal');
+    sSet(LS.logLevel, 'normal');
     sSet(LS.preferredSource, '');
+    BUILTIN_SOURCES.forEach(function (s) {
+      try { sSet(sourceEnabledKey(s.id), '1'); } catch (_) { }
+    });
     return true;
   };
 })();

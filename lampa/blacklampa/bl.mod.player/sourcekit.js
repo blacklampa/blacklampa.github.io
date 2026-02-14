@@ -312,6 +312,48 @@
     return out;
   }
 
+  function builtinSources() {
+    try {
+      if (MP && MP.OnlineCore && typeof MP.OnlineCore.builtinSources === 'function') {
+        var rows = MP.OnlineCore.builtinSources();
+        return Array.isArray(rows) ? rows : [];
+      }
+    } catch (_) { }
+    return [];
+  }
+
+  function mergeWithBuiltin(runtime) {
+    runtime = Array.isArray(runtime) ? runtime : [];
+    var defs = builtinSources();
+    if (!defs.length) return runtime;
+
+    var byId = {};
+    runtime.forEach(function (s) { byId[str(s && s.id || '').toLowerCase()] = s; });
+
+    var out = defs.map(function (d) {
+      var id = str(d && d.id || '').toLowerCase();
+      var rt = byId[id];
+      if (rt) {
+        var m = $.extend(true, {}, rt);
+        m.id = str(m.id || id);
+        m.title = str(d.title || m.title || id);
+        m.kind = str(m.kind || d.kind || 'balancer');
+        m.origin = str(m.origin || 'runtime_builtin');
+        return m;
+      }
+      return {
+        id: id,
+        title: str(d && d.title || id),
+        url: '',
+        show: true,
+        kind: str(d && d.kind || 'balancer'),
+        raw: null
+      };
+    });
+
+    return out;
+  }
+
   function getLifeOnline(ctx, memkey) {
     var host = baseHost();
     var attempts = 0;
@@ -415,7 +457,8 @@
     return ensureExternalIds(ctx).then(function () {
       return fetchSources(ctx);
     }).then(function (rows) {
-      var sources = mapSources(rows).filter(function (s) { return s.show; });
+      var runtimeSources = mapSources(rows).filter(function (s) { return s.show; });
+      var sources = mergeWithBuiltin(runtimeSources);
       CACHE.sourcesByCtx[key] = { ts: nowMs(), sources: sources };
       log('INF', 'sources_loaded', { count: sources.length, ctx: ctx.ctxSig });
       return sources.slice();

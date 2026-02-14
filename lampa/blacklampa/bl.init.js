@@ -849,7 +849,6 @@
 	        'bl.mod.player/resolver.js',
 	        'bl.mod.player/player.js',
 	        'bl.mod.player/online_core.js',
-	        'bl.mod.player/ui/picker.js',
 	        'bl.mod.player/ui/button.js',
 	        'bl.mod.player/index.js',
 	        'bl.i18n.ru.js',

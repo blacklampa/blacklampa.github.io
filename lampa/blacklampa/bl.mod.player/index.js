@@ -193,16 +193,16 @@
     lines.push('BL-Mod: sources_empty');
     lines.push('hasSourceKit=' + (diag && diag.hasSourceKit ? 1 : 0));
     lines.push('componentRegistered=' + (diag && diag.componentRegistered ? 1 : 0));
-    lines.push('sourceCount=' + toInt(diag && diag.sourceCount, 0));
-    lines.push('cacheRawLen=' + toInt(diag && diag.cacheRawLen, 0));
-    lines.push('cacheErr=' + str(diag && diag.cacheErr || ''));
+    lines.push('builtin total=' + toInt(diag && diag.sourceTotal, 0));
+    lines.push('builtin enabled=' + toInt(diag && diag.sourceEnabled, 0));
+    lines.push('preferred=' + str(diag && diag.preferred || ''));
 
     try {
       var ids = (diag && diag.sourceIds && diag.sourceIds.length) ? diag.sourceIds.join(', ') : '';
       if (ids) lines.push('sourceIds=' + ids);
     } catch (_) { }
 
-    lines.push('hint: проверь извлечение all_sources из /lampa/scripts/online_mod.js');
+    lines.push('hint: включи хотя бы один builtin source в BL -> BL-Mod');
     showNoty('BL-Mod: sources_empty');
 
     try {
@@ -666,7 +666,6 @@
   MP.sourcesDiag = function (ctx, force) {
     if (!MP.OnlineCore || !MP.OnlineCore.diagnose) return Promise.resolve(null);
     return MP.OnlineCore.diagnose();
-    return Promise.resolve(null);
   };
 
   MP.install = function () {
