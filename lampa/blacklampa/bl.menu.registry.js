@@ -248,7 +248,7 @@
   }
 
   var TOP = BL.MenuTopology = {
-    root: { id: 'root', children: ['plugins', 'network', 'logs', 'utils', 'danger', 'ui', 'status'] },
+    root: { id: 'root', children: ['plugins', 'network', 'logs', 'utils', 'danger', 'ui', 'blmod', 'status'] },
 
     plugins: { id: 'plugins', parent: 'root', titleKey: 'menu.root.plugins.title', descKey: 'menu.root.plugins.desc', children: ['managed', 'extras'] },
     managed: { id: 'managed', parent: 'plugins', title: 'Managed', desc: 'Плагины из bl.autoplugin.json → plugins[].', screen: 'managed' },
@@ -281,6 +281,11 @@
     ui_pg_legacy: { id: 'ui_pg_legacy', parent: 'ui', title: 'PG (legacy)', desc: 'Старые настройки PlayerGuard (не Overlay).', screen: 'ui_pg_legacy' },
     ui_pg_overlay: { id: 'ui_pg_overlay', parent: 'ui', title: 'PG Overlay', desc: 'Новый Overlay-плеер (идеальный защитник).', screen: 'ui_pg_overlay' },
     ui_playerguard: { id: 'ui_playerguard', parent: 'ui', menu: false, title: 'PlayerGuard', desc: 'PlayerGuard settings', screen: 'ui_pg_legacy' },
+    blmod: { id: 'blmod', parent: 'root', title: 'BL-Mod', desc: 'BL-Mod: источники, доноры и диагностика.', screen: 'blmod', children: ['blmod_main', 'blmod_donors', 'blmod_sources', 'blmod_diag'] },
+    blmod_main: { id: 'blmod_main', parent: 'blmod', title: 'Main', desc: 'Основные настройки BL-Mod.', screen: 'blmod_main' },
+    blmod_donors: { id: 'blmod_donors', parent: 'blmod', title: 'Donors', desc: 'Загрузка donor-скриптов из /lampa/scripts.', screen: 'blmod_donors' },
+    blmod_sources: { id: 'blmod_sources', parent: 'blmod', title: 'Sources', desc: 'Управление источниками и приоритетом.', screen: 'blmod_sources' },
+    blmod_diag: { id: 'blmod_diag', parent: 'blmod', title: 'Diagnostics', desc: 'Диагностика sources_empty + dump.', screen: 'blmod_diag' },
     status: { id: 'status', parent: 'root', titleKey: 'menu.root.status.title', param: { name: 'bl_pi_root_status', type: 'static', values: '', default: '' }, screen: 'status', rootRender: rootStatusRender }
   };
 
@@ -411,6 +416,11 @@
     ui_pg_legacy: buildUiPlayerGuardLegacyScreen,
     ui_pg_overlay: buildUiPlayerGuardOverlayScreen,
     ui_playerguard: buildUiPlayerGuardLegacyScreen,
+    blmod: buildBlModScreen,
+    blmod_main: buildBlModMainScreen,
+    blmod_donors: buildBlModDonorsScreen,
+    blmod_sources: buildBlModSourcesScreen,
+    blmod_diag: buildBlModDiagScreen,
     logging: buildLoggingScreen,
     ua_presets: buildUaPresetsScreen,
     ua_effective: buildUaEffectiveScreen,
@@ -439,8 +449,8 @@
     if (!n) return;
     try { if (n.guard && typeof n.guard === 'function' && !n.guard(ctx || null)) { route = 'root'; n = node('root'); } } catch (_) { route = 'root'; n = node('root'); }
     if (!n) return;
-    // UI route renders both submenu items and legacy UI settings in one screen.
-    if (route === 'ui' && n.screen && Screens[n.screen]) return Screens[n.screen](ctx || null);
+    // UI and BL-Mod routes render submenu and extra summary in one screen.
+    if ((route === 'ui' || route === 'blmod') && n.screen && Screens[n.screen]) return Screens[n.screen](ctx || null);
     if (n.children && n.children.length) return buildMenu(ctx, route);
     if (n.screen && Screens[n.screen]) return Screens[n.screen](ctx || null);
     buildMenu(ctx, 'root');
@@ -1075,6 +1085,350 @@
 
   function refreshPlayerGuardSettings() {
     refreshPlayerGuardLegacySettings();
+  }
+
+  function blmodHub() {
+    try {
+      if (window.BL && BL.ModPlayer && BL.ModPlayer.SourcesHub) return BL.ModPlayer.SourcesHub;
+    } catch (_) { }
+    return null;
+  }
+
+  function blmodNotify(ctx, text) {
+    try {
+      if (ctx && typeof ctx.notify === 'function') return ctx.notify(String(text || 'BL-Mod'));
+    } catch (_) { }
+    try { if (window.Lampa && Lampa.Noty && Lampa.Noty.show) Lampa.Noty.show(String(text || 'BL-Mod')); } catch (_) { }
+  }
+
+  function blmodOpenText(title, lines) {
+    var html = '';
+    try {
+      var body = Array.isArray(lines) ? lines.join('\n') : String(lines || '');
+      html = '<div class="about"><pre style="white-space:pre-wrap;word-break:break-word;max-height:70vh;overflow:auto">' +
+        String(body)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/\"/g, '&quot;')
+          .replace(/'/g, '&#39;') +
+        '</pre></div>';
+    } catch (_) { html = '<div class="about"><pre>BL-Mod: no data</pre></div>'; }
+    try {
+      if (window.Lampa && Lampa.Modal && typeof Lampa.Modal.open === 'function') {
+        Lampa.Modal.open({ title: String(title || 'BL-Mod'), align: 'center', html: html });
+      }
+    } catch (_) { }
+  }
+
+  function blmodDiagLines(diag) {
+    var lines = [];
+    try {
+      lines.push('BL-Mod diagnose');
+      lines.push('hasLampa=' + (diag && diag.hasLampa ? 1 : 0) + ' hasApi=' + (diag && diag.hasApi ? 1 : 0) + ' hasApiSources=' + (diag && diag.hasApiSources ? 1 : 0));
+      lines.push('api: keys=' + toInt(diag && diag.apiKeysCount, 0) + ' playable=' + toInt(diag && diag.apiPlayableCount, 0) + ' excluded=' + toInt(diag && diag.apiExcludedCount, 0));
+      lines.push('autoLoadDonors=' + (diag && diag.autoLoadDonors ? 1 : 0) + ' preferred=' + String(diag && diag.preferredSource || ''));
+      var snap = (diag && diag.snapshot) || {};
+      var c = (snap && snap.counts) || {};
+      lines.push('snapshot: all=' + toInt(c.all, 0) + ' enabled=' + toInt(c.enabled, 0) + ' playable=' + toInt(c.enabledPlayable, 0));
+      var donors = Array.isArray(diag && diag.donors) ? diag.donors : [];
+      if (donors.length) lines.push('donors: ' + donors.map(function (d) { return String(d.id) + ':' + (d.enabled ? 1 : 0) + '/' + (d.loaded ? 1 : 0) + (d.err ? '!' : ''); }).join(', '));
+      var keys = Array.isArray(diag && diag.apiKeys) ? diag.apiKeys.slice(0, 80) : [];
+      if (keys.length) lines.push('apiKeys: ' + keys.join(', '));
+    } catch (_) { }
+    return lines;
+  }
+
+  function blmodRefresh(ctx, forceLoad) {
+    var h = blmodHub();
+    if (!h || typeof h.collect !== 'function') {
+      blmodNotify(ctx, 'BL-Mod SourcesHub missing');
+      return;
+    }
+    try {
+      h.collect(null, { forceDonorLoad: !!forceLoad, includeLegacy: true, includeStatic: true }).then(function (snap) {
+        var c = (snap && snap.counts) || {};
+        blmodNotify(ctx, 'BL-Mod: sources all=' + toInt(c.all, 0) + ', enabled=' + toInt(c.enabled, 0) + ', playable=' + toInt(c.enabledPlayable, 0));
+        try { if (ctx && ctx.refresh) ctx.refresh({ keepFocus: true }); } catch (_) { }
+      })['catch'](function (e) {
+        blmodNotify(ctx, 'BL-Mod refresh error: ' + String(e && e.message || e || 'unknown'));
+      });
+    } catch (e2) {
+      blmodNotify(ctx, 'BL-Mod refresh error: ' + String(e2 && e2.message || e2 || 'unknown'));
+    }
+  }
+
+  function buildBlModScreen(ctx) {
+    try {
+      buildMenu(ctx, 'blmod');
+      var h = blmodHub();
+      if (!h || typeof h.lastSnapshot !== 'function') {
+        P(ctx, { id: 'blmod_missing', type: 'static', values: 'not_ready', name: 'BL-Mod', desc: 'BL.ModPlayer/SourcesHub не инициализирован.' });
+        return;
+      }
+      var snap = h.lastSnapshot() || {};
+      var c = (snap && snap.counts) || {};
+      P(ctx, {
+        id: 'blmod_root_status',
+        type: 'static',
+        values: 'all=' + toInt(c.all, 0) + ' enabled=' + toInt(c.enabled, 0) + ' playable=' + toInt(c.enabledPlayable, 0),
+        name: 'BL-Mod Status',
+        desc: 'Снимок реестра источников.'
+      });
+    } catch (_) { }
+  }
+
+  function buildBlModMainScreen(ctx) {
+    try {
+      var h = blmodHub();
+      P(ctx, {
+        id: 'blmod_enable_toggle',
+        key: 'blmod.enabled',
+        type: 'toggle',
+        values: { 0: 'OFF', 1: 'ON' },
+        default: 1,
+        name: 'BL-Mod: Enable',
+        desc: 'Включает кнопку BL-Mod и поток резолва источников.'
+      });
+
+      P(ctx, {
+        id: 'blmod_log_level',
+        key: 'blmod.log_level',
+        type: 'select',
+        values: { silent: 'silent', normal: 'normal', trace: 'trace' },
+        default: 'normal',
+        name: 'BL-Mod: Log mode',
+        desc: 'Уровень логирования BL-Mod.'
+      });
+
+      P(ctx, {
+        id: 'blmod_autoload_donors',
+        key: 'blmod.autoload_donors',
+        type: 'toggle',
+        values: { 0: 'OFF', 1: 'ON' },
+        default: (h && h.getAutoLoadDonors && h.getAutoLoadDonors()) ? 1 : 0,
+        name: 'BL-Mod: Auto-load donors',
+        desc: 'Перед резолвом автоматически подгружать /lampa/scripts/*.js доноры.',
+        onChange: function (v) {
+          try { if (h && h.setAutoLoadDonors) h.setAutoLoadDonors(parseBool(v, true)); } catch (_) { }
+        }
+      });
+
+      P(ctx, {
+        id: 'blmod_load_now',
+        type: 'button',
+        name: 'BL-Mod: Load donors now',
+        desc: 'Принудительно загрузить включённые donor-скрипты и пересобрать реестр.',
+        onChange: function () {
+          try {
+            if (!h || !h.ensureDonorsLoaded) return blmodNotify(ctx, 'BL-Mod: SourcesHub missing');
+            h.ensureDonorsLoaded({ force: true }).then(function (sum) {
+              blmodNotify(ctx, 'BL-Mod donors loaded=' + toInt(sum && sum.loaded, 0) + '/' + toInt(sum && sum.requested, 0));
+              blmodRefresh(ctx, false);
+            });
+          } catch (_) { }
+        }
+      });
+
+      P(ctx, {
+        id: 'blmod_diagnose_now',
+        type: 'button',
+        name: 'BL-Mod: Diagnose now',
+        desc: 'Показывает причины sources_empty и текущий статус доноров/источников.',
+        onChange: function () {
+          try {
+            if (!h || !h.diagnose) return blmodNotify(ctx, 'BL-Mod: SourcesHub missing');
+            h.diagnose(null, { force: true }).then(function (diag) {
+              blmodOpenText('BL-Mod Diagnose', blmodDiagLines(diag));
+            });
+          } catch (_) { }
+        }
+      });
+
+      P(ctx, {
+        id: 'blmod_sources_dump',
+        type: 'button',
+        name: 'BL-Mod: View sources dump',
+        desc: 'Показывает полный dump реестра источников.',
+        onChange: function () {
+          try {
+            if (!h || !h.dump) return blmodNotify(ctx, 'BL-Mod: SourcesHub missing');
+            var dump = h.dump();
+            blmodOpenText('BL-Mod Sources Dump', JSON.stringify(dump || {}, null, 2));
+          } catch (_) { }
+        }
+      });
+    } catch (_) { }
+  }
+
+  function buildBlModDonorsScreen(ctx) {
+    try {
+      var h = blmodHub();
+      if (!h || !h.getDonors) return P(ctx, { id: 'blmod_donors_missing', type: 'static', values: 'not_ready', name: 'BL-Mod donors', desc: 'SourcesHub missing.' });
+
+      var donors = h.getDonors() || [];
+      P(ctx, {
+        id: 'blmod_donors_refresh',
+        type: 'button',
+        name: 'Refresh donors state',
+        desc: 'Пересобрать реестр и обновить статусы.',
+        onChange: function () { blmodRefresh(ctx, false); }
+      });
+
+      P(ctx, {
+        id: 'blmod_donors_force_load',
+        type: 'button',
+        name: 'Force load enabled donors',
+        desc: 'Принудительно загрузить только включённые доноры.',
+        onChange: function () { blmodRefresh(ctx, true); }
+      });
+
+      donors.forEach(function (d, i) {
+        var title = (d.loaded ? '✓ ' : '') + String(d.title || d.id || ('donor_' + i));
+        var desc = String(d.path || '') + ' | loaded=' + (d.loaded ? '1' : '0') + ' attempts=' + toInt(d.attempts, 0) + (d.err ? (' | err=' + d.err) : '');
+        P(ctx, {
+          id: 'blmod_donor_' + i,
+          key: (h.donorStorageKey ? h.donorStorageKey(d.id) : ('blmod.donor_enabled.' + String(d.id || i))),
+          type: 'toggle',
+          values: { 0: 'OFF', 1: 'ON' },
+          default: d.enabled ? 1 : 0,
+          name: title,
+          desc: desc,
+          onChange: function (v) {
+            try { if (h.setDonorEnabled) h.setDonorEnabled(d.id, parseBool(v, false)); } catch (_) { }
+          }
+        });
+      });
+    } catch (_) { }
+  }
+
+  function buildBlModSourcesScreen(ctx) {
+    try {
+      var h = blmodHub();
+      if (!h || !h.lastSnapshot) {
+        P(ctx, { id: 'blmod_sources_missing', type: 'static', values: 'not_ready', name: 'BL-Mod sources', desc: 'SourcesHub missing.' });
+        return;
+      }
+
+      var snap = h.lastSnapshot() || {};
+      var c = (snap && snap.counts) || {};
+      var all = Array.isArray(snap && snap.all) ? snap.all : [];
+
+      P(ctx, {
+        id: 'blmod_sources_info',
+        type: 'static',
+        values: 'all=' + toInt(c.all, 0) + ' enabled=' + toInt(c.enabled, 0) + ' playable=' + toInt(c.enabledPlayable, 0),
+        name: 'Sources total / enabled / valid',
+        desc: 'Состояние единого реестра BL-Mod.'
+      });
+
+      P(ctx, {
+        id: 'blmod_sources_collect',
+        type: 'button',
+        name: 'Rebuild sources registry',
+        desc: 'Пересобирает реестр (collect) и обновляет экран.',
+        onChange: function () { blmodRefresh(ctx, false); }
+      });
+
+      var values = {};
+      all.forEach(function (s) {
+        var id = String(s && (s.id || s.key) || '');
+        if (!id) return;
+        values[id] = String(s.title || id) + ' [' + String(s.origin || '') + ']';
+      });
+      if (!Object.keys(values).length) values[''] = '—';
+
+      P(ctx, {
+        id: 'blmod_preferred_source',
+        key: 'blmod.preferred_source',
+        type: 'select',
+        values: values,
+        default: (h.getPreferredSource ? String(h.getPreferredSource() || '') : ''),
+        name: 'Preferred source',
+        desc: 'Источник по умолчанию (при равном приоритете).',
+        onChange: function (v) {
+          try { if (h.setPreferredSource) h.setPreferredSource(String(v || '')); } catch (_) { }
+        }
+      });
+
+      P(ctx, {
+        id: 'blmod_priority_promote',
+        type: 'button',
+        name: 'Promote preferred source',
+        desc: 'Поднимает preferred source на верх приоритета.',
+        onChange: function () {
+          try {
+            var id = String(sGet('blmod.preferred_source', '') || '');
+            if (!id) return blmodNotify(ctx, 'BL-Mod: preferred source is empty');
+            if (h.bumpSourcePriority) h.bumpSourcePriority(id);
+            blmodNotify(ctx, 'BL-Mod: priority updated for ' + id);
+          } catch (_) { }
+        }
+      });
+
+      all.forEach(function (s, i) {
+        var id = String(s && (s.id || s.key) || '');
+        if (!id) return;
+        var desc = id + ' | ' + String(s.origin || '') + ' | playable=' + (s.playable ? '1' : '0');
+        P(ctx, {
+          id: 'blmod_source_' + i,
+          key: (h.sourceStorageKey ? h.sourceStorageKey(id) : ('blmod.source_enabled.' + id)),
+          type: 'toggle',
+          values: { 0: 'OFF', 1: 'ON' },
+          default: s.enabled ? 1 : 0,
+          name: String(s.title || id),
+          desc: desc,
+          onChange: function (v) {
+            try { if (h.setSourceEnabled) h.setSourceEnabled(id, parseBool(v, false)); } catch (_) { }
+          }
+        });
+      });
+    } catch (_) { }
+  }
+
+  function buildBlModDiagScreen(ctx) {
+    try {
+      var h = blmodHub();
+      P(ctx, {
+        id: 'blmod_diag_run',
+        type: 'button',
+        name: 'Run diagnostics',
+        desc: 'Force load donors + collect + full diagnose.',
+        onChange: function () {
+          try {
+            if (!h || !h.diagnose) return blmodNotify(ctx, 'BL-Mod: SourcesHub missing');
+            h.diagnose(null, { force: true }).then(function (diag) {
+              blmodOpenText('BL-Mod Diagnostics', blmodDiagLines(diag));
+            });
+          } catch (_) { }
+        }
+      });
+
+      P(ctx, {
+        id: 'blmod_diag_dump',
+        type: 'button',
+        name: 'Open sources dump',
+        desc: 'Показывает dump текущего source registry.',
+        onChange: function () {
+          try {
+            if (!h || !h.dump) return blmodNotify(ctx, 'BL-Mod: SourcesHub missing');
+            blmodOpenText('BL-Mod Dump', JSON.stringify(h.dump() || {}, null, 2));
+          } catch (_) { }
+        }
+      });
+
+      try {
+        var d = h && h.diag ? h.diag(null) : null;
+        var lines = blmodDiagLines(d);
+        P(ctx, {
+          id: 'blmod_diag_last',
+          type: 'static',
+          values: 'ready',
+          name: 'Last diagnostics snapshot',
+          desc: lines.join('\n')
+        });
+      } catch (_) { }
+    } catch (_) { }
   }
 
   function buildUiPlayerGuardLegacyScreen(ctx) {

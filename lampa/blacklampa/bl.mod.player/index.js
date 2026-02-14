@@ -197,6 +197,12 @@
     lines.push('apiKeysCount=' + toInt(diag && diag.apiKeysCount, 0));
     lines.push('apiPlayableCount=' + toInt(diag && diag.apiPlayableCount, 0));
     lines.push('apiExcludedCount=' + toInt(diag && diag.apiExcludedCount, 0));
+    lines.push('autoLoadDonors=' + (diag && diag.autoLoadDonors ? 1 : 0));
+
+    try {
+      var counts = obj(diag && diag.snapshot && diag.snapshot.counts);
+      lines.push('snapshot: all=' + toInt(counts.all, 0) + ', enabled=' + toInt(counts.enabled, 0) + ', playable=' + toInt(counts.enabledPlayable, 0));
+    } catch (_) { }
 
     try {
       var flags = obj(diag && diag.scripts && diag.scripts.flags);
@@ -205,6 +211,11 @@
       lines.push('smotrolet_plugin=' + (flags.smotrolet_plugin ? 1 : 0));
       lines.push('onlyskaz_plugin=' + (flags.onlyskaz_plugin ? 1 : 0));
       lines.push('components=' + Object.keys(comp).map(function (k) { return k + ':' + (comp[k] ? 1 : 0); }).join(', '));
+    } catch (_) { }
+
+    try {
+      var donors = Array.isArray(diag && diag.donors) ? diag.donors : [];
+      if (donors.length) lines.push('donors=' + donors.map(function (d) { return str(d.id) + ':' + (d.enabled ? 1 : 0) + '/' + (d.loaded ? 1 : 0); }).join(', '));
     } catch (_) { }
 
     try {
@@ -591,12 +602,17 @@
     STATE.busy = true;
     log('INF', 'flow_start', { ctx: ctx.ctxSig, title: ctx.movie.title || ctx.movie.name || '' });
 
-    return MP.SourcesHub.list(ctx).then(function (sources) {
-      if (!sources || !sources.length) {
-        var diag = MP.SourcesHub && MP.SourcesHub.diag ? MP.SourcesHub.diag(ctx) : null;
-        log('ERR', 'sources_empty', diag || {});
-        showSourcesDiag(diag);
-        throw new Error('sources_empty');
+    return MP.SourcesHub.resolveForMovie(ctx, {}).then(function (resolved) {
+      var sources = resolved && resolved.sources ? resolved.sources : [];
+      if (!resolved || !resolved.ok || !sources.length) {
+        var diagP = (MP.SourcesHub && typeof MP.SourcesHub.diagnose === 'function')
+          ? MP.SourcesHub.diagnose(ctx, { force: false })
+          : Promise.resolve(MP.SourcesHub && MP.SourcesHub.diag ? MP.SourcesHub.diag(ctx) : null);
+        return diagP.then(function (diag) {
+          log('ERR', 'sources_empty', diag || {});
+          showSourcesDiag(diag);
+          throw new Error('sources_empty');
+        });
       }
       log('INF', 'sources_ready', {
         count: sources.length,
@@ -618,6 +634,10 @@
           return true;
         }
 
+        if (source && source.delegateOnly) {
+          throw new Error('delegate_only_unavailable');
+        }
+
         return playViaLegacySourceKit(ctx, source).then(function (ok) {
           if (ok) return true;
           throw new Error('delegate_unavailable');
@@ -635,7 +655,10 @@
       STATE.busy = false;
       var err = str(e && (e.message || e.msg || e.c || 'unknown'));
       log('ERR', 'flow_failed', { err: err });
-      if (err !== 'sources_empty') showNoty('BL-Mod: ' + err);
+      if (err !== 'sources_empty') {
+        if (err === 'delegate_only_unavailable') showNoty('BL-Mod: источник доступен только через online-компонент, но он недоступен');
+        else showNoty('BL-Mod: ' + err);
+      }
       return false;
     });
   }
@@ -675,6 +698,23 @@
   };
 
   MP.open = MP.openFromCard;
+
+  MP.ensureDonorsLoaded = function (force) {
+    if (!MP.SourcesHub || typeof MP.SourcesHub.ensureDonorsLoaded !== 'function') return Promise.resolve(null);
+    return MP.SourcesHub.ensureDonorsLoaded({ force: !!force });
+  };
+
+  MP.sourcesDump = function () {
+    if (!MP.SourcesHub || typeof MP.SourcesHub.dump !== 'function') return {};
+    return MP.SourcesHub.dump();
+  };
+
+  MP.sourcesDiag = function (ctx, force) {
+    if (!MP.SourcesHub) return Promise.resolve(null);
+    if (typeof MP.SourcesHub.diagnose === 'function') return MP.SourcesHub.diagnose(ctx || null, { force: !!force });
+    if (typeof MP.SourcesHub.diag === 'function') return Promise.resolve(MP.SourcesHub.diag(ctx || null));
+    return Promise.resolve(null);
+  };
 
   MP.install = function () {
     if (STATE.installed) return true;

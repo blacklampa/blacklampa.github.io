@@ -46,7 +46,10 @@
       modsxfull_js: hasScriptTagContains('/scripts/modsxfull.js') || hasScriptTagContains('modsxfull.js'),
       online_js: hasScriptTagContains('/scripts/online.js') || hasScriptTagContains('online.js'),
       onlines_js: hasScriptTagContains('/scripts/onlines.js') || hasScriptTagContains('onlines.js'),
-      online_mod_js: hasScriptTagContains('/scripts/online_mod.js') || hasScriptTagContains('online_mod.js')
+      online_mod_js: hasScriptTagContains('/scripts/online_mod.js') || hasScriptTagContains('online_mod.js'),
+      free_onl_js: hasScriptTagContains('/scripts/free_onl.js') || hasScriptTagContains('free_onl.js'),
+      fx_js: hasScriptTagContains('/scripts/fx.js') || hasScriptTagContains('fx.js'),
+      play_js: hasScriptTagContains('/scripts/play.js') || hasScriptTagContains('play.js')
     };
 
     var components = {
