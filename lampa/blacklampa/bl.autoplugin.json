@@ -23,6 +23,7 @@
     { "url": "https://aviamovie.github.io/surs.js", "title": "surs.js", "desc": "", "tags": ["sources"] }
   ],
   "disabled": [
+     { "url": "scripts/modsxfull.js", "title": "modsXfull", "desc": "", "tags": ["stats", "ui"] },
      { "url": "scripts/modsx.js", "title": "modsXXX", "desc": "", "tags": ["stats", "ui"] },
    { "url": "https://lampa.stream/modss?logged=false&reset=0.7357320031649602&origin=bGFtcGEuc3RyZWFt", "title": "modsx+url", "desc": "", "tags": ["stats", "ui"] },
     { "url": "scripts/club/club.js", "title": "clubN4K", "desc": "", "tags": ["stats", "ui"] },
