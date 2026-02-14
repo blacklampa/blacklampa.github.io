@@ -263,7 +263,7 @@ if (!window.loaded_modss) {
                     eval(json + '//# sourceURL=' + 'lampa.stream' + '/plugin_modss.js');
                     window.loaded_modss = true;
                 } catch (error) {
-                    Lampa.Noty.show('MODSs ОШИБКА ЗАГРУЗКИ -> ' + error.message);
+                    //Lampa.Noty.show('MODSs ОШИБКА ЗАГРУЗКИ -> ' + error.message);
                     console.log('Modss', 'init', 'ERROR - ' + currentUrl, error.message);
                     console.error('Ошибка выполнения кода:', error);
                     currentUrlIndex++;
