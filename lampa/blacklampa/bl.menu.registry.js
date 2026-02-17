@@ -1024,7 +1024,12 @@
       inplayer_attempts: 2,
       inplayer_rebuild_mode: 'refresh_src',
       escalate_to_reopen: 1,
-      reopen_cooldown_ms: 8000
+      reopen_cooldown_ms: 8000,
+      resume_backoff_sec: 0.8,
+      resume_min_step_sec: 0.35,
+      seek_verify_delay_ms: 900,
+      seek_delta_sec: 3.0,
+      warmup_ms_after_recover: 12000
     };
   }
 
@@ -1071,7 +1076,12 @@
       { key: p + 'player_overlay_inplayer_attempts', def: String(d.inplayer_attempts || 2) },
       { key: p + 'player_overlay_inplayer_rebuild_mode', def: String(d.inplayer_rebuild_mode || 'refresh_src') },
       { key: p + 'player_overlay_escalate_to_reopen', def: d.escalate_to_reopen ? 1 : 0 },
-      { key: p + 'player_overlay_reopen_cooldown_ms', def: String(d.reopen_cooldown_ms || 8000) }
+      { key: p + 'player_overlay_reopen_cooldown_ms', def: String(d.reopen_cooldown_ms || 8000) },
+      { key: p + 'player_overlay_resume_backoff_sec', def: String(d.resume_backoff_sec || 0.8) },
+      { key: p + 'player_overlay_resume_min_step_sec', def: String(d.resume_min_step_sec || 0.35) },
+      { key: p + 'player_overlay_seek_verify_delay_ms', def: String(d.seek_verify_delay_ms || 900) },
+      { key: p + 'player_overlay_seek_delta_sec', def: String(d.seek_delta_sec || 3.0) },
+      { key: p + 'player_overlay_warmup_ms_after_recover', def: String(d.warmup_ms_after_recover || 12000) }
     ];
   }
 
@@ -1647,6 +1657,56 @@
         default: String(od.reopen_cooldown_ms || 8000),
         name: 'Overlay: Reopen cooldown (ms)',
         desc: 'Кулдаун между reopen-эскалациями.',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
+        id: 'player_overlay_resume_backoff_sec',
+        type: 'select',
+        values: { '0.2': '0.2', '0.35': '0.35', '0.5': '0.5', '0.8': '0.8', '1.0': '1.0', '1.5': '1.5', '2.0': '2.0' },
+        default: String(od.resume_backoff_sec || 0.8),
+        name: 'Overlay: Resume backoff (sec)',
+        desc: 'Сдвиг назад при восстановлении позиции после сбоя.',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
+        id: 'player_overlay_resume_min_step_sec',
+        type: 'select',
+        values: { '0.1': '0.1', '0.2': '0.2', '0.35': '0.35', '0.5': '0.5', '0.8': '0.8', '1.0': '1.0' },
+        default: String(od.resume_min_step_sec || 0.35),
+        name: 'Overlay: Resume min step (sec)',
+        desc: 'Минимальный шаг коррекции при выставлении recovery-позиции.',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
+        id: 'player_overlay_seek_verify_delay_ms',
+        type: 'select',
+        values: { '300': '300', '500': '500', '700': '700', '900': '900', '1200': '1200', '1500': '1500', '2000': '2000' },
+        default: String(od.seek_verify_delay_ms || 900),
+        name: 'Overlay: Seek verify delay (ms)',
+        desc: 'Задержка перед верификацией, что seek реально применился.',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
+        id: 'player_overlay_seek_delta_sec',
+        type: 'select',
+        values: { '1.0': '1.0', '1.5': '1.5', '2.0': '2.0', '2.5': '2.5', '3.0': '3.0', '4.0': '4.0', '5.0': '5.0' },
+        default: String(od.seek_delta_sec || 3.0),
+        name: 'Overlay: Seek delta (sec)',
+        desc: 'Допустимое расхождение между target и currentTime после seek.',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
+        id: 'player_overlay_warmup_ms_after_recover',
+        type: 'select',
+        values: { '4000': '4000', '6000': '6000', '8000': '8000', '10000': '10000', '12000': '12000', '15000': '15000', '20000': '20000' },
+        default: String(od.warmup_ms_after_recover || 12000),
+        name: 'Overlay: Warmup after recover (ms)',
+        desc: 'Пауза детекторов после успешного recovery, чтобы избежать циклов.',
         onChange: refreshPlayerOverlaySettings
       });
     } catch (_) { }

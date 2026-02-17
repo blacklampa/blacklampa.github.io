@@ -35,10 +35,16 @@
     inplayerMode: LS_PREFIX + 'player_overlay_inplayer_rebuild_mode',
     escalateToReopen: LS_PREFIX + 'player_overlay_escalate_to_reopen',
     reopenCooldownMs: LS_PREFIX + 'player_overlay_reopen_cooldown_ms',
+    resumeBackoffSec: LS_PREFIX + 'player_overlay_resume_backoff_sec',
+    resumeMinStepSec: LS_PREFIX + 'player_overlay_resume_min_step_sec',
+    seekVerifyDelayMs: LS_PREFIX + 'player_overlay_seek_verify_delay_ms',
+    seekDeltaSec: LS_PREFIX + 'player_overlay_seek_delta_sec',
+    warmupAfterRecoverMs: LS_PREFIX + 'player_overlay_warmup_ms_after_recover',
 
     truthSec: LS_PREFIX + 'player_overlay_truth_sec',
     truthTs: LS_PREFIX + 'player_overlay_truth_ts',
     truthSrcSig: LS_PREFIX + 'player_overlay_truth_src_sig',
+    truthMap: LS_PREFIX + 'player_overlay_truth_map_v1',
 
     // compatibility with previous experimental keys
     oldEnabled: LS_PREFIX + 'player_guard_overlay_enabled',
@@ -103,7 +109,12 @@
     reopenCooldownMs: 8000,
     frameHangMs: 3200,
     frameCtDeltaSec: 1.0,
-    frameGraceMs: 6000
+    frameGraceMs: 6000,
+    resumeBackoffSec: 0.8,
+    resumeMinStepSec: 0.35,
+    seekVerifyDelayMs: 900,
+    seekDeltaSec: 3.0,
+    warmupAfterRecoverMs: 12000
   };
 
   var OVERLAY_DEFAULTS = {
@@ -137,6 +148,9 @@
 
     seek_verify_delay_ms: 900,
     seek_delta_sec: 3.0,
+    resume_backoff_sec: 0.8,
+    resume_min_step_sec: 0.35,
+    warmup_ms_after_recover: 12000,
 
     user_seek_window_ms: 2500,
     user_nav_window_ms: 2500,
@@ -183,7 +197,12 @@
       { key: K.inplayerAttempts, def: clampInt(toInt(d.inplayer_attempts, 2), 0, 6) },
       { key: K.inplayerMode, def: normalizeInplayerMode(d.inplayer_rebuild_mode || 'refresh_src') },
       { key: K.escalateToReopen, def: toInt(d.escalate_to_reopen, 1) ? 1 : 0 },
-      { key: K.reopenCooldownMs, def: clampInt(toInt(d.reopen_cooldown_ms, 8000), 1000, 60000) }
+      { key: K.reopenCooldownMs, def: clampInt(toInt(d.reopen_cooldown_ms, 8000), 1000, 60000) },
+      { key: K.resumeBackoffSec, def: Math.max(0, Math.min(4, toNum(d.resume_backoff_sec, 0.8))) },
+      { key: K.resumeMinStepSec, def: Math.max(0.1, Math.min(2, toNum(d.resume_min_step_sec, 0.35))) },
+      { key: K.seekVerifyDelayMs, def: clampInt(toInt(d.seek_verify_delay_ms, 900), 250, 5000) },
+      { key: K.seekDeltaSec, def: Math.max(0.5, Math.min(10, toNum(d.seek_delta_sec, 3.0))) },
+      { key: K.warmupAfterRecoverMs, def: clampInt(toInt(d.warmup_ms_after_recover, 12000), 2000, 60000) }
     ];
   }
 
@@ -393,7 +412,8 @@
       lastCommitTs: 0,
       srcSig: '',
       srcRaw: '',
-      frozen: false
+      frozen: false,
+      bySig: {}
     },
 
     pos: {
@@ -866,6 +886,8 @@
     var reason = 'ok';
     if (STATE.tick && STATE.tick.hasVideo && STATE.tick.paused) reason = 'media_paused';
     else if (isUserPauseIntent()) reason = 'paused_by_user';
+    else if (isUserSeekWindowActive()) reason = 'user_seek';
+    else if (isUserNavWindowActive()) reason = 'user_nav';
     else if (toInt(STATE.life.suspendDetectors, 0)) reason = 'suspended';
     else if (String(STATE.phase || '') === ST.IDLE) reason = 'idle';
 
@@ -977,6 +999,8 @@
     if (toInt(STATE.user.pauseHoldUntilTs, 0) > nowMs()) return { ok: false, reason: 'pause_hold' };
     if (STATE.tick && STATE.tick.hasVideo && STATE.tick.paused) return { ok: false, reason: 'media_paused' };
     if (isUserPauseIntent()) return { ok: false, reason: 'paused_by_user' };
+    if (isUserSeekWindowActive()) return { ok: false, reason: 'user_seek' };
+    if (isUserNavWindowActive()) return { ok: false, reason: 'user_nav' };
     if (toInt(STATE.life.suspendDetectors, 0)) return { ok: false, reason: 'suspended' };
     if (String(STATE.phase || '') === ST.IDLE) return { ok: false, reason: 'idle' };
     if (STATE.rec.active) return { ok: false, reason: 'recovering' };
@@ -1091,6 +1115,11 @@
     CFG.inplayerMode = normalizeInplayerMode(sGet(K.inplayerMode, String(d(K.inplayerMode, 'refresh_src'))));
     CFG.escalateToReopen = parseBool(sGet(K.escalateToReopen, String(d(K.escalateToReopen, 1))), !!toInt(d(K.escalateToReopen, 1), 1));
     CFG.reopenCooldownMs = clampInt(sGet(K.reopenCooldownMs, String(d(K.reopenCooldownMs, 8000))), 1000, 60000);
+    CFG.resumeBackoffSec = Math.max(0, Math.min(4, toNum(sGet(K.resumeBackoffSec, String(d(K.resumeBackoffSec, 0.8))), toNum(d(K.resumeBackoffSec, 0.8), 0.8))));
+    CFG.resumeMinStepSec = Math.max(0.1, Math.min(2, toNum(sGet(K.resumeMinStepSec, String(d(K.resumeMinStepSec, 0.35))), toNum(d(K.resumeMinStepSec, 0.35), 0.35))));
+    CFG.seekVerifyDelayMs = clampInt(sGet(K.seekVerifyDelayMs, String(d(K.seekVerifyDelayMs, 900))), 250, 5000);
+    CFG.seekDeltaSec = Math.max(0.5, Math.min(10, toNum(sGet(K.seekDeltaSec, String(d(K.seekDeltaSec, 3.0))), toNum(d(K.seekDeltaSec, 3.0), 3.0))));
+    CFG.warmupAfterRecoverMs = clampInt(sGet(K.warmupAfterRecoverMs, String(d(K.warmupAfterRecoverMs, 12000))), 2000, 60000);
     CFG.frameHangMs = clampInt(toInt(CFG.frameHangMs, toInt(OVERLAY_DEFAULTS.frame_hang_ms, 3500)), 1200, 15000);
     CFG.frameCtDeltaSec = Math.max(0.2, Math.min(5, toNum(CFG.frameCtDeltaSec, toNum(OVERLAY_DEFAULTS.frame_ct_delta_sec, 1.0))));
     CFG.frameGraceMs = clampInt(toInt(CFG.frameGraceMs, toInt(OVERLAY_DEFAULTS.frame_grace_ms, 6000)), 1000, 20000);
@@ -1162,13 +1191,36 @@
     STATE.listeners = null;
   }
 
-  function truthReadFromStorage() {
+  function truthReadFromStorage(video) {
     try {
+      var sig = '';
+      try { sig = srcSig(getCurrentSrc(video)); } catch (_) { sig = ''; }
+      if (!sig) {
+        try { sig = String(STATE.tick && STATE.tick.srcSig ? STATE.tick.srcSig : ''); } catch (_) { sig = ''; }
+      }
+      if (!sig) {
+        try { sig = String(STATE.session && STATE.session.srcSig ? STATE.session.srcSig : ''); } catch (_) { sig = ''; }
+      }
+
+      if (sig) {
+        var rawMap = sGet(K.truthMap, '');
+        if (rawMap && typeof rawMap === 'string') {
+          var map = null;
+          try { map = JSON.parse(rawMap); } catch (_) { map = null; }
+          if (map && typeof map === 'object' && map[sig]) {
+            var row = map[sig];
+            var secM = toNum(row && row.sec, NaN);
+            var tsM = toInt(row && row.ts, 0);
+            if (isFinite(secM) && secM >= 0 && tsM > 0) return { sec: secM, ts: tsM, sig: sig };
+          }
+        }
+      }
+
       var sec = toNum(sGet(K.truthSec, ''), NaN);
       var ts = toInt(sGet(K.truthTs, '0'), 0);
-      var sig = String(sGet(K.truthSrcSig, '') || '');
+      var savedSig = String(sGet(K.truthSrcSig, '') || '');
       if (!isFinite(sec) || sec < 0 || !ts) return null;
-      return { sec: sec, ts: ts, sig: sig };
+      return { sec: sec, ts: ts, sig: savedSig };
     } catch (_) {
       return null;
     }
@@ -1258,7 +1310,7 @@
     var ticket = STATE.resume ? STATE.resume.ticket : null;
     if (ticket) {
       var ticketSig = String(ticket.srcSig || '');
-      if (ticketSig && newSig && ticketSig !== newSig) {
+      if (!ticketSig || !newSig || ticketSig !== newSig) {
         STATE.resume.ticket = null;
         syncResumeTicket({
           id: '',
@@ -1355,6 +1407,25 @@
       sSet(K.truthSec, String(toNum(t.lastGoodSec, 0)));
       sSet(K.truthTs, String(toInt(t.lastGoodTs, 0)));
       sSet(K.truthSrcSig, String(t.srcSig || ''));
+      try {
+        var mapRaw = sGet(K.truthMap, '');
+        var map = {};
+        if (mapRaw && typeof mapRaw === 'string') {
+          try { map = JSON.parse(mapRaw) || {}; } catch (_) { map = {}; }
+        }
+        if (!map || typeof map !== 'object') map = {};
+        if (t.srcSig) map[String(t.srcSig)] = { sec: toNum(t.lastGoodSec, 0), ts: toInt(t.lastGoodTs, 0) };
+        var keys = Object.keys(map);
+        if (keys.length > 80) {
+          keys.sort(function (a, b) {
+            var ta = toInt(map[a] && map[a].ts, 0);
+            var tb = toInt(map[b] && map[b].ts, 0);
+            return ta - tb;
+          });
+          for (var i = 0; i < (keys.length - 80); i++) delete map[keys[i]];
+        }
+        sSet(K.truthMap, JSON.stringify(map));
+      } catch (_) { }
       STATE.truth.lastCommitTs = now();
       logLine('DBG', 'truth_commit', { sec: toNum(t.lastGoodSec, 0).toFixed(2), reason: String(reason || '') });
     } catch (_) { }
@@ -1364,7 +1435,7 @@
     if (!CFG.storeTruth) return;
     if (isFinite(toNum(STATE.truth.lastGoodSec, NaN)) && STATE.truth.lastGoodTs) return;
 
-    var saved = truthReadFromStorage();
+    var saved = truthReadFromStorage(video);
     if (!saved) return;
 
     var sig = '';
@@ -2085,11 +2156,16 @@
 
     var strictFalseEnd = isFalseEnd(toNum(t.ct, NaN), toNum(t.dur, NaN));
     var looseFalseEnd = isFalseEndLooser(toNum(t.ct, NaN), toNum(t.dur, NaN), ra);
+    var live = playbackLiveness(t, ra);
     lines.push('resumeAgeMs=' + String(toInt(ra.resumeAge, 0))
       + ' resumeGuardMs=' + String(toInt(CFG.resumeGuardMs, 0))
       + ' staleAllow=' + (CFG.falseEndStaleAllow ? '1' : '0')
       + ' falseEnd(strict)=' + (strictFalseEnd ? '1' : '0')
       + ' falseEnd(loose)=' + (looseFalseEnd ? '1' : '0'));
+    lines.push('alive=' + (live.alive ? '1' : '0')
+      + ' reason=' + String(live.reason || '')
+      + ' userSeekLeftMs=' + String(Math.max(0, toInt(STATE.intent.userSeekUntilTs, 0) - nowMs()))
+      + ' userNavLeftMs=' + String(Math.max(0, toInt(STATE.intent.userNavUntilTs, 0) - nowMs())));
 
     var blockUntil = toInt(STATE.guard.blockNextUntilTs, 0);
     var blockLeft = Math.max(0, blockUntil - now());
@@ -2260,6 +2336,7 @@
     var ra = runtimeAges();
     var strictFalseEnd = isFalseEnd(toNum(t.ct, NaN), toNum(t.dur, NaN));
     var looseFalseEnd = isFalseEndLooser(toNum(t.ct, NaN), toNum(t.dur, NaN), ra);
+    var live = playbackLiveness(t, ra);
     var ticket = STATE.resume.ticket || STATE.resume.lastTicket || null;
     var nowTs = now();
     var criticalUntil = criticalUntilTs();
@@ -2285,6 +2362,8 @@
         + ' playingStuck=' + String(toInt(STATE.flags.playingStuck.on, 0)),
       'falseEndStrict=' + (strictFalseEnd ? '1' : '0')
         + ' falseEndLoose=' + (looseFalseEnd ? '1' : '0'),
+      'alive=' + (live.alive ? '1' : '0')
+        + ' aliveReason=' + String(live.reason || ''),
       'tailJumpClamp=' + (ageMs(toInt(STATE.guard.lastTailClampTs, 0)) < 5000 ? '1' : '0')
         + ' lastClampAgeMs=' + String(ageMs(toInt(STATE.guard.lastTailClampTs, 0)))
         + ' count=' + String(toInt(STATE.guard.tailJumpClampCount, 0))
@@ -2790,6 +2869,9 @@
     if (!sig) {
       try { sig = srcSig(getCurrentSrc(v)); } catch (_) { sig = ''; }
     }
+    if (!sig) {
+      try { sig = String(STATE.session && STATE.session.srcSig ? STATE.session.srcSig : ''); } catch (_) { sig = ''; }
+    }
 
     var curTicket = STATE.resume.ticket || null;
     if (
@@ -2827,7 +2909,7 @@
       sec = tr;
       source = 'truth';
     } else if (isFinite(ct) && ct > 2 && isFinite(dur) && dur > 10) {
-      sec = Math.max(0, ct - 1.0);
+      sec = Math.max(0, ct - Math.max(toNum(CFG.resumeBackoffSec, 0.8), toNum(CFG.resumeMinStepSec, 0.35)));
       source = 'ct_backoff';
     } else if (isFinite(ct) && ct >= 2) {
       sec = ct;
@@ -2878,6 +2960,14 @@
       if (cb) cb(false, 'no_video');
       return false;
     }
+    if (isUserSeekWindowActive()) {
+      if (cb) cb(false, 'user_seek');
+      return false;
+    }
+    if (isUserNavWindowActive()) {
+      if (cb) cb(false, 'user_nav');
+      return false;
+    }
     if (!ticket) {
       logLine('WRN', 'TICKET apply', { stage: stage, ok: 0, err: 'ticket_missing' });
       if (cb) cb(false, 'ticket_missing');
@@ -2907,8 +2997,9 @@
     function verify(retry) {
       setTimeout(function () {
         var ctAfter = toNum(video.currentTime, NaN);
+        var maxDelta = Math.max(0.5, toNum(CFG.seekDeltaSec, 3.0));
         var delta = isFinite(ctAfter) ? Math.abs(ctAfter - sec) : 999999;
-        var ok = isFinite(ctAfter) && delta <= 3.0;
+        var ok = isFinite(ctAfter) && delta <= maxDelta;
 
         ticket.verifyOk = ok ? 1 : 0;
         ticket.verifyDelta = isFinite(delta) ? delta : NaN;
@@ -2952,7 +3043,7 @@
         syncResumeTicket(ticket);
         armBlockNext(4000, 'ticket_verify_fail');
         if (cb) cb(false, ticket.lastApplyErr);
-      }, 1000);
+      }, clampInt(toInt(CFG.seekVerifyDelayMs, 900), 250, 5000));
     }
 
     seekAfterReady(video, sec, 'ticket:' + stage, function (ok, err) {
@@ -3010,6 +3101,15 @@
         STATE.resume.lastSeekErr = 'inactive';
         logLine('DBG', 'SEEK skip', { why: String(why || ''), trig: String(trigger || ''), err: 'inactive' });
         if (cb) cb(false, 'inactive');
+        return;
+      }
+      if (isUserSeekWindowActive() || isUserNavWindowActive()) {
+        STATE.resume.lastSeekSec = NaN;
+        STATE.resume.lastSeekTs = nowMs();
+        STATE.resume.lastSeekOk = 0;
+        STATE.resume.lastSeekErr = 'user_intent';
+        logLine('DBG', 'SEEK skip', { why: String(why || ''), trig: String(trigger || ''), err: 'user_intent' });
+        if (cb) cb(false, 'user_intent');
         return;
       }
 
@@ -3106,7 +3206,8 @@
     function resumeAligned(ct) {
       if (!isFinite(resumeSec)) return true;
       if (!isFinite(ct)) return false;
-      if (Math.abs(ct - resumeSec) <= 3.2) return true;
+      var maxDelta = Math.max(0.5, toNum(CFG.seekDeltaSec, 3.0)) + 0.2;
+      if (Math.abs(ct - resumeSec) <= maxDelta) return true;
       if (ct >= (resumeSec - 1.2)) return true;
       return false;
     }
@@ -3406,6 +3507,9 @@
     if (!sig && ticket) {
       try { sig = String(ticket.srcSig || ''); } catch (_) { sig = ''; }
     }
+    if (!sig) {
+      try { sig = String(STATE.session && STATE.session.srcSig ? STATE.session.srcSig : ''); } catch (_) { sig = ''; }
+    }
 
     STATE.resume.carry = {
       sec: sec,
@@ -3435,6 +3539,15 @@
     reason = String(reason || 'player_start');
     var carry = STATE.resume && STATE.resume.carry ? STATE.resume.carry : null;
     if (!carry) return false;
+    if (isUserSeekWindowActive() || isUserNavWindowActive()) {
+      logLine('WRN', 'CARRY skipped by user intent', {
+        seek: isUserSeekWindowActive() ? 1 : 0,
+        nav: isUserNavWindowActive() ? 1 : 0,
+        reason: reason
+      });
+      clearCarry('carry_user_intent', true);
+      return false;
+    }
 
     var sec = toNum(carry.sec, NaN);
     var age = ageMs(carry.ts);
@@ -3457,7 +3570,17 @@
     }
     var carrySig = '';
     try { carrySig = String(carry.srcSig || ''); } catch (_) { carrySig = ''; }
-    if (carrySig && newSig && carrySig !== newSig) {
+    if (!carrySig || !newSig) {
+      logLine('WRN', 'CARRY sig missing - NOT applying', {
+        carry: carrySig,
+        newSig: newSig,
+        why: reason
+      });
+      armFalseEndCritical(20000, 'carry_sig_missing');
+      clearCarry('carry_discard_missing_sig', true);
+      return false;
+    }
+    if (carrySig !== newSig) {
       logLine('WRN', 'CARRY sig mismatch - NOT applying', {
         carry: carrySig,
         newSig: newSig,
@@ -3557,8 +3680,8 @@
     STATE.rec.step = '';
     STATE.rec.reason = '';
     armFrameGrace(CFG.frameGraceMs, 'recover_finish:' + String(ok ? 'ok' : 'fail'));
-    if (ok) armWarmup(12000, 'recovery_done');
-    else armWarmup(8000, 'recovery_fail');
+    if (ok) armWarmup(toInt(CFG.warmupAfterRecoverMs, 12000), 'recovery_done');
+    else armWarmup(Math.max(4000, Math.floor(toInt(CFG.warmupAfterRecoverMs, 12000) * 0.66)), 'recovery_fail');
     resetSignalAges('recovery_finish:' + String(ok ? 'ok' : 'fail'));
     if (ok) {
       setPhase(ST.PLAYING, 'recovered:' + String(why || 'ok'));
@@ -3744,6 +3867,16 @@
       logLine('DBG', 'REC skip', { reason: reason, why: 'pause_hold' });
       return false;
     }
+    if (isUserSeekWindowActive()) {
+      STATE.rec.lastErr = 'user_seek';
+      logLine('DBG', 'REC skip', { reason: reason, why: 'user_seek' });
+      return false;
+    }
+    if (isUserNavWindowActive()) {
+      STATE.rec.lastErr = 'user_nav';
+      logLine('DBG', 'REC skip', { reason: reason, why: 'user_nav' });
+      return false;
+    }
     if (isUserPauseIntent() || toInt(STATE.life.suspendDetectors, 0)) {
       STATE.rec.lastErr = 'user_paused';
       logLine('DBG', 'REC skip', { reason: reason, why: 'user_paused' });
@@ -3759,6 +3892,13 @@
       if (!can.ok) {
         STATE.rec.lastErr = String(can.reason || 'gated');
         logLine('DBG', 'REC skip', { reason: reason, why: String(can.reason || 'gated') });
+        return false;
+      }
+      var live = playbackLiveness(STATE.tick, runtimeAges());
+      var allowWhileAlive = (reason === 'render_freeze' || reason === 'false_end' || reason === 'forced_next' || reason === 'ended_blocked' || reason === 'tail_jump' || reason === 'tail_jump_seek');
+      if (live.alive && !allowWhileAlive) {
+        STATE.rec.lastErr = 'alive:' + String(live.reason || '');
+        logLine('DBG', 'REC skip', { reason: reason, why: String(STATE.rec.lastErr || '') });
         return false;
       }
     }
@@ -3892,6 +4032,50 @@
     };
   }
 
+  function playbackLiveness(t, ages) {
+    t = t || STATE.tick || {};
+    ages = ages || runtimeAges();
+    if (!t.hasVideo) return { alive: false, reason: 'no_video' };
+    if (t.paused) return { alive: true, reason: 'paused' };
+    if (isUserPauseIntent()) return { alive: true, reason: 'user_paused' };
+
+    var hangTimeMs = Math.max(1200, toInt(CFG.hangTimeMs, 3500));
+    var hangBufMs = Math.max(1200, toInt(CFG.hangBufMs, 4500));
+    var ctAlive = toInt(ages.ctAge, 0) <= Math.max(800, Math.floor(hangTimeMs * 0.40));
+    var tuAlive = toInt(ages.timeupdateAge, 0) <= Math.max(900, Math.floor(hangTimeMs * 0.55));
+    var progAlive = toInt(ages.progAge, 0) <= Math.max(1200, Math.floor(hangBufMs * 0.45));
+    var playingAge = ageMs(STATE.ev.lastPlayingTs || STATE.events.last.playing || STATE.events.last.play);
+    var playingAlive = playingAge <= 1800;
+    var readyAlive = toInt(t.readyState, 0) >= 2 && ctAlive;
+
+    var frameAlive = false;
+    if (toInt(STATE.frames.supported, 0)) {
+      var frameStuck = toInt(STATE.frames.frameStuckMs, 0);
+      var frameHang = Math.max(1200, toInt(CFG.frameHangMs, 3500));
+      frameAlive = frameStuck <= Math.max(900, Math.floor(frameHang * 0.5));
+    }
+
+    if (ctAlive) return { alive: true, reason: 'ct_moving' };
+    if (tuAlive) return { alive: true, reason: 'timeupdate' };
+    if (playingAlive) return { alive: true, reason: 'playing_evt' };
+    if (readyAlive) return { alive: true, reason: 'ready_ct' };
+    if (frameAlive) return { alive: true, reason: 'frames' };
+    if (progAlive && toNum(t.aheadSec, 0) > Math.max(0.8, toNum(CFG.minAheadSec, 0.6))) return { alive: true, reason: 'progress_ahead' };
+
+    return { alive: false, reason: 'signals_stale' };
+  }
+
+  function recoveryTargetSec(baseSec, dur, tag) {
+    var sec = toNum(baseSec, NaN);
+    if (!isFinite(sec)) return NaN;
+    var shift = Math.max(toNum(CFG.resumeBackoffSec, 0.8), toNum(CFG.resumeMinStepSec, 0.35));
+    sec = Math.max(0, sec - shift);
+    if (isFinite(toNum(dur, NaN)) && toNum(dur, 0) > 1) sec = Math.min(sec, Math.max(0, toNum(dur, 0) - 0.75));
+    if (isFinite(sec) && sec < 0.1) sec = 0;
+    if (tag) logLine('DBG', 'resume_target', { tag: String(tag || ''), sec: sec.toFixed(2), shift: toNum(shift, 0).toFixed(2) });
+    return sec;
+  }
+
   function isFalseEnd(ct, dur) {
     if (!CFG.protectNext) return false;
     if (!isFinite(toNum(ct, NaN)) || !isFinite(toNum(dur, NaN)) || dur <= 0) return false;
@@ -3958,7 +4142,7 @@
     armFalseEndCritical(30000, 'false_end');
 
     var v = STATE.video || getVideo();
-    var target = Math.max(0, toNum(STATE.truth.lastGoodSec, 0) - 0.7);
+    var target = recoveryTargetSec(toNum(STATE.truth.lastGoodSec, 0), toNum(STATE.tick && STATE.tick.dur, NaN), 'false_end');
     try {
       if (v) {
         armFrameGrace(CFG.frameGraceMs, 'false_end_prevented');
@@ -4023,7 +4207,7 @@
     armFalseEndCritical(30000, 'forced_next');
 
     var v = STATE.video || getVideo();
-    var target = Math.max(0, toNum(STATE.truth.lastGoodSec, 0) - 0.7);
+    var target = recoveryTargetSec(toNum(STATE.truth.lastGoodSec, 0), toNum(STATE.tick && STATE.tick.dur, NaN), 'forced_next');
     try {
       if (v) {
         armFrameGrace(CFG.frameGraceMs, 'forced_next_prevented');
@@ -4388,12 +4572,20 @@
     var noAhead = aheadAge >= hangBufMs;
     var lowReady = toInt(t.readyState, 0) <= 2 && ctStuckMs >= Math.max(hangTimeMs, 2000);
     var hang = ctStuckMs >= hangTimeMs && (noTimeupdate || noProgress || noAhead || lowReady);
+    var live = playbackLiveness(t, ages);
 
     if (!hang) {
       var why = 'ct_moving_or_signals';
       if (ctStuckMs < hangTimeMs) why = 'ct_not_stuck';
       else if (!(noTimeupdate || noProgress || noAhead || lowReady)) why = 'signals_alive';
+      if (live.alive) why = 'alive:' + String(live.reason || '');
       hangUpdate(false, why, ages);
+      flagSet('playingStuck', false, '');
+      return false;
+    }
+
+    if (live.alive) {
+      hangUpdate(false, 'alive:' + String(live.reason || ''), ages);
       flagSet('playingStuck', false, '');
       return false;
     }
@@ -4506,6 +4698,11 @@
       flagSet('fakeFull', false, '');
       return false;
     }
+    var live = playbackLiveness(t, ra);
+    if (live.alive) {
+      flagSet('fakeFull', false, '');
+      return false;
+    }
 
     var ts = nowMs();
     if ((ts - toInt(STATE.buf.fakeFullTs, 0)) < 1200) return false;
@@ -4545,9 +4742,15 @@
     if (ahead > toNum(CFG.minAheadSec, 0.5)) return false;
 
     var ba = bufferAges();
+    var ra = runtimeAges();
     var noProg = ba.progAge >= toInt(CFG.underrunNoProgMs, 4000);
     var noAheadMove = ba.aheadMoveAge >= toInt(CFG.underrunNoAheadMoveMs, 4000);
     if (!(noProg && noAheadMove)) {
+      flagSet('underrun', false, '');
+      return false;
+    }
+    var live = playbackLiveness(t, ra);
+    if (live.alive) {
       flagSet('underrun', false, '');
       return false;
     }
@@ -4579,6 +4782,8 @@
     if (STATE.rec.active) return false;
     var rec = canRunDetectors();
     if (!rec.ok) return false;
+    var live = playbackLiveness(STATE.tick, runtimeAges());
+    if (live.alive) return false;
 
     var ts = nowMs();
     var order = [
@@ -4603,6 +4808,7 @@
   function trackReopenApply() {
     var req = toNum(STATE.resume.reopenRequestedSec, NaN);
     if (!isFinite(req) || req < 0) return;
+    if (isUserSeekWindowActive() || isUserNavWindowActive()) return;
     if (STATE.resume.reopenAppliedTs) {
       if (ageMs(STATE.resume.reopenAppliedTs) > 12000) {
         STATE.resume.reopenRequestedSec = NaN;
@@ -4716,6 +4922,11 @@
         inplayerMode: String(CFG.inplayerMode || ''),
         escalateToReopen: !!CFG.escalateToReopen,
         reopenCooldownMs: toInt(CFG.reopenCooldownMs, 0),
+        resumeBackoffSec: toNum(CFG.resumeBackoffSec, 0),
+        resumeMinStepSec: toNum(CFG.resumeMinStepSec, 0),
+        seekVerifyDelayMs: toInt(CFG.seekVerifyDelayMs, 0),
+        seekDeltaSec: toNum(CFG.seekDeltaSec, 0),
+        warmupAfterRecoverMs: toInt(CFG.warmupAfterRecoverMs, 0),
         frameHangMs: toInt(CFG.frameHangMs, 0),
         frameCtDeltaSec: toNum(CFG.frameCtDeltaSec, 0),
         frameGraceMs: toInt(CFG.frameGraceMs, 0)
@@ -5038,7 +5249,7 @@
           try {
             if (!e || !e.name) return;
             var n = String(e.name || '');
-            if (n === K.enabled || n === K.debugOnOpen || n === K.popupOpacity || n === K.protectNext || n === K.storeTruth || n === K.truthCommitMs || n === K.hangTimeMs || n === K.hangBufMs || n === K.resumeGuardMs || n === K.falseEndStaleAllow || n === K.fakeFullEnabled || n === K.fakeFullNoProgMs || n === K.fakeFullNoMoveMs || n === K.minAheadSec || n === K.underrunNoProgMs || n === K.underrunNoAheadMoveMs || n === K.softAttempts || n === K.inplayerAttempts || n === K.inplayerMode || n === K.escalateToReopen || n === K.reopenCooldownMs || n === K.oldEnabled || n === K.oldDebugOnOpen || n === K.oldHangTimeMs || n === K.oldHangBufMs) API.refresh();
+            if (n === K.enabled || n === K.debugOnOpen || n === K.popupOpacity || n === K.protectNext || n === K.storeTruth || n === K.truthCommitMs || n === K.hangTimeMs || n === K.hangBufMs || n === K.resumeGuardMs || n === K.falseEndStaleAllow || n === K.fakeFullEnabled || n === K.fakeFullNoProgMs || n === K.fakeFullNoMoveMs || n === K.minAheadSec || n === K.underrunNoProgMs || n === K.underrunNoAheadMoveMs || n === K.softAttempts || n === K.inplayerAttempts || n === K.inplayerMode || n === K.escalateToReopen || n === K.reopenCooldownMs || n === K.resumeBackoffSec || n === K.resumeMinStepSec || n === K.seekVerifyDelayMs || n === K.seekDeltaSec || n === K.warmupAfterRecoverMs || n === K.oldEnabled || n === K.oldDebugOnOpen || n === K.oldHangTimeMs || n === K.oldHangBufMs) API.refresh();
           } catch (_) { }
         });
       }
