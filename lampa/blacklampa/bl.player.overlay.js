@@ -92,8 +92,8 @@
     protectNext: true,
     storeTruth: true,
     truthCommitMs: 500,
-    hangTimeMs: 10000,
-    hangBufMs: 8000,
+    hangTimeMs: 12000,
+    hangBufMs: 18000,
     resumeGuardMs: 180000,
     falseEndStaleAllow: true,
     fakeFullEnabled: true,
@@ -104,17 +104,17 @@
     underrunNoAheadMoveMs: 4000,
     softAttempts: 2,
     inplayerAttempts: 3,
-    inplayerMode: 'refresh_src',
+    inplayerMode: 'destroy_url',
     escalateToReopen: true,
     reopenCooldownMs: 8000,
     frameHangMs: 3200,
     frameCtDeltaSec: 1.0,
-    frameGraceMs: 6000,
-    resumeBackoffSec: 0.8,
-    resumeMinStepSec: 0.35,
+    frameGraceMs: 12000,
+    resumeBackoffSec: 0.3,
+    resumeMinStepSec: 0.1,
     seekVerifyDelayMs: 900,
-    seekDeltaSec: 3.0,
-    warmupAfterRecoverMs: 12000
+    seekDeltaSec: 0.1,
+    warmupAfterRecoverMs: 18000
   };
 
   var OVERLAY_DEFAULTS = {
@@ -134,23 +134,23 @@
     fake_full_no_prog_ms: 6500,
     fake_full_no_move_ms: 6500,
 
-    hang_time_ms: 3500,
-    hang_buf_ms: 4500,
+    hang_time_ms: 12000,
+    hang_buf_ms: 18000,
     resume_guard_ms: 180000,
     false_end_stale_allow: 1,
 
     frame_hang_ms: 3500,
     frame_ct_delta_sec: 1.0,
-    frame_grace_ms: 6000,
+    frame_grace_ms: 12000,
 
     critical_window_ms: 30000,
     block_next_ms: 30000,
 
     seek_verify_delay_ms: 900,
-    seek_delta_sec: 3.0,
-    resume_backoff_sec: 0.8,
-    resume_min_step_sec: 0.35,
-    warmup_ms_after_recover: 12000,
+    seek_delta_sec: 0.1,
+    resume_backoff_sec: 0.3,
+    resume_min_step_sec: 0.1,
+    warmup_ms_after_recover: 18000,
 
     user_seek_window_ms: 2500,
     user_nav_window_ms: 2500,
@@ -159,7 +159,7 @@
     soft_attempts: 0,
     inplayer_attempts: 2,
     reopen_attempts: 2,
-    inplayer_rebuild_mode: 'refresh_src',
+    inplayer_rebuild_mode: 'destroy_url',
     escalate_to_reopen: 1,
     reopen_cooldown_ms: 8000
   };
@@ -183,8 +183,8 @@
       { key: K.protectNext, def: toInt(d.protect_next, 1) ? 1 : 0 },
       { key: K.storeTruth, def: toInt(d.store_truth, 1) ? 1 : 0 },
       { key: K.truthCommitMs, def: clampInt(toInt(d.truth_commit_ms, 500), 250, 2000) },
-      { key: K.hangTimeMs, def: clampInt(toInt(d.hang_time_ms, 3500), 3000, 60000) },
-      { key: K.hangBufMs, def: clampInt(toInt(d.hang_buf_ms, 4500), 3000, 60000) },
+      { key: K.hangTimeMs, def: clampInt(toInt(d.hang_time_ms, 12000), 3000, 60000) },
+      { key: K.hangBufMs, def: clampInt(toInt(d.hang_buf_ms, 18000), 3000, 60000) },
       { key: K.resumeGuardMs, def: clampInt(toInt(d.resume_guard_ms, 180000), 30000, 600000) },
       { key: K.falseEndStaleAllow, def: toInt(d.false_end_stale_allow, 1) ? 1 : 0 },
       { key: K.fakeFullEnabled, def: toInt(d.fake_full_enabled, 1) ? 1 : 0 },
@@ -195,14 +195,14 @@
       { key: K.underrunNoAheadMoveMs, def: clampInt(toInt(d.underrun_no_ahead_move_ms, 4500), 1000, 30000) },
       { key: K.softAttempts, def: clampInt(toInt(d.soft_attempts, 0), 0, 5) },
       { key: K.inplayerAttempts, def: clampInt(toInt(d.inplayer_attempts, 2), 0, 6) },
-      { key: K.inplayerMode, def: normalizeInplayerMode(d.inplayer_rebuild_mode || 'refresh_src') },
+      { key: K.inplayerMode, def: normalizeInplayerMode(d.inplayer_rebuild_mode || 'destroy_url') },
       { key: K.escalateToReopen, def: toInt(d.escalate_to_reopen, 1) ? 1 : 0 },
       { key: K.reopenCooldownMs, def: clampInt(toInt(d.reopen_cooldown_ms, 8000), 1000, 60000) },
-      { key: K.resumeBackoffSec, def: Math.max(0, Math.min(4, toNum(d.resume_backoff_sec, 0.8))) },
-      { key: K.resumeMinStepSec, def: Math.max(0.1, Math.min(2, toNum(d.resume_min_step_sec, 0.35))) },
+      { key: K.resumeBackoffSec, def: Math.max(0.05, Math.min(4, toNum(d.resume_backoff_sec, 0.3))) },
+      { key: K.resumeMinStepSec, def: Math.max(0.05, Math.min(2, toNum(d.resume_min_step_sec, 0.1))) },
       { key: K.seekVerifyDelayMs, def: clampInt(toInt(d.seek_verify_delay_ms, 900), 250, 5000) },
-      { key: K.seekDeltaSec, def: Math.max(0.5, Math.min(10, toNum(d.seek_delta_sec, 3.0))) },
-      { key: K.warmupAfterRecoverMs, def: clampInt(toInt(d.warmup_ms_after_recover, 12000), 2000, 60000) }
+      { key: K.seekDeltaSec, def: Math.max(0.05, Math.min(10, toNum(d.seek_delta_sec, 0.1))) },
+      { key: K.warmupAfterRecoverMs, def: clampInt(toInt(d.warmup_ms_after_recover, 18000), 2000, 60000) }
     ];
   }
 
@@ -211,6 +211,7 @@
     patched: { player: false, playlist: false, controller: false },
     timer: null,
     lastCfgReadTs: 0,
+    settingsMigrated: false,
 
     phase: ST.IDLE,
     phaseReason: '',
@@ -1062,6 +1063,69 @@
     });
   }
 
+  function numEq(raw, expected) {
+    var n = toNum(raw, NaN);
+    if (!isFinite(n)) return false;
+    return Math.abs(n - toNum(expected, 0)) < 0.0001;
+  }
+
+  function maybeMigrateLegacyDefaults(defMap) {
+    if (STATE.settingsMigrated) return;
+    STATE.settingsMigrated = true;
+
+    function d(key, fallback) {
+      key = String(key || '');
+      if (key && Object.prototype.hasOwnProperty.call(defMap, key)) return defMap[key];
+      return fallback;
+    }
+
+    function migrateNumKey(key, oldNum, newVal) {
+      var raw = sGet(key, null);
+      if (raw === null || raw === undefined || raw === '') return false;
+      if (!numEq(raw, oldNum)) return false;
+      if (numEq(raw, newVal)) return false;
+      sSet(key, String(newVal));
+      return true;
+    }
+
+    function migrateStrKey(key, oldVal, newVal) {
+      var raw = sGet(key, null);
+      if (raw === null || raw === undefined || raw === '') return false;
+      if (String(raw) !== String(oldVal)) return false;
+      if (String(raw) === String(newVal)) return false;
+      sSet(key, String(newVal));
+      return true;
+    }
+
+    var moved = 0;
+    if (migrateNumKey(K.hangTimeMs, 3500, d(K.hangTimeMs, 12000))) moved++;
+    if (migrateNumKey(K.hangBufMs, 4500, d(K.hangBufMs, 18000))) moved++;
+    if (migrateNumKey(K.seekDeltaSec, 3.0, d(K.seekDeltaSec, 0.1))) moved++;
+    if (migrateStrKey(K.inplayerMode, 'refresh_src', d(K.inplayerMode, 'destroy_url'))) moved++;
+    if (migrateNumKey(K.warmupAfterRecoverMs, 12000, d(K.warmupAfterRecoverMs, 18000))) moved++;
+    if (migrateNumKey(K.resumeBackoffSec, 0.8, d(K.resumeBackoffSec, 0.3))) moved++;
+    if (migrateNumKey(K.resumeMinStepSec, 0.35, d(K.resumeMinStepSec, 0.1))) moved++;
+
+    var htRaw = sGet(K.hangTimeMs, null);
+    var hbRaw = sGet(K.hangBufMs, null);
+    if (htRaw === null || htRaw === undefined || htRaw === '') {
+      var oldHt = sGet(K.oldHangTimeMs, null);
+      if (numEq(oldHt, 3500)) {
+        sSet(K.hangTimeMs, String(d(K.hangTimeMs, 12000)));
+        moved++;
+      }
+    }
+    if (hbRaw === null || hbRaw === undefined || hbRaw === '') {
+      var oldHb = sGet(K.oldHangBufMs, null);
+      if (numEq(oldHb, 4500)) {
+        sSet(K.hangBufMs, String(d(K.hangBufMs, 18000)));
+        moved++;
+      }
+    }
+
+    if (moved > 0) logLine('INF', 'settings_migrated', { changed: moved });
+  }
+
   function readSettingsFromStorage() {
     var defs = overlayStorageDefaultsList();
     var defMap = {};
@@ -1080,6 +1144,7 @@
       if (Object.prototype.hasOwnProperty.call(defMap, key)) return defMap[key];
       return fallback;
     }
+    maybeMigrateLegacyDefaults(defMap);
 
     var enRaw = sGet(K.enabled, null);
     if (enRaw === null || enRaw === undefined || enRaw === '') enRaw = sGet(K.oldEnabled, String(d(K.enabled, 1)));
@@ -1095,11 +1160,11 @@
     CFG.truthCommitMs = clampInt(sGet(K.truthCommitMs, String(d(K.truthCommitMs, 500))), 250, 2000);
 
     var htRaw = sGet(K.hangTimeMs, null);
-    if (htRaw === null || htRaw === undefined || htRaw === '') htRaw = sGet(K.oldHangTimeMs, String(d(K.hangTimeMs, 3500)));
+    if (htRaw === null || htRaw === undefined || htRaw === '') htRaw = sGet(K.oldHangTimeMs, String(d(K.hangTimeMs, 12000)));
     CFG.hangTimeMs = clampInt(htRaw, 3000, 60000);
 
     var hbRaw = sGet(K.hangBufMs, null);
-    if (hbRaw === null || hbRaw === undefined || hbRaw === '') hbRaw = sGet(K.oldHangBufMs, String(d(K.hangBufMs, 4500)));
+    if (hbRaw === null || hbRaw === undefined || hbRaw === '') hbRaw = sGet(K.oldHangBufMs, String(d(K.hangBufMs, 18000)));
     CFG.hangBufMs = clampInt(hbRaw, 3000, 60000);
     CFG.resumeGuardMs = clampInt(sGet(K.resumeGuardMs, String(d(K.resumeGuardMs, 180000))), 30000, 600000);
     CFG.falseEndStaleAllow = parseBool(sGet(K.falseEndStaleAllow, String(d(K.falseEndStaleAllow, 1))), !!toInt(d(K.falseEndStaleAllow, 1), 1));
@@ -1112,17 +1177,17 @@
 
     CFG.softAttempts = clampInt(sGet(K.softAttempts, String(d(K.softAttempts, 0))), 0, 5);
     CFG.inplayerAttempts = clampInt(sGet(K.inplayerAttempts, String(d(K.inplayerAttempts, 2))), 0, 6);
-    CFG.inplayerMode = normalizeInplayerMode(sGet(K.inplayerMode, String(d(K.inplayerMode, 'refresh_src'))));
+    CFG.inplayerMode = normalizeInplayerMode(sGet(K.inplayerMode, String(d(K.inplayerMode, 'destroy_url'))));
     CFG.escalateToReopen = parseBool(sGet(K.escalateToReopen, String(d(K.escalateToReopen, 1))), !!toInt(d(K.escalateToReopen, 1), 1));
     CFG.reopenCooldownMs = clampInt(sGet(K.reopenCooldownMs, String(d(K.reopenCooldownMs, 8000))), 1000, 60000);
-    CFG.resumeBackoffSec = Math.max(0, Math.min(4, toNum(sGet(K.resumeBackoffSec, String(d(K.resumeBackoffSec, 0.8))), toNum(d(K.resumeBackoffSec, 0.8), 0.8))));
-    CFG.resumeMinStepSec = Math.max(0.1, Math.min(2, toNum(sGet(K.resumeMinStepSec, String(d(K.resumeMinStepSec, 0.35))), toNum(d(K.resumeMinStepSec, 0.35), 0.35))));
+    CFG.resumeBackoffSec = Math.max(0.05, Math.min(4, toNum(sGet(K.resumeBackoffSec, String(d(K.resumeBackoffSec, 0.3))), toNum(d(K.resumeBackoffSec, 0.3), 0.3))));
+    CFG.resumeMinStepSec = Math.max(0.05, Math.min(2, toNum(sGet(K.resumeMinStepSec, String(d(K.resumeMinStepSec, 0.1))), toNum(d(K.resumeMinStepSec, 0.1), 0.1))));
     CFG.seekVerifyDelayMs = clampInt(sGet(K.seekVerifyDelayMs, String(d(K.seekVerifyDelayMs, 900))), 250, 5000);
-    CFG.seekDeltaSec = Math.max(0.5, Math.min(10, toNum(sGet(K.seekDeltaSec, String(d(K.seekDeltaSec, 3.0))), toNum(d(K.seekDeltaSec, 3.0), 3.0))));
-    CFG.warmupAfterRecoverMs = clampInt(sGet(K.warmupAfterRecoverMs, String(d(K.warmupAfterRecoverMs, 12000))), 2000, 60000);
+    CFG.seekDeltaSec = Math.max(0.05, Math.min(10, toNum(sGet(K.seekDeltaSec, String(d(K.seekDeltaSec, 0.1))), toNum(d(K.seekDeltaSec, 0.1), 0.1))));
+    CFG.warmupAfterRecoverMs = clampInt(sGet(K.warmupAfterRecoverMs, String(d(K.warmupAfterRecoverMs, 18000))), 2000, 60000);
     CFG.frameHangMs = clampInt(toInt(CFG.frameHangMs, toInt(OVERLAY_DEFAULTS.frame_hang_ms, 3500)), 1200, 15000);
     CFG.frameCtDeltaSec = Math.max(0.2, Math.min(5, toNum(CFG.frameCtDeltaSec, toNum(OVERLAY_DEFAULTS.frame_ct_delta_sec, 1.0))));
-    CFG.frameGraceMs = clampInt(toInt(CFG.frameGraceMs, toInt(OVERLAY_DEFAULTS.frame_grace_ms, 6000)), 1000, 20000);
+    CFG.frameGraceMs = clampInt(toInt(CFG.frameGraceMs, toInt(OVERLAY_DEFAULTS.frame_grace_ms, 12000)), 1000, 20000);
 
     STATE.lastCfgReadTs = now();
     return CFG;
@@ -2607,9 +2672,17 @@
     return null;
   }
 
+  function criticalTtlMs(ttlMs) {
+    var adaptive = Math.max(8000, Math.floor(toInt(CFG.hangBufMs, 18000) * 0.6));
+    var req = toInt(ttlMs, 0);
+    if (req > 0) adaptive = Math.max(adaptive, req);
+    return clampInt(adaptive, 8000, 20000);
+  }
+
   function beginCritical(tag, ttlMs) {
     var pg = getPg();
-    try { if (pg && typeof pg.beginOverlayCritical === 'function') pg.beginOverlayCritical(String(tag || 'overlay_recover'), ttlMs || 2500); } catch (_) { }
+    var ttl = criticalTtlMs(ttlMs);
+    try { if (pg && typeof pg.beginOverlayCritical === 'function') pg.beginOverlayCritical(String(tag || 'overlay_recover'), ttl); } catch (_) { }
   }
 
   function endCritical(tag) {
@@ -2909,7 +2982,7 @@
       sec = tr;
       source = 'truth';
     } else if (isFinite(ct) && ct > 2 && isFinite(dur) && dur > 10) {
-      sec = Math.max(0, ct - Math.max(toNum(CFG.resumeBackoffSec, 0.8), toNum(CFG.resumeMinStepSec, 0.35)));
+      sec = Math.max(0, ct - Math.max(toNum(CFG.resumeBackoffSec, 0.3), toNum(CFG.resumeMinStepSec, 0.1)));
       source = 'ct_backoff';
     } else if (isFinite(ct) && ct >= 2) {
       sec = ct;
@@ -2997,9 +3070,11 @@
     function verify(retry) {
       setTimeout(function () {
         var ctAfter = toNum(video.currentTime, NaN);
-        var maxDelta = Math.max(0.5, toNum(CFG.seekDeltaSec, 3.0));
+        var maxDelta = Math.max(0.05, toNum(CFG.seekDeltaSec, 0.1));
+        var retryDelta = maxDelta + 0.05;
         var delta = isFinite(ctAfter) ? Math.abs(ctAfter - sec) : 999999;
         var ok = isFinite(ctAfter) && delta <= maxDelta;
+        var nearOk = isFinite(ctAfter) && delta <= retryDelta;
 
         ticket.verifyOk = ok ? 1 : 0;
         ticket.verifyDelta = isFinite(delta) ? delta : NaN;
@@ -3012,7 +3087,9 @@
           id: String(ticket.id || ''),
           ok: ok ? 1 : 0,
           delta: isFinite(delta) ? delta.toFixed(2) : '',
-          ctAfter: isFinite(ctAfter) ? ctAfter.toFixed(2) : ''
+          ctAfter: isFinite(ctAfter) ? ctAfter.toFixed(2) : '',
+          maxDelta: maxDelta.toFixed(2),
+          retryDelta: retryDelta.toFixed(2)
         });
 
         if (ok) {
@@ -3026,7 +3103,17 @@
           return;
         }
 
-        if (retry < 1) {
+        if (nearOk) {
+          ticket.applied = 1;
+          ticket.applyTs = nowMs();
+          ticket.lastApplyErr = '';
+          ticket.verifyOk = 1;
+          syncResumeTicket(ticket);
+          if (cb) cb(true, 'ok_near');
+          return;
+        }
+
+        if (retry < 1 && delta >= retryDelta) {
           seekAfterReady(video, sec, 'ticket_retry:' + stage, function (ok2, err2) {
             if (!ok2) {
               ticket.lastApplyErr = String(err2 || 'retry_seek_failed');
@@ -3206,7 +3293,7 @@
     function resumeAligned(ct) {
       if (!isFinite(resumeSec)) return true;
       if (!isFinite(ct)) return false;
-      var maxDelta = Math.max(0.5, toNum(CFG.seekDeltaSec, 3.0)) + 0.2;
+      var maxDelta = Math.max(0.05, toNum(CFG.seekDeltaSec, 0.1)) + 0.08;
       if (Math.abs(ct - resumeSec) <= maxDelta) return true;
       if (ct >= (resumeSec - 1.2)) return true;
       return false;
@@ -3944,6 +4031,9 @@
       if (criticalMs > 0) armFalseEndCritical(criticalMs, 'recover:' + reason);
       else armBlockNext(10000, 'recover:' + reason);
     }
+    var ra = runtimeAges();
+    var ba = bufferAges();
+    var tv = STATE.tick || {};
 
     logLine('WRN', 'recover_begin', {
       reason: reason,
@@ -3951,6 +4041,15 @@
       inplayer: STATE.rec.inpMax,
       mode: CFG.inplayerMode,
       reopen: CFG.escalateToReopen ? 1 : 0,
+      ctAge: toInt(ra.ctAge, 0),
+      timeupdateAge: toInt(ra.timeupdateAge, 0),
+      progAge: toInt(ra.progAge, 0),
+      bufMoveAge: toInt(ba.bufEndMoveAge, 0),
+      rs: toInt(tv.readyState, 0),
+      ns: toInt(tv.networkState, 0),
+      seekDeltaSec: toNum(CFG.seekDeltaSec, 0.1),
+      hangTimeMs: toInt(CFG.hangTimeMs, 0),
+      hangBufMs: toInt(CFG.hangBufMs, 0),
       ticketId: String(ticket && ticket.id ? ticket.id : ''),
       resume: (ticket && isFinite(toNum(ticket.sec, NaN))) ? toNum(ticket.sec, 0).toFixed(2) : 'null'
     });
@@ -4039,8 +4138,8 @@
     if (t.paused) return { alive: true, reason: 'paused' };
     if (isUserPauseIntent()) return { alive: true, reason: 'user_paused' };
 
-    var hangTimeMs = Math.max(1200, toInt(CFG.hangTimeMs, 3500));
-    var hangBufMs = Math.max(1200, toInt(CFG.hangBufMs, 4500));
+    var hangTimeMs = Math.max(1200, toInt(CFG.hangTimeMs, 12000));
+    var hangBufMs = Math.max(1200, toInt(CFG.hangBufMs, 18000));
     var ctAlive = toInt(ages.ctAge, 0) <= Math.max(800, Math.floor(hangTimeMs * 0.40));
     var tuAlive = toInt(ages.timeupdateAge, 0) <= Math.max(900, Math.floor(hangTimeMs * 0.55));
     var progAlive = toInt(ages.progAge, 0) <= Math.max(1200, Math.floor(hangBufMs * 0.45));
@@ -4068,7 +4167,7 @@
   function recoveryTargetSec(baseSec, dur, tag) {
     var sec = toNum(baseSec, NaN);
     if (!isFinite(sec)) return NaN;
-    var shift = Math.max(toNum(CFG.resumeBackoffSec, 0.8), toNum(CFG.resumeMinStepSec, 0.35));
+    var shift = Math.max(toNum(CFG.resumeBackoffSec, 0.3), toNum(CFG.resumeMinStepSec, 0.1));
     sec = Math.max(0, sec - shift);
     if (isFinite(toNum(dur, NaN)) && toNum(dur, 0) > 1) sec = Math.min(sec, Math.max(0, toNum(dur, 0) - 0.75));
     if (isFinite(sec) && sec < 0.1) sec = 0;
@@ -4560,17 +4659,29 @@
     var aheadAge = ages.aheadAge;
     var resumeAge = ages.resumeAge;
 
-    var hangTimeMs = toInt(CFG.hangTimeMs, 10000);
-    var hangBufMs = toInt(CFG.hangBufMs, 8000);
-    if (resumeAge > 0 && resumeAge <= Math.max(10000, toInt(CFG.resumeGuardMs, 180000))) {
-      hangTimeMs = Math.max(2500, Math.min(hangTimeMs, 4000));
-      hangBufMs = Math.max(2500, Math.floor(hangBufMs * 0.75));
+    var hangTimeMs = toInt(CFG.hangTimeMs, 12000);
+    var hangBufMs = toInt(CFG.hangBufMs, 18000);
+    var rs = toInt(t.readyState, 0);
+    var ns = toInt(t.networkState, 0);
+    var waitingAge = toInt(ages.waitingAge, 0);
+    var stalledAge = toInt(ages.stalledAge, 0);
+    var resumeGuardWindow = Math.max(10000, Math.min(toInt(CFG.resumeGuardMs, 180000), 45000));
+    if (resumeAge > 0 && resumeAge <= resumeGuardWindow) {
+      hangTimeMs = Math.max(hangTimeMs, Math.floor(toInt(CFG.hangTimeMs, 12000) * 1.15));
+      hangBufMs = Math.max(hangBufMs, Math.floor(toInt(CFG.hangBufMs, 18000) * 1.15));
+    }
+
+    var loadingLike = (ns === 2 || rs < 3);
+    if (loadingLike && (waitingAge < hangBufMs || stalledAge < hangBufMs)) {
+      hangUpdate(false, 'buffering_grace', ages);
+      flagSet('playingStuck', false, '');
+      return false;
     }
 
     var noTimeupdate = timeupdateAge >= hangTimeMs;
     var noProgress = progAge >= hangBufMs;
     var noAhead = aheadAge >= hangBufMs;
-    var lowReady = toInt(t.readyState, 0) <= 2 && ctStuckMs >= Math.max(hangTimeMs, 2000);
+    var lowReady = rs <= 2 && ctStuckMs >= Math.max(hangTimeMs, 2000);
     var hang = ctStuckMs >= hangTimeMs && (noTimeupdate || noProgress || noAhead || lowReady);
     var live = playbackLiveness(t, ages);
 
@@ -4602,7 +4713,10 @@
       resumeAge: resumeAge,
       hangTimeMs: hangTimeMs,
       hangBufMs: hangBufMs,
-      rs: toInt(t.readyState, 0),
+      rs: rs,
+      ns: ns,
+      waitingAge: waitingAge,
+      stalledAge: stalledAge,
       ahead: toNum(t.aheadSec, 0).toFixed(1)
     });
 
