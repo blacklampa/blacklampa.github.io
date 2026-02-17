@@ -91,7 +91,7 @@
     popupOpacity: 85,
     protectNext: true,
     storeTruth: true,
-    truthCommitMs: 500,
+    truthCommitMs: 100,
     hangTimeMs: 12000,
     hangBufMs: 18000,
     resumeGuardMs: 180000,
@@ -99,7 +99,7 @@
     fakeFullEnabled: true,
     fakeFullNoProgMs: 6000,
     fakeFullNoMoveMs: 6000,
-    minAheadSec: 0.5,
+    minAheadSec: 0.1,
     underrunNoProgMs: 4000,
     underrunNoAheadMoveMs: 4000,
     softAttempts: 2,
@@ -124,9 +124,9 @@
 
     protect_next: 1,
     store_truth: 1,
-    truth_commit_ms: 500,
+    truth_commit_ms: 100,
 
-    min_ahead_sec: 0.6,
+    min_ahead_sec: 0.1,
     underrun_no_prog_ms: 4500,
     underrun_no_ahead_move_ms: 4500,
 
@@ -182,7 +182,7 @@
       { key: K.popupOpacity, def: clampInt(Math.round(toNum(d.debug_opacity, 0.85) * 100), 20, 100) },
       { key: K.protectNext, def: toInt(d.protect_next, 1) ? 1 : 0 },
       { key: K.storeTruth, def: toInt(d.store_truth, 1) ? 1 : 0 },
-      { key: K.truthCommitMs, def: clampInt(toInt(d.truth_commit_ms, 500), 250, 2000) },
+      { key: K.truthCommitMs, def: clampInt(toInt(d.truth_commit_ms, 100), 100, 2000) },
       { key: K.hangTimeMs, def: clampInt(toInt(d.hang_time_ms, 12000), 3000, 60000) },
       { key: K.hangBufMs, def: clampInt(toInt(d.hang_buf_ms, 18000), 3000, 60000) },
       { key: K.resumeGuardMs, def: clampInt(toInt(d.resume_guard_ms, 180000), 30000, 600000) },
@@ -190,7 +190,7 @@
       { key: K.fakeFullEnabled, def: toInt(d.fake_full_enabled, 1) ? 1 : 0 },
       { key: K.fakeFullNoProgMs, def: clampInt(toInt(d.fake_full_no_prog_ms, 6500), 1000, 30000) },
       { key: K.fakeFullNoMoveMs, def: clampInt(toInt(d.fake_full_no_move_ms, 6500), 1000, 30000) },
-      { key: K.minAheadSec, def: Math.max(0, Math.min(3, toNum(d.min_ahead_sec, 0.6))) },
+      { key: K.minAheadSec, def: Math.max(0, Math.min(3, toNum(d.min_ahead_sec, 0.1))) },
       { key: K.underrunNoProgMs, def: clampInt(toInt(d.underrun_no_prog_ms, 4500), 1000, 30000) },
       { key: K.underrunNoAheadMoveMs, def: clampInt(toInt(d.underrun_no_ahead_move_ms, 4500), 1000, 30000) },
       { key: K.softAttempts, def: clampInt(toInt(d.soft_attempts, 0), 0, 5) },
@@ -1100,6 +1100,8 @@
     var moved = 0;
     if (migrateNumKey(K.hangTimeMs, 3500, d(K.hangTimeMs, 12000))) moved++;
     if (migrateNumKey(K.hangBufMs, 4500, d(K.hangBufMs, 18000))) moved++;
+    if (migrateNumKey(K.truthCommitMs, 500, d(K.truthCommitMs, 100))) moved++;
+    if (migrateNumKey(K.minAheadSec, 0.6, d(K.minAheadSec, 0.1))) moved++;
     if (migrateNumKey(K.seekDeltaSec, 3.0, d(K.seekDeltaSec, 0.1))) moved++;
     if (migrateStrKey(K.inplayerMode, 'refresh_src', d(K.inplayerMode, 'destroy_url'))) moved++;
     if (migrateNumKey(K.warmupAfterRecoverMs, 12000, d(K.warmupAfterRecoverMs, 18000))) moved++;
@@ -1157,7 +1159,7 @@
     CFG.popupOpacity = clampInt(sGet(K.popupOpacity, String(d(K.popupOpacity, 85))), 20, 100);
     CFG.protectNext = parseBool(sGet(K.protectNext, String(d(K.protectNext, 1))), !!toInt(d(K.protectNext, 1), 1));
     CFG.storeTruth = parseBool(sGet(K.storeTruth, String(d(K.storeTruth, 1))), !!toInt(d(K.storeTruth, 1), 1));
-    CFG.truthCommitMs = clampInt(sGet(K.truthCommitMs, String(d(K.truthCommitMs, 500))), 250, 2000);
+    CFG.truthCommitMs = clampInt(sGet(K.truthCommitMs, String(d(K.truthCommitMs, 100))), 100, 2000);
 
     var htRaw = sGet(K.hangTimeMs, null);
     if (htRaw === null || htRaw === undefined || htRaw === '') htRaw = sGet(K.oldHangTimeMs, String(d(K.hangTimeMs, 12000)));
@@ -1171,7 +1173,7 @@
     CFG.fakeFullEnabled = parseBool(sGet(K.fakeFullEnabled, String(d(K.fakeFullEnabled, 1))), !!toInt(d(K.fakeFullEnabled, 1), 1));
     CFG.fakeFullNoProgMs = clampInt(sGet(K.fakeFullNoProgMs, String(d(K.fakeFullNoProgMs, 6500))), 1000, 30000);
     CFG.fakeFullNoMoveMs = clampInt(sGet(K.fakeFullNoMoveMs, String(d(K.fakeFullNoMoveMs, 6500))), 1000, 30000);
-    CFG.minAheadSec = Math.max(0, Math.min(3, toNum(sGet(K.minAheadSec, String(d(K.minAheadSec, 0.6))), toNum(d(K.minAheadSec, 0.6), 0.6))));
+    CFG.minAheadSec = Math.max(0, Math.min(3, toNum(sGet(K.minAheadSec, String(d(K.minAheadSec, 0.1))), toNum(d(K.minAheadSec, 0.1), 0.1))));
     CFG.underrunNoProgMs = clampInt(sGet(K.underrunNoProgMs, String(d(K.underrunNoProgMs, 4500))), 1000, 30000);
     CFG.underrunNoAheadMoveMs = clampInt(sGet(K.underrunNoAheadMoveMs, String(d(K.underrunNoAheadMoveMs, 4500))), 1000, 30000);
 
@@ -2165,6 +2167,7 @@
 
     lines.push('buffered: ranges=' + String(toInt(t.rangesCount, 0))
       + ' ahead=' + toNum(t.aheadSec, 0).toFixed(1)
+      + ' minAhead=' + toNum(CFG.minAheadSec, 0.1).toFixed(1)
       + ' total=' + toNum(t.totalBufferedSec, 0).toFixed(1)
       + (t.rangesText ? (' ' + String(t.rangesText)) : ''));
 
@@ -2176,13 +2179,14 @@
     } catch (_) { fakeFullFlag = 0; }
     var underrunFlag = 0;
     try {
-      if (isPlayingLike(t) && toNum(t.aheadSec, 0) <= toNum(CFG.minAheadSec, 0.5) && ba.progAge >= toInt(CFG.underrunNoProgMs, 4000) && ba.aheadMoveAge >= toInt(CFG.underrunNoAheadMoveMs, 4000)) underrunFlag = 1;
+      if (isPlayingLike(t) && toNum(t.aheadSec, 0) <= toNum(CFG.minAheadSec, 0.1) && ba.progAge >= toInt(CFG.underrunNoProgMs, 4000) && ba.aheadMoveAge >= toInt(CFG.underrunNoAheadMoveMs, 4000)) underrunFlag = 1;
     } catch (_) { underrunFlag = 0; }
     lines.push('BUFFER: rangesCount=' + String(toInt(t.rangesCount, 0))
       + ' sigAgeMs=' + String(toInt(ba.sigAge, 0))
       + ' curRange=' + (isFinite(toNum(t.rangeStartAtCt, NaN)) ? toNum(t.rangeStartAtCt, 0).toFixed(2) : '') + '-' + (isFinite(toNum(t.rangeEndAtCt, NaN)) ? toNum(t.rangeEndAtCt, 0).toFixed(2) : '')
       + ' bufEndAtCt=' + (isFinite(toNum(t.bufferedEndAtCt, NaN)) ? toNum(t.bufferedEndAtCt, 0).toFixed(2) : '')
-      + ' aheadSec=' + toNum(t.aheadSec, 0).toFixed(2));
+      + ' aheadSec=' + toNum(t.aheadSec, 0).toFixed(2)
+      + ' minAheadSec=' + toNum(CFG.minAheadSec, 0.1).toFixed(2));
     lines.push('BUFFER ages: progAge=' + String(toInt(ba.progAge, 0))
       + ' aheadMoveAge=' + String(toInt(ba.aheadMoveAge, 0))
       + ' bufEndMoveAge=' + String(toInt(ba.bufEndMoveAge, 0)));
@@ -4159,7 +4163,7 @@
     if (playingAlive) return { alive: true, reason: 'playing_evt' };
     if (readyAlive) return { alive: true, reason: 'ready_ct' };
     if (frameAlive) return { alive: true, reason: 'frames' };
-    if (progAlive && toNum(t.aheadSec, 0) > Math.max(0.8, toNum(CFG.minAheadSec, 0.6))) return { alive: true, reason: 'progress_ahead' };
+    if (progAlive && toNum(t.aheadSec, 0) > Math.max(0.8, toNum(CFG.minAheadSec, 0.1))) return { alive: true, reason: 'progress_ahead' };
 
     return { alive: false, reason: 'signals_stale' };
   }
@@ -4717,7 +4721,8 @@
       ns: ns,
       waitingAge: waitingAge,
       stalledAge: stalledAge,
-      ahead: toNum(t.aheadSec, 0).toFixed(1)
+      ahead: toNum(t.aheadSec, 0).toFixed(1),
+      minAhead: toNum(CFG.minAheadSec, 0.1).toFixed(2)
     });
 
     var rec = detectorsAllowedInfo();
@@ -4853,7 +4858,7 @@
     var t = STATE.tick || {};
     if (!t.hasVideo) return false;
     var ahead = toNum(t.aheadSec, 0);
-    if (ahead > toNum(CFG.minAheadSec, 0.5)) return false;
+    if (ahead > toNum(CFG.minAheadSec, 0.1)) return false;
 
     var ba = bufferAges();
     var ra = runtimeAges();
@@ -4879,6 +4884,7 @@
     if (CFG.protectNext) armFalseEndCritical(20000, 'underrun');
     logLine('WRN', 'DETECT underrun', {
       ahead: ahead.toFixed(2),
+      minAhead: toNum(CFG.minAheadSec, 0.1).toFixed(2),
       progAge: toInt(ba.progAge, 0),
       aheadMoveAge: toInt(ba.aheadMoveAge, 0),
       cnt: toInt(STATE.buf.underrunCount, 0)
