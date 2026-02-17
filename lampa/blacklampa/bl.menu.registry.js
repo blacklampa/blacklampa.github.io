@@ -1005,6 +1005,7 @@
   function overlayDefaultFallbacks() {
     return {
       enabled: 1,
+      mode: 'legacy',
       debug_on_open: 0,
       debug_opacity: 0.85,
       protect_next: 1,
@@ -1029,7 +1030,17 @@
       resume_min_step_sec: 0.1,
       seek_verify_delay_ms: 900,
       seek_delta_sec: 0.1,
-      warmup_ms_after_recover: 18000
+      warmup_ms_after_recover: 18000,
+      user_seek_window_ms: 1800,
+      user_nav_window_ms: 2500,
+      dg_stall_soft_ms: 1200,
+      dg_stall_hard_ms: 2500,
+      dg_warmup_grace_ms: 1200,
+      dg_resume_tolerance_sec: 0.12,
+      dg_resume_seek_retry_max: 2,
+      dg_recover_retry_max: 2,
+      dg_failsafe_cooldown_ms: 8000,
+      dg_debug_level: 'normal'
     };
   }
 
@@ -1057,6 +1068,7 @@
     var p = String(pref() || 'blacklampa_');
     return [
       { key: p + 'player_overlay_enabled', def: d.enabled ? 1 : 0 },
+      { key: p + 'player_overlay_mode', def: String(d.mode || 'legacy') },
       { key: p + 'player_overlay_debug_on_open', def: d.debug_on_open ? 1 : 0 },
       { key: p + 'player_overlay_popup_opacity', def: Math.max(20, Math.min(100, Math.round((Number(d.debug_opacity) || 0.85) * 100))) },
       { key: p + 'player_overlay_protect_next', def: d.protect_next ? 1 : 0 },
@@ -1081,7 +1093,36 @@
       { key: p + 'player_overlay_resume_min_step_sec', def: String(d.resume_min_step_sec || 0.1) },
       { key: p + 'player_overlay_seek_verify_delay_ms', def: String(d.seek_verify_delay_ms || 900) },
       { key: p + 'player_overlay_seek_delta_sec', def: String(d.seek_delta_sec || 0.1) },
-      { key: p + 'player_overlay_warmup_ms_after_recover', def: String(d.warmup_ms_after_recover || 18000) }
+      { key: p + 'player_overlay_warmup_ms_after_recover', def: String(d.warmup_ms_after_recover || 18000) },
+      { key: p + 'player_overlay_user_seek_window_ms', def: String(d.user_seek_window_ms || 1800) },
+      { key: p + 'player_overlay_user_nav_window_ms', def: String(d.user_nav_window_ms || 2500) },
+      { key: p + 'player_overlay_dg_stall_soft_ms', def: String(d.dg_stall_soft_ms || 1200) },
+      { key: p + 'player_overlay_dg_stall_hard_ms', def: String(d.dg_stall_hard_ms || 2500) },
+      { key: p + 'player_overlay_dg_warmup_grace_ms', def: String(d.dg_warmup_grace_ms || 1200) },
+      { key: p + 'player_overlay_dg_resume_tolerance_sec', def: String(d.dg_resume_tolerance_sec || 0.12) },
+      { key: p + 'player_overlay_dg_resume_seek_retry_max', def: String(d.dg_resume_seek_retry_max || 2) },
+      { key: p + 'player_overlay_dg_recover_retry_max', def: String(d.dg_recover_retry_max || 2) },
+      { key: p + 'player_overlay_dg_failsafe_cooldown_ms', def: String(d.dg_failsafe_cooldown_ms || 8000) },
+      { key: p + 'player_overlay_dg_debug_level', def: String(d.dg_debug_level || 'normal') }
+    ];
+  }
+
+  function overlayDeltaStorageDefaults() {
+    var d = overlayDefaults();
+    var p = String(pref() || 'blacklampa_');
+    return [
+      { key: p + 'player_overlay_truth_commit_ms', def: String(d.truth_commit_ms || 100) },
+      { key: p + 'player_overlay_min_ahead_sec', def: String(d.min_ahead_sec || 0.1) },
+      { key: p + 'player_overlay_user_seek_window_ms', def: String(d.user_seek_window_ms || 1800) },
+      { key: p + 'player_overlay_user_nav_window_ms', def: String(d.user_nav_window_ms || 2500) },
+      { key: p + 'player_overlay_dg_stall_soft_ms', def: String(d.dg_stall_soft_ms || 1200) },
+      { key: p + 'player_overlay_dg_stall_hard_ms', def: String(d.dg_stall_hard_ms || 2500) },
+      { key: p + 'player_overlay_dg_warmup_grace_ms', def: String(d.dg_warmup_grace_ms || 1200) },
+      { key: p + 'player_overlay_dg_resume_tolerance_sec', def: String(d.dg_resume_tolerance_sec || 0.12) },
+      { key: p + 'player_overlay_dg_resume_seek_retry_max', def: String(d.dg_resume_seek_retry_max || 2) },
+      { key: p + 'player_overlay_dg_recover_retry_max', def: String(d.dg_recover_retry_max || 2) },
+      { key: p + 'player_overlay_dg_failsafe_cooldown_ms', def: String(d.dg_failsafe_cooldown_ms || 8000) },
+      { key: p + 'player_overlay_dg_debug_level', def: String(d.dg_debug_level || 'normal') }
     ];
   }
 
@@ -1414,6 +1455,16 @@
       });
 
       P(ctx, {
+        id: 'player_overlay_mode',
+        type: 'select',
+        values: { off: 'Off', legacy: 'Legacy', delta: 'DeltaGuard' },
+        default: String(od.mode || 'legacy'),
+        name: 'Overlay: Mode',
+        desc: 'Off: выключен. Legacy: текущая логика. DeltaGuard: отдельный точный restart/verify алгоритм.',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
         id: 'player_overlay_debug_on_open',
         type: 'toggle',
         values: { 0: 'OFF', 1: 'ON' },
@@ -1708,6 +1759,138 @@
         name: 'Overlay: Warmup after recover (ms)',
         desc: 'Пауза детекторов после успешного recovery, чтобы избежать циклов.',
         onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
+        id: 'player_overlay_user_seek_window_ms',
+        type: 'select',
+        values: { '1000': '1000', '1200': '1200', '1500': '1500', '1800': '1800', '2000': '2000', '2500': '2500', '3000': '3000' },
+        default: String(od.user_seek_window_ms || 1800),
+        name: 'DeltaGuard: User seek window (ms)',
+        desc: 'Окно, в котором DeltaGuard не вмешивается после ручной перемотки.',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
+        id: 'player_overlay_user_nav_window_ms',
+        type: 'select',
+        values: { '1500': '1500', '2000': '2000', '2500': '2500', '3000': '3000', '4000': '4000' },
+        default: String(od.user_nav_window_ms || 2500),
+        name: 'DeltaGuard: User nav window (ms)',
+        desc: 'Окно блокировки вмешательства после ручной навигации по сериям/файлам.',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
+        id: 'player_overlay_dg_stall_soft_ms',
+        type: 'select',
+        values: { '800': '800', '1000': '1000', '1200': '1200', '1500': '1500', '1800': '1800', '2000': '2000' },
+        default: String(od.dg_stall_soft_ms || 1200),
+        name: 'DeltaGuard: Stall soft (ms)',
+        desc: 'Порог перехода в STALL_CANDIDATE.',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
+        id: 'player_overlay_dg_stall_hard_ms',
+        type: 'select',
+        values: { '1800': '1800', '2200': '2200', '2500': '2500', '3000': '3000', '3500': '3500', '4000': '4000', '5000': '5000' },
+        default: String(od.dg_stall_hard_ms || 2500),
+        name: 'DeltaGuard: Stall hard (ms)',
+        desc: 'Порог запуска recovery.',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
+        id: 'player_overlay_dg_warmup_grace_ms',
+        type: 'select',
+        values: { '600': '600', '800': '800', '1000': '1000', '1200': '1200', '1500': '1500', '2000': '2000' },
+        default: String(od.dg_warmup_grace_ms || 1200),
+        name: 'DeltaGuard: Warmup grace (ms)',
+        desc: 'Пауза после старта/seek/recover перед детекцией.',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
+        id: 'player_overlay_dg_resume_tolerance_sec',
+        type: 'select',
+        values: { '0.08': '0.08', '0.1': '0.1', '0.12': '0.12', '0.15': '0.15', '0.2': '0.2', '0.3': '0.3' },
+        default: String(od.dg_resume_tolerance_sec || 0.12),
+        name: 'DeltaGuard: Resume tolerance (sec)',
+        desc: 'Допуск при verify после restart/seek.',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
+        id: 'player_overlay_dg_resume_seek_retry_max',
+        type: 'select',
+        values: { '0': '0', '1': '1', '2': '2', '3': '3' },
+        default: String(od.dg_resume_seek_retry_max || 2),
+        name: 'DeltaGuard: Resume seek retries',
+        desc: 'Максимум корректирующих микросиков вперёд.',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
+        id: 'player_overlay_dg_recover_retry_max',
+        type: 'select',
+        values: { '0': '0', '1': '1', '2': '2', '3': '3' },
+        default: String(od.dg_recover_retry_max || 2),
+        name: 'DeltaGuard: Recover retries',
+        desc: 'Максимум повторных recover перед failsafe.',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
+        id: 'player_overlay_dg_failsafe_cooldown_ms',
+        type: 'select',
+        values: { '4000': '4000', '6000': '6000', '8000': '8000', '10000': '10000', '12000': '12000', '15000': '15000' },
+        default: String(od.dg_failsafe_cooldown_ms || 8000),
+        name: 'DeltaGuard: Failsafe cooldown (ms)',
+        desc: 'Пауза после серии неудачных recover.',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
+        id: 'player_overlay_dg_debug_level',
+        type: 'select',
+        values: { silent: 'silent', normal: 'normal', trace: 'trace' },
+        default: String(od.dg_debug_level || 'normal'),
+        name: 'DeltaGuard: Debug level',
+        desc: 'Уровень логирования DeltaGuard.',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
+        id: 'player_overlay_reset_delta_defaults',
+        type: 'button',
+        name: 'Сбросить DeltaGuard defaults',
+        desc: 'Сбросить только параметры DeltaGuard (без изменения legacy-параметров).',
+        onChange: function () {
+          var doReset = function () {
+            try {
+              var list = overlayDeltaStorageDefaults();
+              for (var i = 0; i < list.length; i++) {
+                var it = list[i] || {};
+                if (!it.key) continue;
+                sSet(String(it.key), it.def);
+              }
+              refreshPlayerOverlaySettings();
+              try { if (ctx && ctx.refresh) ctx.refresh({ keepFocus: true }); } catch (_) { }
+              try { if (ctx && ctx.notify) ctx.notify('[[BlackLampa]] DeltaGuard defaults сброшены'); } catch (_) { }
+            } catch (_) { }
+            return false;
+          };
+
+          try {
+            if (ctx && typeof ctx.confirm === 'function') {
+              ctx.confirm('DeltaGuard', 'Сбросить только настройки DeltaGuard к дефолтам?', function () { doReset(); });
+              return false;
+            }
+          } catch (_) { }
+
+          return doReset();
+        }
       });
     } catch (_) { }
   }
