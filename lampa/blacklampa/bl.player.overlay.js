@@ -306,6 +306,8 @@
       lastPlayTs: 0
     },
     pendingUserCommand: '',
+    pendingUserCommandTs: 0,
+    pendingUserCommandTimer: null,
     pause: {
       lastPauseTs: 0,
       lastResumeTs: 0
@@ -582,6 +584,8 @@
       wakeupStartCt: NaN,
       wakeupResult: '',
       wakeupReason: '',
+      pauseProbeUntilTs: 0,
+      lastPauseSignalTs: 0,
       lastTrigger: '',
       lastAction: '',
       lastErr: '',
@@ -959,6 +963,7 @@
   function dgOnPauseSignal(origin) {
     origin = String(origin || 'pause_signal');
     var ts = nowMs();
+    STATE.dg.lastPauseSignalTs = ts;
     STATE.pause.lastPauseTs = now();
     STATE.media.paused = true;
     STATE.media.lastPauseTs = ts;
@@ -968,7 +973,8 @@
       markDgUserPauseIntent(dgUserPauseWindowMs(), origin + ':recent_cmd_pause');
       byUser = true;
     }
-    if (!byUser && String(STATE.pendingUserCommand || '') === 'pause') {
+    var pendingAge = ageMs(toInt(STATE.pendingUserCommandTs, 0));
+    if (!byUser && String(STATE.pendingUserCommand || '') === 'pause' && pendingAge <= 1200) {
       markDgUserPauseIntent(dgUserPauseWindowMs(), origin + ':pending_cmd_pause');
       byUser = true;
     }
@@ -977,16 +983,20 @@
     STATE.dg.internalPause = byUser ? 0 : 1;
 
     if (byUser) {
+      setUserPauseIntent(true, 'onpause:' + origin);
       if (!STATE.rec.active) {
         STATE.user.pauseHoldUntilTs = ts + 15000;
         STATE.user.pauseHoldWhy = 'video_onpause_user';
       }
+      STATE.dg.pauseProbeUntilTs = 0;
+      if (isModeDelta()) dgSetState(DG_ST.SUSPENDED, 'paused(user)');
       logLine('DBG', 'pause_hold', { ms: Math.max(0, toInt(STATE.user.pauseHoldUntilTs, 0) - ts), why: origin, byUser: 1 });
       return;
     }
 
     STATE.user.pauseHoldUntilTs = 0;
     STATE.user.pauseHoldWhy = '';
+    STATE.dg.pauseProbeUntilTs = Math.max(toInt(STATE.dg.pauseProbeUntilTs, 0), ts + 350);
     if (isModeDelta()) dgSetState(DG_ST.STALL_CANDIDATE, 'paused_internal');
     logLine('WRN', 'DG internal pause', { why: origin, byUser: 0, rec: STATE.rec.active ? 1 : 0 });
   }
@@ -1001,6 +1011,7 @@
     if (!toInt(STATE.life.exitIntent, 0)) STATE.life.suspendDetectors = 0;
     STATE.dg.pauseByUser = 0;
     STATE.dg.internalPause = 0;
+    STATE.dg.pauseProbeUntilTs = 0;
     if (String(STATE.dg.wakeupResult || '') === 'attempted') {
       STATE.dg.wakeupResult = 'ok';
       STATE.dg.wakeupReason = origin;
@@ -1148,8 +1159,14 @@
     }
 
     var reason = 'ok';
-    if (STATE.tick && STATE.tick.hasVideo && STATE.tick.paused) reason = 'media_paused';
-    else if (isUserPauseIntent()) reason = 'paused_by_user';
+    var tk = STATE.tick || {};
+    if (tk && tk.hasVideo && tk.paused) {
+      if (isModeDelta()) {
+        if (isUserPauseIntent() || dgPauseByUser(tk)) reason = 'paused_by_user';
+      } else {
+        reason = 'media_paused';
+      }
+    } else if (isUserPauseIntent()) reason = 'paused_by_user';
     else if (isUserSeekWindowActive()) reason = 'user_seek';
     else if (isUserNavWindowActive()) reason = 'user_nav';
     else if (toInt(STATE.life.suspendDetectors, 0)) reason = 'suspended';
@@ -1167,7 +1184,12 @@
 
   function shouldAutoPlay(reason) {
     var why = '';
-    if (STATE.tick && STATE.tick.hasVideo && STATE.tick.paused) why = 'media_paused';
+    var tk = STATE.tick || {};
+    if (tk && tk.hasVideo && tk.paused) {
+      if (isModeDelta()) {
+        if (isUserPauseIntent() || dgPauseByUser(tk)) why = 'user_paused';
+      } else why = 'media_paused';
+    }
     else if (!toInt(STATE.life.active, 0)) why = 'inactive';
     else if (toInt(STATE.life.exitIntent, 0)) why = 'exit_intent';
     else if (isUserPauseIntent()) why = 'user_paused';
@@ -2505,7 +2527,9 @@
       + ' loopCount=' + String(toInt(STATE.det.recoverLoopCount, 0))
       + ' lastResetSignals=' + String(STATE.det.lastResetSignalsReason || ''));
     lines.push('pauseHoldLeftMs=' + String(Math.max(0, toInt(STATE.user.pauseHoldUntilTs, 0) - nowMs()))
-      + ' pauseHoldWhy=' + String(STATE.user.pauseHoldWhy || ''));
+      + ' pauseHoldWhy=' + String(STATE.user.pauseHoldWhy || '')
+      + ' pendingCmd=' + String(STATE.pendingUserCommand || '')
+      + ' pendingCmdAgeMs=' + String(STATE.pendingUserCommand ? ageMs(toInt(STATE.pendingUserCommandTs, 0)) : 0));
     lines.push('lastCmdRaw=' + String(STATE.user.lastCmdRaw || '')
       + ' lastCmdNorm=' + String(STATE.user.lastCmdNorm || '')
       + ' lastCmd=' + String(STATE.user.lastCmd || '')
@@ -2531,7 +2555,9 @@
       + ' userPauseLeftMs=' + String(dgUserPauseLeftMs(t))
       + ' internalPause=' + String(toInt(STATE.dg.internalPause, 0))
       + ' wakeupPlay=' + String(STATE.dg.wakeupResult || '-')
-      + ' wakeupReason=' + String(STATE.dg.wakeupReason || ''));
+      + ' wakeupReason=' + String(STATE.dg.wakeupReason || '')
+      + ' pauseProbeLeftMs=' + String(Math.max(0, toInt(STATE.dg.pauseProbeUntilTs, 0) - nowMs()))
+      + ' allowedReason=' + String(det && det.reason ? det.reason : ''));
     lines.push('delta.guard: blockNextLeftMs=' + String(dgCurrentBlockLeftMs())
       + ' falseEndDetected=' + String(toInt(STATE.dg.endGuard && STATE.dg.endGuard.falseEndDetected, 0))
       + ' fakeFullDetected=' + String(toInt(STATE.dg.bufferGuard && STATE.dg.bufferGuard.fakeFullDetected, 0))
@@ -2891,7 +2917,10 @@
         + ' pauseByUser=' + String(toInt(STATE.dg.pauseByUser, 0))
         + ' userPauseLeftMs=' + String(dgUserPauseLeftMs(t))
         + ' internalPause=' + String(toInt(STATE.dg.internalPause, 0))
-        + ' wakeupPlay=' + String(STATE.dg.wakeupResult || '-'),
+        + ' wakeupPlay=' + String(STATE.dg.wakeupResult || '-')
+        + ' pauseProbeLeftMs=' + String(Math.max(0, toInt(STATE.dg.pauseProbeUntilTs, 0) - nowMs()))
+        + ' pendingCmd=' + String(STATE.pendingUserCommand || '')
+        + ' pendingCmdAgeMs=' + String(STATE.pendingUserCommand ? ageMs(toInt(STATE.pendingUserCommandTs, 0)) : 0),
       'blockNextLeftMs=' + String(dgCurrentBlockLeftMs())
         + ' falseEndDetected=' + String(toInt(STATE.dg.endGuard && STATE.dg.endGuard.falseEndDetected, 0))
         + ' fakeFullDetected=' + String(toInt(STATE.dg.bufferGuard && STATE.dg.bufferGuard.fakeFullDetected, 0))
@@ -4674,16 +4703,34 @@
       norm = isPaused ? 'play' : 'pause';
     }
 
+    var cmdTs = nowMs();
     STATE.pendingUserCommand = norm;
+    STATE.pendingUserCommandTs = cmdTs;
+    if (STATE.pendingUserCommandTimer) {
+      try { clearTimeout(STATE.pendingUserCommandTimer); } catch (_) { }
+      STATE.pendingUserCommandTimer = null;
+    }
+    STATE.pendingUserCommandTimer = setTimeout(function () {
+      try {
+        if (String(STATE.pendingUserCommand || '') === String(norm || '') && ageMs(toInt(STATE.pendingUserCommandTs, 0)) >= 800) {
+          STATE.pendingUserCommand = '';
+          STATE.pendingUserCommandTs = 0;
+        }
+      } catch (_) { }
+      STATE.pendingUserCommandTimer = null;
+    }, 1000);
     STATE.user.lastCmd = String(norm || '');
     STATE.user.lastCmdRaw = String(raw || '');
     STATE.user.lastCmdNorm = String(norm || '');
-    STATE.user.lastCmdTs = nowMs();
+    STATE.user.lastCmdTs = cmdTs;
 
     logLine('DBG', 'CMD', { raw: String(raw || ''), norm: String(norm || '') });
 
     if (norm === 'pause') {
       setUserPauseIntent(true, 'cmd_pause');
+      if (isModeDelta()) {
+        STATE.dg.pauseProbeUntilTs = Math.max(toInt(STATE.dg.pauseProbeUntilTs, 0), nowMs() + 350);
+      }
       STATE.pause.lastPauseTs = now();
       STATE.user.pauseHoldUntilTs = nowMs() + 15000;
       STATE.user.pauseHoldWhy = 'cmd_pause';
@@ -4693,6 +4740,7 @@
     }
     else if (norm === 'play') {
       setUserPauseIntent(false, 'cmd_play');
+      STATE.dg.pauseProbeUntilTs = 0;
       STATE.pause.lastResumeTs = now();
       STATE.user.pauseHoldUntilTs = 0;
       STATE.user.pauseHoldWhy = '';
@@ -4779,6 +4827,7 @@
     STATE.dg.recoverToken = toInt(STATE.dg.recoverToken, 0) + 1;
     STATE.dg.internalPause = 0;
     STATE.dg.pauseByUser = 0;
+    STATE.dg.pauseProbeUntilTs = 0;
     STATE.dg.wakeupVerifyUntilTs = 0;
     STATE.dg.wakeupStartCt = NaN;
     STATE.dg.endGuard.blockNextUntilTs = 0;
@@ -5241,6 +5290,8 @@
     STATE.dg.wakeupStartCt = NaN;
     STATE.dg.wakeupResult = '';
     STATE.dg.wakeupReason = '';
+    STATE.dg.pauseProbeUntilTs = 0;
+    STATE.dg.lastPauseSignalTs = 0;
     STATE.dg.endGuard.blockNextUntilTs = 0;
     STATE.dg.endGuard.blockContentKey = '';
     STATE.dg.endGuard.falseEndDetected = 0;
@@ -5692,7 +5743,14 @@
       Math.max(0, toInt(STATE.intent.userNavUntilTs, 0) - nowMs()),
       dgUserPauseLeftMs(t)
     );
-    if ((t.paused && pauseByUser) || isUserPauseIntent() || suspendLeft > 0 || inWarmup()) {
+    var probeLeft = Math.max(0, toInt(STATE.dg.pauseProbeUntilTs, 0) - nowMs());
+    if (t.paused && probeLeft > 0) {
+      dgSetState(DG_ST.STALL_CANDIDATE, 'pause_probe');
+      return true;
+    }
+
+    var warmupBlocked = inWarmup() && !STATE.dg.internalPause && !dgStateBlocksNext() && !STATE.dg.recoverActive && !STATE.rec.active && !STATE.dg.verifyTimer;
+    if ((t.paused && pauseByUser) || isUserPauseIntent() || suspendLeft > 0 || warmupBlocked) {
       dgSetState(DG_ST.SUSPENDED, (t.paused && pauseByUser) ? 'paused(user)' : (suspendLeft > 0 ? 'intent_window' : 'warmup'));
       return false;
     }
@@ -6883,6 +6941,9 @@
         lastCmdRaw: String(STATE.user.lastCmdRaw || ''),
         lastCmdNorm: String(STATE.user.lastCmdNorm || ''),
         lastCmdTs: toInt(STATE.user.lastCmdTs, 0),
+        pendingUserCommand: String(STATE.pendingUserCommand || ''),
+        pendingUserCommandTs: toInt(STATE.pendingUserCommandTs, 0),
+        pendingUserCommandAgeMs: ageMs(toInt(STATE.pendingUserCommandTs, 0)),
         pauseHoldUntilTs: toInt(STATE.user.pauseHoldUntilTs, 0),
         pauseHoldWhy: String(STATE.user.pauseHoldWhy || ''),
         mediaPaused: !!(STATE.tick && STATE.tick.paused),
@@ -6939,6 +7000,8 @@
         failsafeLeftMs: Math.max(0, toInt(STATE.dg.failsafeUntilTs, 0) - nowMs()),
         suspendLeftMs: Math.max(0, toInt(STATE.dg.suspendUntilTs, 0) - nowMs()),
         userPauseLeftMs: dgUserPauseLeftMs(STATE.tick || {}),
+        pauseProbeLeftMs: Math.max(0, toInt(STATE.dg.pauseProbeUntilTs, 0) - nowMs()),
+        lastPauseSignalAgeMs: ageMs(toInt(STATE.dg.lastPauseSignalTs, 0)),
         userSeekLeftMs: Math.max(0, Math.max(toInt(STATE.dg.userSeekUntilTs, 0), toInt(STATE.intent.userSeekUntilTs, 0)) - nowMs()),
         blockNextLeftMs: dgCurrentBlockLeftMs(),
         lastTrigger: String(STATE.dg.lastTrigger || ''),
