@@ -52,6 +52,11 @@
     dgRecoverRetryMax: LS_PREFIX + 'player_overlay_dg_recover_retry_max',
     dgFailsafeCooldownMs: LS_PREFIX + 'player_overlay_dg_failsafe_cooldown_ms',
     dgDebugLevel: LS_PREFIX + 'player_overlay_dg_debug_level',
+    dgBlockNextMs: LS_PREFIX + 'player_overlay_dg_block_next_ms',
+    dgTailSec: LS_PREFIX + 'player_overlay_dg_tail_sec',
+    dgFalseEndJumpSec: LS_PREFIX + 'player_overlay_dg_false_end_jump_sec',
+    dgFakeFullEnabled: LS_PREFIX + 'player_overlay_dg_fake_full_enabled',
+    dgFalseEndEnabled: LS_PREFIX + 'player_overlay_dg_false_end_enabled',
 
     truthSec: LS_PREFIX + 'player_overlay_truth_sec',
     truthTs: LS_PREFIX + 'player_overlay_truth_ts',
@@ -138,7 +143,12 @@
     dgResumeSeekRetryMax: 2,
     dgRecoverRetryMax: 2,
     dgFailsafeCooldownMs: 8000,
-    dgDebugLevel: 'normal'
+    dgDebugLevel: 'normal',
+    dgBlockNextMs: 6000,
+    dgTailSec: 3.0,
+    dgFalseEndJumpSec: 10.0,
+    dgFakeFullEnabled: true,
+    dgFalseEndEnabled: true
   };
 
   var OVERLAY_DEFAULTS = {
@@ -189,6 +199,11 @@
     dg_recover_retry_max: 2,
     dg_failsafe_cooldown_ms: 8000,
     dg_debug_level: 'normal',
+    dg_block_next_ms: 6000,
+    dg_tail_sec: 3.0,
+    dg_false_end_jump_sec: 10.0,
+    dg_fake_full_enabled: 1,
+    dg_false_end_enabled: 1,
 
     soft_attempts: 0,
     inplayer_attempts: 2,
@@ -247,7 +262,12 @@
       { key: K.dgResumeSeekRetryMax, def: clampInt(toInt(d.dg_resume_seek_retry_max, 2), 0, 5) },
       { key: K.dgRecoverRetryMax, def: clampInt(toInt(d.dg_recover_retry_max, 2), 0, 5) },
       { key: K.dgFailsafeCooldownMs, def: clampInt(toInt(d.dg_failsafe_cooldown_ms, 8000), 1000, 120000) },
-      { key: K.dgDebugLevel, def: normalizeDgDebugLevel(d.dg_debug_level || 'normal') }
+      { key: K.dgDebugLevel, def: normalizeDgDebugLevel(d.dg_debug_level || 'normal') },
+      { key: K.dgBlockNextMs, def: clampInt(toInt(d.dg_block_next_ms, 6000), 1000, 30000) },
+      { key: K.dgTailSec, def: Math.max(0.5, Math.min(12, toNum(d.dg_tail_sec, 3.0))) },
+      { key: K.dgFalseEndJumpSec, def: Math.max(1, Math.min(120, toNum(d.dg_false_end_jump_sec, 10.0))) },
+      { key: K.dgFakeFullEnabled, def: toInt(d.dg_fake_full_enabled, 1) ? 1 : 0 },
+      { key: K.dgFalseEndEnabled, def: toInt(d.dg_false_end_enabled, 1) ? 1 : 0 }
     ];
   }
 
@@ -545,9 +565,27 @@
       verifyTimer: null,
       failsafeUntilTs: 0,
       suspendUntilTs: 0,
+      userSeekUntilTs: 0,
       lastTrigger: '',
       lastAction: '',
-      lastErr: ''
+      lastErr: '',
+      endGuard: {
+        blockNextUntilTs: 0,
+        blockContentKey: '',
+        falseEndDetected: 0,
+        falseEndReason: '',
+        falseEndTs: 0,
+        ctJumpDelta: 0,
+        nearEnd: 0
+      },
+      bufferGuard: {
+        fakeFullDetected: 0,
+        underrunDetected: 0,
+        reason: '',
+        reasonTs: 0,
+        bufferSig: '',
+        ranges: ''
+      }
     },
 
     log: {
@@ -855,9 +893,11 @@
 
   function markUserSeekIntent(ms, why) {
     ms = clampInt(ms || toInt(CFG.userSeekWindowMs, 1800), 300, 15000);
-    STATE.intent.userSeekUntilTs = Math.max(toInt(STATE.intent.userSeekUntilTs, 0), nowMs() + ms);
+    var until = nowMs() + ms;
+    STATE.intent.userSeekUntilTs = Math.max(toInt(STATE.intent.userSeekUntilTs, 0), until);
     STATE.intent.userLastSeekTs = nowMs();
-    STATE.dg.suspendUntilTs = Math.max(toInt(STATE.dg.suspendUntilTs, 0), nowMs() + ms);
+    STATE.dg.suspendUntilTs = Math.max(toInt(STATE.dg.suspendUntilTs, 0), until);
+    STATE.dg.userSeekUntilTs = Math.max(toInt(STATE.dg.userSeekUntilTs, 0), until);
     if (isModeDelta()) dgSetState('SUSPENDED', 'user_seek');
     if (why) logLine('INF', 'USER_SEEK intent', { ms: ms, why: String(why || '') });
   }
@@ -1303,6 +1343,11 @@
     CFG.dgRecoverRetryMax = clampInt(sGet(K.dgRecoverRetryMax, String(d(K.dgRecoverRetryMax, 2))), 0, 5);
     CFG.dgFailsafeCooldownMs = clampInt(sGet(K.dgFailsafeCooldownMs, String(d(K.dgFailsafeCooldownMs, 8000))), 1000, 120000);
     CFG.dgDebugLevel = normalizeDgDebugLevel(sGet(K.dgDebugLevel, String(d(K.dgDebugLevel, 'normal'))));
+    CFG.dgBlockNextMs = clampInt(sGet(K.dgBlockNextMs, String(d(K.dgBlockNextMs, 6000))), 1000, 30000);
+    CFG.dgTailSec = Math.max(0.5, Math.min(12, toNum(sGet(K.dgTailSec, String(d(K.dgTailSec, 3.0))), toNum(d(K.dgTailSec, 3.0), 3.0))));
+    CFG.dgFalseEndJumpSec = Math.max(1, Math.min(120, toNum(sGet(K.dgFalseEndJumpSec, String(d(K.dgFalseEndJumpSec, 10.0))), toNum(d(K.dgFalseEndJumpSec, 10.0), 10.0))));
+    CFG.dgFakeFullEnabled = parseBool(sGet(K.dgFakeFullEnabled, String(d(K.dgFakeFullEnabled, 1))), !!toInt(d(K.dgFakeFullEnabled, 1), 1));
+    CFG.dgFalseEndEnabled = parseBool(sGet(K.dgFalseEndEnabled, String(d(K.dgFalseEndEnabled, 1))), !!toInt(d(K.dgFalseEndEnabled, 1), 1));
     CFG.frameHangMs = clampInt(toInt(CFG.frameHangMs, toInt(OVERLAY_DEFAULTS.frame_hang_ms, 3500)), 1200, 15000);
     CFG.frameCtDeltaSec = Math.max(0.2, Math.min(5, toNum(CFG.frameCtDeltaSec, toNum(OVERLAY_DEFAULTS.frame_ct_delta_sec, 1.0))));
     CFG.frameGraceMs = clampInt(toInt(CFG.frameGraceMs, toInt(OVERLAY_DEFAULTS.frame_grace_ms, 12000)), 1000, 20000);
@@ -1743,7 +1788,14 @@
       } catch (_) { }
       try { tryTailJumpClamp(video, e, 'seeking'); } catch (_) { }
     });
-    on('seeked', function () { bumpEvent('seeked'); });
+    on('seeked', function () {
+      bumpEvent('seeked');
+      try {
+        if (nowMs() > toInt(STATE.intent.guardSeekUntilTs, 0)) {
+          markUserSeekIntent(toInt(CFG.userSeekWindowMs, 1800), 'video_seeked');
+        }
+      } catch (_) { }
+    });
     on('play', function () {
       bumpEvent('play');
       STATE.pause.lastResumeTs = now();
@@ -1778,6 +1830,24 @@
     on('loadeddata', function () { bumpEvent('loadeddata'); });
     on('ended', function (e) {
       bumpEvent('ended');
+      if (isModeDelta()) {
+        try {
+          collectTick(video);
+          var dgEnd = dgShouldTreatEndAsFalse();
+          if (dgEnd && dgEnd.block) {
+            try { if (e && e.stopImmediatePropagation) e.stopImmediatePropagation(); } catch (_) { }
+            try { if (e && e.preventDefault) e.preventDefault(); } catch (_) { }
+            dgLog('WRN', 'DG_BLOCK ended', {
+              reason: String(dgEnd.reason || ''),
+              ct: isFinite(toNum(STATE.tick && STATE.tick.ct, NaN)) ? toNum(STATE.tick && STATE.tick.ct, 0).toFixed(2) : '',
+              dur: isFinite(toNum(STATE.tick && STATE.tick.dur, NaN)) ? toNum(STATE.tick && STATE.tick.dur, 0).toFixed(2) : '',
+              blockLeftMs: dgCurrentBlockLeftMs()
+            });
+            dgKickRecovery('ended:' + String(dgEnd.reason || 'guard'), { delayMs: 220, tick: STATE.tick });
+          }
+        } catch (_) { }
+        return;
+      }
       try {
         if (CFG.enabled && CFG.protectNext) {
           var until = Math.max(toInt(STATE.guard.preventEndedUntilTs, 0), toInt(STATE.guard.falseEndCriticalUntilTs, 0));
@@ -2283,6 +2353,15 @@
       + ' retries=' + String(toInt(STATE.dg.recoverRetry, 0)) + '/' + String(toInt(CFG.dgRecoverRetryMax, 2))
       + ' corrections=' + String(toInt(STATE.dg.corrections, 0))
       + ' failsafeLeftMs=' + String(Math.max(0, toInt(STATE.dg.failsafeUntilTs, 0) - nowMs())));
+    lines.push('delta.guard: blockNextLeftMs=' + String(dgCurrentBlockLeftMs())
+      + ' falseEndDetected=' + String(toInt(STATE.dg.endGuard && STATE.dg.endGuard.falseEndDetected, 0))
+      + ' fakeFullDetected=' + String(toInt(STATE.dg.bufferGuard && STATE.dg.bufferGuard.fakeFullDetected, 0))
+      + ' underrunDetected=' + String(toInt(STATE.dg.bufferGuard && STATE.dg.bufferGuard.underrunDetected, 0))
+      + ' ctJumpDelta=' + toNum(STATE.dg.endGuard && STATE.dg.endGuard.ctJumpDelta, 0).toFixed(2)
+      + ' nearEnd=' + String(toInt(STATE.dg.endGuard && STATE.dg.endGuard.nearEnd, 0))
+      + ' bufferSig=' + String(STATE.dg.bufferGuard && STATE.dg.bufferGuard.bufferSig ? STATE.dg.bufferGuard.bufferSig : '')
+      + ' ranges=' + String(STATE.dg.bufferGuard && STATE.dg.bufferGuard.ranges ? STATE.dg.bufferGuard.ranges : '')
+      + ' reason=' + String((STATE.dg.endGuard && STATE.dg.endGuard.falseEndReason) || (STATE.dg.bufferGuard && STATE.dg.bufferGuard.reason) || ''));
 
     lines.push('media: t=' + fmtTime(t.ct)
       + ' dur=' + fmtTime(t.dur)
@@ -2621,7 +2700,16 @@
         + ' recoverRetry=' + String(toInt(STATE.dg.recoverRetry, 0)) + '/' + String(toInt(CFG.dgRecoverRetryMax, 2)),
       'failsafeLeftMs=' + String(Math.max(0, toInt(STATE.dg.failsafeUntilTs, 0) - nowMs()))
         + ' suspendLeftMs=' + String(Math.max(0, toInt(STATE.dg.suspendUntilTs, 0) - nowMs()))
-        + ' lastErr=' + String(STATE.dg.lastErr || '')
+        + ' lastErr=' + String(STATE.dg.lastErr || ''),
+      'blockNextLeftMs=' + String(dgCurrentBlockLeftMs())
+        + ' falseEndDetected=' + String(toInt(STATE.dg.endGuard && STATE.dg.endGuard.falseEndDetected, 0))
+        + ' fakeFullDetected=' + String(toInt(STATE.dg.bufferGuard && STATE.dg.bufferGuard.fakeFullDetected, 0))
+        + ' underrunDetected=' + String(toInt(STATE.dg.bufferGuard && STATE.dg.bufferGuard.underrunDetected, 0)),
+      'ctJumpDelta=' + toNum(STATE.dg.endGuard && STATE.dg.endGuard.ctJumpDelta, 0).toFixed(2)
+        + ' nearEnd=' + String(toInt(STATE.dg.endGuard && STATE.dg.endGuard.nearEnd, 0))
+        + ' bufferSig=' + String(STATE.dg.bufferGuard && STATE.dg.bufferGuard.bufferSig ? STATE.dg.bufferGuard.bufferSig : ''),
+      'ranges=[' + String(STATE.dg.bufferGuard && STATE.dg.bufferGuard.ranges ? STATE.dg.bufferGuard.ranges : '') + ']'
+        + ' reason=' + String((STATE.dg.endGuard && STATE.dg.endGuard.falseEndReason) || (STATE.dg.bufferGuard && STATE.dg.bufferGuard.reason) || '')
     ];
 
     var logs = [];
@@ -4336,6 +4424,8 @@
     dgStopVerifyTimer();
     STATE.dg.recoverActive = false;
     STATE.dg.recoverToken = toInt(STATE.dg.recoverToken, 0) + 1;
+    STATE.dg.endGuard.blockNextUntilTs = 0;
+    STATE.dg.endGuard.blockContentKey = '';
     if (reason) dgLog('DBG', 'DG_STOP', { reason: String(reason || '') });
   }
 
@@ -4370,9 +4460,299 @@
     return [sig, pid, season, episode, durBucket].join('|');
   }
 
+  function dgTailSec() {
+    return Math.max(0.5, Math.min(12, toNum(CFG.dgTailSec, 3.0)));
+  }
+
+  function dgFalseEndJumpSec() {
+    return Math.max(1, Math.min(120, toNum(CFG.dgFalseEndJumpSec, 10.0)));
+  }
+
+  function dgBlockNextMs() {
+    return clampInt(toInt(CFG.dgBlockNextMs, 6000), 1000, 30000);
+  }
+
+  function dgIsNearEnd(ct, dur) {
+    return isFinite(toNum(ct, NaN)) && isFinite(toNum(dur, NaN)) && toNum(dur, 0) > 1 && toNum(ct, 0) >= (toNum(dur, 0) - dgTailSec());
+  }
+
+  function dgUserSeekIntentActive() {
+    var until = Math.max(toInt(STATE.dg.userSeekUntilTs, 0), toInt(STATE.intent.userSeekUntilTs, 0));
+    return nowMs() < until;
+  }
+
+  function dgCurrentBlockLeftMs() {
+    var eg = STATE.dg && STATE.dg.endGuard ? STATE.dg.endGuard : null;
+    if (!eg) return 0;
+    var key = String(STATE.dg.contentKey || '');
+    var blockKey = String(eg.blockContentKey || '');
+    if (blockKey && key && blockKey !== key) return 0;
+    return Math.max(0, toInt(eg.blockNextUntilTs, 0) - nowMs());
+  }
+
+  function dgBlockNextActive() {
+    return dgCurrentBlockLeftMs() > 0;
+  }
+
+  function dgStateBlocksNext() {
+    var st = String(STATE.dg.state || '');
+    return st === DG_ST.STALL_CANDIDATE || st === DG_ST.RECOVERING || st === DG_ST.VERIFYING;
+  }
+
+  function dgSetBlockNext(ms, why) {
+    ms = clampInt(ms, 1000, 30000);
+    var until = nowMs() + ms;
+    STATE.dg.endGuard.blockNextUntilTs = Math.max(toInt(STATE.dg.endGuard.blockNextUntilTs, 0), until);
+    STATE.dg.endGuard.blockContentKey = String(STATE.dg.contentKey || '');
+    armBlockNext(ms, 'dg:' + String(why || ''));
+  }
+
+  function dgBufferSig(t) {
+    t = t || STATE.tick || {};
+    var sig = String(t.rangesSig || '');
+    var firstS = isFinite(toNum(t.firstRangeStart, NaN)) ? toNum(t.firstRangeStart, 0).toFixed(2) : '-';
+    var firstE = isFinite(toNum(t.firstRangeEnd, NaN)) ? toNum(t.firstRangeEnd, 0).toFixed(2) : '-';
+    return sig + '|first=' + firstS + '-' + firstE;
+  }
+
+  function dgNaturalGrowth(minPairs, maxLookback) {
+    var rows = STATE.dg.samples || [];
+    minPairs = clampInt(minPairs, 1, 10);
+    maxLookback = clampInt(maxLookback || 12, minPairs + 1, 30);
+    if (rows.length < 2) return false;
+
+    var good = 0;
+    var checked = 0;
+    for (var i = rows.length - 1; i > 0 && checked < maxLookback; i--) {
+      var cur = rows[i] || null;
+      var prev = rows[i - 1] || null;
+      checked++;
+      if (!cur || !prev) continue;
+      var ctA = toNum(prev.ct, NaN);
+      var ctB = toNum(cur.ct, NaN);
+      if (!isFinite(ctA) || !isFinite(ctB)) continue;
+      var dtMs = Math.max(1, toInt(cur.tWall, 0) - toInt(prev.tWall, 0));
+      var ctDelta = ctB - ctA;
+      var maxNatural = Math.max(2.5, (dtMs / 1000) * 2.8);
+      if (ctDelta >= 0.01 && ctDelta <= maxNatural) good++;
+      else if (ctDelta < -0.1) return false;
+      if (good >= minPairs) return true;
+    }
+    return false;
+  }
+
+  function dgMarkBufferGuard(kind, reason, t) {
+    t = t || STATE.tick || {};
+    var bg = STATE.dg.bufferGuard || {};
+    var ts = nowMs();
+    kind = String(kind || '');
+    reason = String(reason || '');
+
+    if (kind === 'fake_full') bg.fakeFullDetected = 1;
+    if (kind === 'underrun') bg.underrunDetected = 1;
+    bg.reason = kind + ':' + reason;
+    bg.reasonTs = ts;
+    bg.bufferSig = dgBufferSig(t);
+    bg.ranges = String(t.rangesText || '');
+    STATE.dg.bufferGuard = bg;
+    dgSetBlockNext(dgBlockNextMs(), 'buffer_guard:' + kind);
+  }
+
+  function dgMarkFalseEnd(reason, opts) {
+    opts = opts || {};
+    var eg = STATE.dg.endGuard || {};
+    var ts = nowMs();
+    var why = String(reason || '');
+    eg.falseEndDetected = 1;
+    eg.falseEndReason = why;
+    eg.falseEndTs = ts;
+    eg.ctJumpDelta = toNum(opts.ctJumpDelta, 0);
+    eg.nearEnd = toInt(opts.nearEnd, 0) ? 1 : 0;
+    STATE.dg.endGuard = eg;
+    dgSetBlockNext(dgBlockNextMs(), 'false_end:' + why);
+  }
+
+  function dgApplyTargetSeek(target, why) {
+    var v = STATE.video || getVideo();
+    if (!v || !isFinite(toNum(target, NaN))) return false;
+    try {
+      markGuardSeekIntent(toInt(CFG.userSeekWindowMs, 1800), String(why || 'dg_seek'));
+      armFrameGrace(CFG.frameGraceMs, String(why || 'dg_seek'));
+      v.currentTime = Math.max(0, toNum(target, 0));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function dgKickRecovery(reason, opts) {
+    opts = opts || {};
+    reason = String(reason || 'false_end');
+    if (!isModeDelta()) return false;
+    if (!CFG.enabled || String(CFG.mode || '') === 'off') return false;
+
+    var t = opts.tick || STATE.tick || {};
+    var ct = toNum(t.ct, NaN);
+    var dur = toNum(t.dur, NaN);
+    var nearEnd = dgIsNearEnd(ct, dur);
+    var target = dgPickTargetSec();
+    if (!isFinite(target)) {
+      target = recoveryTargetSec(toNum(STATE.truth.lastGoodSec, 0), dur, 'dg_' + reason);
+    }
+    if (!isFinite(target)) target = Math.max(0, toNum(STATE.truth.lastGoodSec, 0));
+
+    dgMarkFalseEnd(reason, {
+      ctJumpDelta: toNum(opts.ctJumpDelta, 0),
+      nearEnd: nearEnd ? 1 : 0
+    });
+    STATE.dg.lastTrigger = 'false_end:' + reason;
+    STATE.dg.lastAction = 'guard:' + reason;
+    if (nearEnd && isFinite(target)) {
+      STATE.dg.targetSec = Math.max(0, toNum(target, 0));
+      STATE.dg.targetKey = String(STATE.dg.contentKey || '');
+      if (dgApplyTargetSeek(target, 'dg_false_end_seek')) {
+        dgSetState(DG_ST.VERIFYING, 'false_end_seek');
+      } else {
+        dgSetState(DG_ST.RECOVERING, 'false_end_no_seek');
+      }
+    } else {
+      dgSetState(DG_ST.RECOVERING, 'false_end');
+    }
+    setPhase(ST.HUNG, 'dg_false_end');
+
+    var delayMs = clampInt(toInt(opts.delayMs, 260), 120, 900);
+    var scheduledKey = String(STATE.dg.contentKey || '');
+    setTimeout(function () {
+      if (!isModeDelta()) return;
+      if (scheduledKey && scheduledKey !== String(STATE.dg.contentKey || '')) return;
+      if (dgUserSeekIntentActive() || isUserNavWindowActive() || isUserPauseIntent()) return;
+      if (STATE.dg.recoverActive || STATE.rec.active) return;
+      startDeltaRecovery('false_end:' + reason);
+    }, delayMs);
+    return true;
+  }
+
+  function dgShouldTreatEndAsFalse() {
+    if (!CFG.dgFalseEndEnabled) return { block: false, reason: '' };
+    if (dgUserSeekIntentActive() || isUserNavWindowActive()) return { block: false, reason: 'user_intent' };
+    if (dgStateBlocksNext() || dgBlockNextActive()) return { block: true, reason: 'state_or_block' };
+
+    var t = STATE.tick || {};
+    var nearEnd = dgIsNearEnd(toNum(t.ct, NaN), toNum(t.dur, NaN));
+
+    var bg = STATE.dg.bufferGuard || {};
+    if ((toInt(bg.fakeFullDetected, 0) || toInt(bg.underrunDetected, 0)) && ageMs(toInt(bg.reasonTs, 0)) < 15000) {
+      return { block: true, reason: String(bg.reason || 'buffer_guard') };
+    }
+
+    if (nearEnd && !dgNaturalGrowth(3, 10)) return { block: true, reason: 'no_natural_growth' };
+    return { block: false, reason: '' };
+  }
+
+  function dgHandleNextTrigger(where, type) {
+    if (!isModeDelta()) return false;
+    if (!CFG.dgFalseEndEnabled) return false;
+    if (dgUserSeekIntentActive() || isUserNavWindowActive()) return false;
+    if (STATE.user && String(STATE.user.lastCmdNorm || '') === 'nav' && ageMs(toInt(STATE.user.lastCmdTs, 0)) < Math.max(1200, toInt(CFG.userNavWindowMs, 2500) + 400)) return false;
+    var dec = dgShouldTreatEndAsFalse();
+    if (!dec || !dec.block) return false;
+    var why = 'next_trigger:' + String(where || '') + ':' + String(type || '') + ':' + String(dec.reason || 'guard');
+    return dgKickRecovery(why, { delayMs: 220 });
+  }
+
+  function dgMaybeDetectNearEndJump() {
+    if (!isModeDelta()) return false;
+    if (!CFG.dgFalseEndEnabled) return false;
+    if (dgUserSeekIntentActive() || isUserNavWindowActive()) return false;
+    if (nowMs() < toInt(STATE.intent.guardSeekUntilTs, 0)) return false;
+
+    var t = STATE.tick || {};
+    var ct = toNum(t.ct, NaN);
+    var dur = toNum(t.dur, NaN);
+    if (!dgIsNearEnd(ct, dur)) return false;
+
+    var g = STATE.dg.lastGoodSample;
+    if (!g) return false;
+    var lastGoodCt = toNum(g.ct, NaN);
+    if (!isFinite(lastGoodCt)) return false;
+
+    var jumpDelta = (toNum(dur, 0) - dgTailSec()) - lastGoodCt;
+    if (!isFinite(jumpDelta) || jumpDelta < dgFalseEndJumpSec()) return false;
+    if (ageMs(toInt(STATE.dg.endGuard.falseEndTs, 0)) < 900) return false;
+
+    return dgKickRecovery('jump_to_end', { ctJumpDelta: jumpDelta, delayMs: 260, tick: t });
+  }
+
+  function dgMaybeDetectBufferGuards(ages) {
+    if (!isModeDelta()) return false;
+    if (STATE.dg.recoverActive || STATE.rec.active) return false;
+    if (dgUserSeekIntentActive() || isUserNavWindowActive()) return false;
+
+    var t = STATE.tick || {};
+    if (!t.hasVideo) return false;
+
+    var ctStuck = toInt(STATE.ct.stuckMs, 0);
+    var stallSoft = Math.max(500, toInt(CFG.dgStallSoftMs, 1200));
+    if (ctStuck < stallSoft) return false;
+
+    ages = ages || runtimeAges();
+    var ba = bufferAges();
+    var ageThr = Math.max(stallSoft, 900);
+    var timeupdateOld = toInt(ages.timeupdateAge, 0) >= ageThr;
+    var progressOld = toInt(ba.progAge, 0) >= ageThr;
+    var noFlow = timeupdateOld && progressOld;
+
+    var dur = toNum(t.dur, NaN);
+    var tail = dgTailSec();
+    var fullRange = isFinite(dur) && dur > 20 && toNum(t.firstRangeStart, NaN) <= 0.5 && toNum(t.firstRangeEnd, NaN) >= (dur - tail);
+    var aheadHuge = toNum(t.aheadSec, 0) >= Math.max(20, (isFinite(dur) ? dur * 0.35 : 20));
+    var aheadStale = toInt(ba.aheadMoveAge, 0) >= ageThr;
+    var fakeFlow = fullRange && ctStuck >= stallSoft && (noFlow || (aheadHuge && aheadStale));
+
+    if (CFG.dgFakeFullEnabled && fakeFlow) {
+      dgMarkBufferGuard('fake_full', 'full_range_no_flow', t);
+      STATE.dg.lastTrigger = 'fake_full';
+      dgSetState(DG_ST.RECOVERING, 'fake_full');
+      setPhase(ST.HUNG, 'dg_fake_full');
+      return startDeltaRecovery('fake_full_buffer_dg');
+    }
+
+    var minAhead = Math.max(0.01, toNum(CFG.minAheadSec, 0.1));
+    var underrun = toNum(t.aheadSec, 0) <= minAhead && ctStuck >= stallSoft && noFlow;
+    if (underrun) {
+      dgMarkBufferGuard('underrun', 'low_ahead_stall', t);
+      STATE.dg.lastTrigger = 'underrun';
+      dgSetState(DG_ST.RECOVERING, 'underrun');
+      setPhase(ST.HUNG, 'dg_underrun');
+      return startDeltaRecovery('buffer_underrun_dg');
+    }
+    return false;
+  }
+
   function dgResetForContent(newKey, why) {
     newKey = String(newKey || '');
     var prev = String(STATE.dg.contentKey || '');
+    if (prev && newKey && prev !== newKey) {
+      clearCarry('dg_content_change', true);
+      if (STATE.resume && STATE.resume.ticket) {
+        STATE.resume.ticket = null;
+        syncResumeTicket({
+          id: '',
+          recToken: toInt(STATE.rec.token, 0),
+          sec: null,
+          srcSig: String(STATE.session && STATE.session.srcSig ? STATE.session.srcSig : ''),
+          createdTs: nowMs(),
+          reason: 'dg_content_change',
+          kind: 'discard',
+          source: 'dg',
+          applied: 0,
+          applyTs: 0,
+          lastApplyErr: 'dg_content_change',
+          verifyOk: 0,
+          verifyDelta: NaN
+        });
+      }
+    }
     STATE.dg.lastContentKey = prev;
     STATE.dg.contentKey = newKey;
     STATE.dg.samples = [];
@@ -4391,6 +4771,24 @@
     STATE.dg.lastErr = '';
     STATE.dg.failsafeUntilTs = 0;
     STATE.dg.suspendUntilTs = 0;
+    STATE.dg.userSeekUntilTs = 0;
+    STATE.dg.endGuard.blockNextUntilTs = 0;
+    STATE.dg.endGuard.blockContentKey = '';
+    STATE.dg.endGuard.falseEndDetected = 0;
+    STATE.dg.endGuard.falseEndReason = '';
+    STATE.dg.endGuard.falseEndTs = 0;
+    STATE.dg.endGuard.ctJumpDelta = 0;
+    STATE.dg.endGuard.nearEnd = 0;
+    STATE.dg.bufferGuard.fakeFullDetected = 0;
+    STATE.dg.bufferGuard.underrunDetected = 0;
+    STATE.dg.bufferGuard.reason = '';
+    STATE.dg.bufferGuard.reasonTs = 0;
+    STATE.dg.bufferGuard.bufferSig = '';
+    STATE.dg.bufferGuard.ranges = '';
+    STATE.guard.blockNextUntilTs = 0;
+    STATE.guard.preventStartUntilTs = 0;
+    STATE.guard.preventEndedUntilTs = 0;
+    STATE.guard.falseEndCriticalUntilTs = 0;
     dgStopVerifyTimer();
     dgSetState(newKey ? DG_ST.TRACKING : DG_ST.IDLE, String(why || 'content_reset'));
     dgLog('INF', 'DG_CONTENT_RESET', { prev: prev ? hash32(prev) : '', next: newKey ? hash32(newKey) : '', why: String(why || '') });
@@ -4412,6 +4810,9 @@
       ahead: toNum(t.aheadSec, 0),
       rangeStart: toNum(t.rangeStartAtCt, NaN),
       rangeEnd: toNum(t.rangeEndAtCt, NaN),
+      rangesSig: String(t.rangesSig || ''),
+      ranges: String(t.rangesText || ''),
+      bufferSig: dgBufferSig(t),
       playing: isPlayingLike(t) ? 1 : 0,
       playbackRate: safe(function () { return toNum((STATE.video || getVideo()).playbackRate, 1); }, 1)
     };
@@ -4420,7 +4821,10 @@
     var rows = STATE.dg.samples;
     var prev = rows.length ? rows[rows.length - 1] : null;
     var ctDelta = prev ? (sample.ct - toNum(prev.ct, sample.ct)) : 0;
-    if (ctDelta >= 0.01) {
+    var dtMs = prev ? Math.max(1, toInt(sample.tWall, 0) - toInt(prev.tWall, 0)) : 0;
+    var maxNatural = prev ? Math.max(2.5, (dtMs / 1000) * 2.8) : 0;
+    var naturalGrowth = !prev || (ctDelta >= 0.01 && ctDelta <= maxNatural);
+    if (naturalGrowth) {
       STATE.dg.lastGoodSample = sample;
       if (sample.ahead >= Math.max(0.05, toNum(CFG.minAheadSec, 0.1))) {
         STATE.dg.lastStableSample = sample;
@@ -4479,7 +4883,7 @@
 
     STATE.dg.lastErr = String(why || 'recover_fail');
     var stopRetry = false;
-    if (STATE.dg.lastErr === 'user_intent' || STATE.dg.lastErr === 'mode_changed' || STATE.dg.lastErr === 'token_changed' || STATE.dg.lastErr === 'inactive' || STATE.dg.lastErr === 'exit_intent' || STATE.dg.lastErr === 'disabled') {
+    if (STATE.dg.lastErr === 'user_intent' || STATE.dg.lastErr === 'mode_changed' || STATE.dg.lastErr === 'token_changed' || STATE.dg.lastErr === 'inactive' || STATE.dg.lastErr === 'exit_intent' || STATE.dg.lastErr === 'disabled' || STATE.dg.lastErr === 'content_changed') {
       stopRetry = true;
     }
     if (!stopRetry && (STATE.dg.lastErr.indexOf('user_') === 0 || STATE.dg.lastErr.indexOf('cmd_') === 0)) stopRetry = true;
@@ -4540,6 +4944,7 @@
     STATE.rec.startedTs = nowMs();
     STATE.dg.lastAction = 'recover_start:' + reason;
     beginCritical('delta_recover', criticalTtlMs(0));
+    dgSetBlockNext(Math.max(dgBlockNextMs(), Math.floor(toInt(CFG.dgStallHardMs, 2500) * 2)), 'recover:' + reason);
     armBlockNext(Math.max(5000, Math.floor(toInt(CFG.dgStallHardMs, 2500) * 3)), 'dg_recover');
     armFalseEndCritical(Math.max(8000, Math.floor(toInt(CFG.dgStallHardMs, 2500) * 3)), 'dg_recover');
     dgSetState(DG_ST.RECOVERING, reason);
@@ -4555,6 +4960,7 @@
     (function waitVideoAndSeek() {
       if (!isModeDelta()) return dgFinishRecovery(false, 'mode_changed');
       if (token !== toInt(STATE.dg.recoverToken, 0)) return;
+      if (STATE.dg.targetKey && dgContentKey() !== String(STATE.dg.targetKey || '')) return dgFinishRecovery(false, 'content_changed');
       var v = STATE.video || getVideo();
       if (!v) {
         if ((nowMs() - waitStarted) > Math.max(3000, toInt(CFG.dgStallHardMs, 2500) * 2)) {
@@ -4583,6 +4989,7 @@
         STATE.dg.verifyTimer = setInterval(function () {
           if (!isModeDelta()) return dgFinishRecovery(false, 'mode_changed');
           if (token !== toInt(STATE.dg.recoverToken, 0)) return dgFinishRecovery(false, 'token_changed');
+          if (STATE.dg.targetKey && dgContentKey() !== String(STATE.dg.targetKey || '')) return dgFinishRecovery(false, 'content_changed');
           var vv = STATE.video || getVideo();
           if (!vv) return;
           if (isUserPauseIntent() || isUserSeekWindowActive() || isUserNavWindowActive()) {
@@ -4644,6 +5051,7 @@
 
     var suspendLeft = Math.max(
       Math.max(0, toInt(STATE.dg.suspendUntilTs, 0) - nowMs()),
+      Math.max(0, toInt(STATE.dg.userSeekUntilTs, 0) - nowMs()),
       Math.max(0, toInt(STATE.user.pauseHoldUntilTs, 0) - nowMs()),
       Math.max(0, toInt(STATE.intent.userSeekUntilTs, 0) - nowMs()),
       Math.max(0, toInt(STATE.intent.userNavUntilTs, 0) - nowMs())
@@ -4655,6 +5063,7 @@
 
     if (STATE.dg.recoverActive || STATE.rec.active || STATE.dg.verifyTimer) return false;
     dgSetState(DG_ST.TRACKING, 'live');
+    if (dgMaybeDetectNearEndJump()) return true;
 
     var ctStuck = toInt(STATE.ct.stuckMs, 0);
     var stallSoft = toInt(CFG.dgStallSoftMs, 1200);
@@ -4668,6 +5077,7 @@
     dgSetState(DG_ST.STALL_CANDIDATE, 'ct_stall');
 
     var ages = runtimeAges();
+    if (dgMaybeDetectBufferGuards(ages)) return true;
     var bufferingLike = toInt(t.readyState, 0) < 2 && toNum(t.aheadSec, 0) <= Math.max(0.05, toNum(CFG.minAheadSec, 0.1));
     if (bufferingLike && (toInt(ages.waitingAge, 0) < stallHard || toInt(ages.stalledAge, 0) < stallHard)) {
       return false;
@@ -4969,6 +5379,16 @@
       var manualNav = isUserNavWindowActive() && isNavType(lowerType);
 
       try {
+        if (isModeDelta() && lowerType === 'start' && !manualNav) {
+          if (dgStateBlocksNext() || dgBlockNextActive()) {
+            logLine('WRN', 'DG_BLOCK player.start', {
+              leftMs: dgCurrentBlockLeftMs(),
+              state: String(STATE.dg.state || ''),
+              type: String(type || '')
+            });
+            return;
+          }
+        }
         if (CFG.enabled && CFG.protectNext && lowerType === 'start' && !manualNav) {
           var untilStart = Math.max(toInt(STATE.guard.preventStartUntilTs, 0), toInt(STATE.guard.falseEndCriticalUntilTs, 0));
           if (untilStart && now() < untilStart) {
@@ -5004,7 +5424,14 @@
       try { handlePlayerSend(type, payload); } catch (_) { }
 
       try {
-        if (CFG.enabled && CFG.protectNext && shouldBlockNextType(type) && !manualNav) {
+        if (isModeDelta() && shouldBlockNextType(type) && !manualNav) {
+          collectTick(STATE.video || getVideo());
+          if (dgHandleNextTrigger('player.send', lowerType)) {
+            logLine('WRN', 'DG_BLOCK next/select', { where: 'player.send', type: String(type || ''), state: String(STATE.dg.state || ''), blockLeftMs: dgCurrentBlockLeftMs() });
+            return;
+          }
+        }
+        if (!isModeDelta() && CFG.enabled && CFG.protectNext && shouldBlockNextType(type) && !manualNav) {
           if (STATE.rec.active) {
             armBlockNext(5000, 'rec_active_player');
             logLine('WRN', 'BLOCK next/select while recovering', { where: 'player.send', type: String(type || '') });
@@ -5053,6 +5480,16 @@
       var manualNav = isUserNavWindowActive() && isNavType(lowerType);
 
       try {
+        if (isModeDelta() && lowerType === 'start' && !manualNav) {
+          if (dgStateBlocksNext() || dgBlockNextActive()) {
+            logLine('WRN', 'DG_BLOCK playlist.start', {
+              leftMs: dgCurrentBlockLeftMs(),
+              state: String(STATE.dg.state || ''),
+              type: String(type || '')
+            });
+            return;
+          }
+        }
         if (CFG.enabled && CFG.protectNext && lowerType === 'start' && !manualNav) {
           var untilStart = Math.max(toInt(STATE.guard.preventStartUntilTs, 0), toInt(STATE.guard.falseEndCriticalUntilTs, 0));
           if (untilStart && now() < untilStart) {
@@ -5083,7 +5520,14 @@
             }
           }
         }
-        if (CFG.enabled && CFG.protectNext && shouldBlockNextType(type) && !manualNav) {
+        if (isModeDelta() && shouldBlockNextType(type) && !manualNav) {
+          collectTick(STATE.video || getVideo());
+          if (dgHandleNextTrigger('playlist.send', lowerType)) {
+            logLine('WRN', 'DG_BLOCK next/select', { where: 'playlist.send', type: String(type || ''), state: String(STATE.dg.state || ''), blockLeftMs: dgCurrentBlockLeftMs() });
+            return;
+          }
+        }
+        if (!isModeDelta() && CFG.enabled && CFG.protectNext && shouldBlockNextType(type) && !manualNav) {
           if (STATE.rec.active) {
             armBlockNext(5000, 'rec_active_playlist');
             logLine('WRN', 'BLOCK next/select while recovering', { where: 'playlist.send', type: String(type || '') });
@@ -5616,6 +6060,11 @@
         dgRecoverRetryMax: toInt(CFG.dgRecoverRetryMax, 0),
         dgFailsafeCooldownMs: toInt(CFG.dgFailsafeCooldownMs, 0),
         dgDebugLevel: String(CFG.dgDebugLevel || 'normal'),
+        dgBlockNextMs: toInt(CFG.dgBlockNextMs, 0),
+        dgTailSec: toNum(CFG.dgTailSec, 0),
+        dgFalseEndJumpSec: toNum(CFG.dgFalseEndJumpSec, 0),
+        dgFakeFullEnabled: !!CFG.dgFakeFullEnabled,
+        dgFalseEndEnabled: !!CFG.dgFalseEndEnabled,
         frameHangMs: toInt(CFG.frameHangMs, 0),
         frameCtDeltaSec: toNum(CFG.frameCtDeltaSec, 0),
         frameGraceMs: toInt(CFG.frameGraceMs, 0)
@@ -5691,9 +6140,20 @@
         corrections: toInt(STATE.dg.corrections, 0),
         failsafeLeftMs: Math.max(0, toInt(STATE.dg.failsafeUntilTs, 0) - nowMs()),
         suspendLeftMs: Math.max(0, toInt(STATE.dg.suspendUntilTs, 0) - nowMs()),
+        userSeekLeftMs: Math.max(0, Math.max(toInt(STATE.dg.userSeekUntilTs, 0), toInt(STATE.intent.userSeekUntilTs, 0)) - nowMs()),
+        blockNextLeftMs: dgCurrentBlockLeftMs(),
         lastTrigger: String(STATE.dg.lastTrigger || ''),
         lastAction: String(STATE.dg.lastAction || ''),
-        lastErr: String(STATE.dg.lastErr || '')
+        lastErr: String(STATE.dg.lastErr || ''),
+        falseEndDetected: toInt(STATE.dg.endGuard && STATE.dg.endGuard.falseEndDetected, 0),
+        falseEndReason: String(STATE.dg.endGuard && STATE.dg.endGuard.falseEndReason ? STATE.dg.endGuard.falseEndReason : ''),
+        ctJumpDelta: toNum(STATE.dg.endGuard && STATE.dg.endGuard.ctJumpDelta, 0),
+        nearEnd: toInt(STATE.dg.endGuard && STATE.dg.endGuard.nearEnd, 0),
+        fakeFullDetected: toInt(STATE.dg.bufferGuard && STATE.dg.bufferGuard.fakeFullDetected, 0),
+        underrunDetected: toInt(STATE.dg.bufferGuard && STATE.dg.bufferGuard.underrunDetected, 0),
+        bufferSig: String(STATE.dg.bufferGuard && STATE.dg.bufferGuard.bufferSig ? STATE.dg.bufferGuard.bufferSig : ''),
+        bufferRanges: String(STATE.dg.bufferGuard && STATE.dg.bufferGuard.ranges ? STATE.dg.bufferGuard.ranges : ''),
+        guardReason: String((STATE.dg.endGuard && STATE.dg.endGuard.falseEndReason) || (STATE.dg.bufferGuard && STATE.dg.bufferGuard.reason) || '')
       },
       hang: {
         active: !!(STATE.hang && STATE.hang.active),
@@ -5956,7 +6416,7 @@
           try {
             if (!e || !e.name) return;
             var n = String(e.name || '');
-            if (n === K.enabled || n === K.mode || n === K.debugOnOpen || n === K.popupOpacity || n === K.protectNext || n === K.storeTruth || n === K.truthCommitMs || n === K.hangTimeMs || n === K.hangBufMs || n === K.resumeGuardMs || n === K.falseEndStaleAllow || n === K.fakeFullEnabled || n === K.fakeFullNoProgMs || n === K.fakeFullNoMoveMs || n === K.minAheadSec || n === K.underrunNoProgMs || n === K.underrunNoAheadMoveMs || n === K.softAttempts || n === K.inplayerAttempts || n === K.inplayerMode || n === K.escalateToReopen || n === K.reopenCooldownMs || n === K.resumeBackoffSec || n === K.resumeMinStepSec || n === K.seekVerifyDelayMs || n === K.seekDeltaSec || n === K.warmupAfterRecoverMs || n === K.userSeekWindowMs || n === K.userNavWindowMs || n === K.dgStallSoftMs || n === K.dgStallHardMs || n === K.dgWarmupGraceMs || n === K.dgResumeToleranceSec || n === K.dgResumeSeekRetryMax || n === K.dgRecoverRetryMax || n === K.dgFailsafeCooldownMs || n === K.dgDebugLevel || n === K.oldEnabled || n === K.oldDebugOnOpen || n === K.oldHangTimeMs || n === K.oldHangBufMs) API.refresh();
+            if (n === K.enabled || n === K.mode || n === K.debugOnOpen || n === K.popupOpacity || n === K.protectNext || n === K.storeTruth || n === K.truthCommitMs || n === K.hangTimeMs || n === K.hangBufMs || n === K.resumeGuardMs || n === K.falseEndStaleAllow || n === K.fakeFullEnabled || n === K.fakeFullNoProgMs || n === K.fakeFullNoMoveMs || n === K.minAheadSec || n === K.underrunNoProgMs || n === K.underrunNoAheadMoveMs || n === K.softAttempts || n === K.inplayerAttempts || n === K.inplayerMode || n === K.escalateToReopen || n === K.reopenCooldownMs || n === K.resumeBackoffSec || n === K.resumeMinStepSec || n === K.seekVerifyDelayMs || n === K.seekDeltaSec || n === K.warmupAfterRecoverMs || n === K.userSeekWindowMs || n === K.userNavWindowMs || n === K.dgStallSoftMs || n === K.dgStallHardMs || n === K.dgWarmupGraceMs || n === K.dgResumeToleranceSec || n === K.dgResumeSeekRetryMax || n === K.dgRecoverRetryMax || n === K.dgFailsafeCooldownMs || n === K.dgDebugLevel || n === K.dgBlockNextMs || n === K.dgTailSec || n === K.dgFalseEndJumpSec || n === K.dgFakeFullEnabled || n === K.dgFalseEndEnabled || n === K.oldEnabled || n === K.oldDebugOnOpen || n === K.oldHangTimeMs || n === K.oldHangBufMs) API.refresh();
           } catch (_) { }
         });
       }

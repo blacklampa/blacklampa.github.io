@@ -277,9 +277,10 @@
     filesystem_scan: { id: 'filesystem_scan', parent: 'utils', title: 'Scanner', descKey: 'menu.root.filescan.desc', screen: 'action', action: function () { try { if (window.BL && BL.FileScanner && BL.FileScanner.open) BL.FileScanner.open(); } catch (_) { } } },
     localstorage: { id: 'localstorage', parent: 'utils', title: 'LocalStorage', desc: 'LocalStorage Manager (keys + values).', screen: 'action', action: function () { try { if (window.BL && BL.LocalStorageManager && BL.LocalStorageManager.open) BL.LocalStorageManager.open(); } catch (_) { } } },
     danger: { id: 'danger', parent: 'root', titleKey: 'menu.root.danger.title', descKey: 'menu.root.danger.desc', screen: 'danger' },
-    ui: { id: 'ui', parent: 'root', titleKey: 'menu.root.ui.title', descKey: 'menu.root.ui.desc', screen: 'ui', children: ['ui_pg_legacy', 'ui_pg_overlay'] },
+    ui: { id: 'ui', parent: 'root', titleKey: 'menu.root.ui.title', descKey: 'menu.root.ui.desc', screen: 'ui', children: ['ui_pg_legacy', 'ui_pg_overlay', 'ui_deltaguard'] },
     ui_pg_legacy: { id: 'ui_pg_legacy', parent: 'ui', title: 'PG (legacy)', desc: 'Старые настройки PlayerGuard (не Overlay).', screen: 'ui_pg_legacy' },
     ui_pg_overlay: { id: 'ui_pg_overlay', parent: 'ui', title: 'PG Overlay', desc: 'Новый Overlay-плеер (идеальный защитник).', screen: 'ui_pg_overlay' },
+    ui_deltaguard: { id: 'ui_deltaguard', parent: 'ui', title: 'DeltaGuard', desc: 'Настройки режима DeltaGuard для PG Overlay.', screen: 'ui_deltaguard' },
     ui_playerguard: { id: 'ui_playerguard', parent: 'ui', menu: false, title: 'PlayerGuard', desc: 'PlayerGuard settings', screen: 'ui_pg_legacy' },
     blmod: { id: 'blmod', parent: 'root', title: 'BL-Mod', desc: 'BL-Mod: автономный плеер и настройки.', screen: 'blmod' },
     status: { id: 'status', parent: 'root', titleKey: 'menu.root.status.title', param: { name: 'bl_pi_root_status', type: 'static', values: '', default: '' }, screen: 'status', rootRender: rootStatusRender }
@@ -411,6 +412,7 @@
     ui: buildUiScreen,
     ui_pg_legacy: buildUiPlayerGuardLegacyScreen,
     ui_pg_overlay: buildUiPlayerGuardOverlayScreen,
+    ui_deltaguard: buildUiDeltaGuardScreen,
     ui_playerguard: buildUiPlayerGuardLegacyScreen,
     blmod: buildBlModScreen,
     logging: buildLoggingScreen,
@@ -1040,7 +1042,12 @@
       dg_resume_seek_retry_max: 2,
       dg_recover_retry_max: 2,
       dg_failsafe_cooldown_ms: 8000,
-      dg_debug_level: 'normal'
+      dg_debug_level: 'normal',
+      dg_block_next_ms: 6000,
+      dg_tail_sec: 3.0,
+      dg_false_end_jump_sec: 10.0,
+      dg_fake_full_enabled: 1,
+      dg_false_end_enabled: 1
     };
   }
 
@@ -1103,7 +1110,12 @@
       { key: p + 'player_overlay_dg_resume_seek_retry_max', def: String(d.dg_resume_seek_retry_max || 2) },
       { key: p + 'player_overlay_dg_recover_retry_max', def: String(d.dg_recover_retry_max || 2) },
       { key: p + 'player_overlay_dg_failsafe_cooldown_ms', def: String(d.dg_failsafe_cooldown_ms || 8000) },
-      { key: p + 'player_overlay_dg_debug_level', def: String(d.dg_debug_level || 'normal') }
+      { key: p + 'player_overlay_dg_debug_level', def: String(d.dg_debug_level || 'normal') },
+      { key: p + 'player_overlay_dg_block_next_ms', def: String(d.dg_block_next_ms || 6000) },
+      { key: p + 'player_overlay_dg_tail_sec', def: String(d.dg_tail_sec || 3.0) },
+      { key: p + 'player_overlay_dg_false_end_jump_sec', def: String(d.dg_false_end_jump_sec || 10.0) },
+      { key: p + 'player_overlay_dg_fake_full_enabled', def: d.dg_fake_full_enabled ? 1 : 0 },
+      { key: p + 'player_overlay_dg_false_end_enabled', def: d.dg_false_end_enabled ? 1 : 0 }
     ];
   }
 
@@ -1122,7 +1134,12 @@
       { key: p + 'player_overlay_dg_resume_seek_retry_max', def: String(d.dg_resume_seek_retry_max || 2) },
       { key: p + 'player_overlay_dg_recover_retry_max', def: String(d.dg_recover_retry_max || 2) },
       { key: p + 'player_overlay_dg_failsafe_cooldown_ms', def: String(d.dg_failsafe_cooldown_ms || 8000) },
-      { key: p + 'player_overlay_dg_debug_level', def: String(d.dg_debug_level || 'normal') }
+      { key: p + 'player_overlay_dg_debug_level', def: String(d.dg_debug_level || 'normal') },
+      { key: p + 'player_overlay_dg_block_next_ms', def: String(d.dg_block_next_ms || 6000) },
+      { key: p + 'player_overlay_dg_tail_sec', def: String(d.dg_tail_sec || 3.0) },
+      { key: p + 'player_overlay_dg_false_end_jump_sec', def: String(d.dg_false_end_jump_sec || 10.0) },
+      { key: p + 'player_overlay_dg_fake_full_enabled', def: d.dg_fake_full_enabled ? 1 : 0 },
+      { key: p + 'player_overlay_dg_false_end_enabled', def: d.dg_false_end_enabled ? 1 : 0 }
     ];
   }
 
@@ -1760,6 +1777,12 @@
         desc: 'Пауза детекторов после успешного recovery, чтобы избежать циклов.',
         onChange: refreshPlayerOverlaySettings
       });
+    } catch (_) { }
+  }
+
+  function buildUiDeltaGuardScreen(ctx) {
+    try {
+      var od = overlayDefaults();
 
       P(ctx, {
         id: 'player_overlay_user_seek_window_ms',
@@ -1778,6 +1801,56 @@
         default: String(od.user_nav_window_ms || 2500),
         name: 'DeltaGuard: User nav window (ms)',
         desc: 'Окно блокировки вмешательства после ручной навигации по сериям/файлам.',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
+        id: 'player_overlay_dg_block_next_ms',
+        type: 'select',
+        values: { '3000': '3000', '4000': '4000', '5000': '5000', '6000': '6000', '8000': '8000', '10000': '10000', '12000': '12000', '15000': '15000' },
+        default: String(od.dg_block_next_ms || 6000),
+        name: 'DeltaGuard: Block next (ms)',
+        desc: 'Окно жёсткой блокировки auto-next после false-end/fake-full/underrun.',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
+        id: 'player_overlay_dg_tail_sec',
+        type: 'select',
+        values: { '1.0': '1.0', '1.5': '1.5', '2.0': '2.0', '2.5': '2.5', '3.0': '3.0', '4.0': '4.0', '5.0': '5.0' },
+        default: String(od.dg_tail_sec || 3.0),
+        name: 'DeltaGuard: Tail window (sec)',
+        desc: 'Расстояние до конца, где DG включает EndGuard.',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
+        id: 'player_overlay_dg_false_end_jump_sec',
+        type: 'select',
+        values: { '3': '3', '5': '5', '7': '7', '10': '10', '12': '12', '15': '15', '20': '20' },
+        default: String(od.dg_false_end_jump_sec || 10.0),
+        name: 'DeltaGuard: False-end jump (sec)',
+        desc: 'Минимальный jump до tail, считаемый ложным переходом в конец.',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
+        id: 'player_overlay_dg_fake_full_enabled',
+        type: 'toggle',
+        values: { 0: 'OFF', 1: 'ON' },
+        default: od.dg_fake_full_enabled ? 1 : 0,
+        name: 'DeltaGuard: Fake-full detector',
+        desc: 'Включить DG BufferGuard fake-full.',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
+        id: 'player_overlay_dg_false_end_enabled',
+        type: 'toggle',
+        values: { 0: 'OFF', 1: 'ON' },
+        default: od.dg_false_end_enabled ? 1 : 0,
+        name: 'DeltaGuard: False-end detector',
+        desc: 'Включить DG EndGuard false-end/next-block.',
         onChange: refreshPlayerOverlaySettings
       });
 
