@@ -28,6 +28,8 @@
   var KEY_POPUP_AUTOCLOSE_SEC = LS_PREFIX + 'player_guard_popup_autoclose_sec';
   var KEY_HARD_STRATEGY = LS_PREFIX + 'player_guard_hard_strategy';
   var KEY_DEBUG_ON_OPEN = LS_PREFIX + 'player_guard_debug_on_open';
+  var KEY_OVERLAY_ENABLED = LS_PREFIX + 'player_overlay_enabled';
+  var KEY_OVERLAY_MODE = LS_PREFIX + 'player_overlay_mode';
 
   var DET = {
     epsilonEndSec: 2.0,
@@ -270,6 +272,21 @@
     try { if (window.Lampa && Lampa.Storage && Lampa.Storage.get) v = Lampa.Storage.get(String(k)); } catch (_) { v = null; }
     if (v === undefined || v === null || v === '') { try { v = lsGet(k); } catch (_) { v = null; } }
     return (v === undefined || v === null || v === '') ? fallback : v;
+  }
+
+  var OVERLAY_MODE_CACHE = { ts: 0, active: false };
+  function isOverlayDeltaActive() {
+    try {
+      var ts = now();
+      if ((ts - toInt(OVERLAY_MODE_CACHE.ts, 0)) < 250) return !!OVERLAY_MODE_CACHE.active;
+      var enabled = parseBool(sGet(KEY_OVERLAY_ENABLED, '0'), false);
+      var mode = String(sGet(KEY_OVERLAY_MODE, 'off') || '').toLowerCase();
+      OVERLAY_MODE_CACHE.ts = ts;
+      OVERLAY_MODE_CACHE.active = !!(enabled && mode === 'delta');
+      return !!OVERLAY_MODE_CACHE.active;
+    } catch (_) {
+      return false;
+    }
   }
 
   function parseBool(v, def) {
@@ -3429,6 +3446,7 @@
       if (pv.listener && typeof pv.listener.send === 'function' && !pv.listener.send.__blPlayerGuardWrappedV2) {
         var origSend = pv.listener.send;
         pv.listener.send = function () {
+          if (isOverlayDeltaActive()) return origSend.apply(this, arguments);
           if (!CFG.enabled) return origSend.apply(this, arguments);
           return handlePlayerVideoSend.call(this, origSend, arguments);
         };
@@ -3472,6 +3490,7 @@
       if (pl.listener && typeof pl.listener.send === 'function' && !pl.listener.send.__blPlayerGuardWrappedV2) {
 	        var origSend = pl.listener.send;
 	        pl.listener.send = function () {
+	          if (isOverlayDeltaActive()) return origSend.apply(this, arguments);
 	          if (!CFG.enabled) return origSend.apply(this, arguments);
 	          if (isManualSuppressed()) return origSend.apply(this, arguments);
 	          var type = (arguments && arguments.length) ? arguments[0] : '';
@@ -3528,6 +3547,7 @@
       if (p.listener && typeof p.listener.send === 'function' && !p.listener.send.__blPlayerGuardWrappedV2) {
 	        var origSend = p.listener.send;
 	        p.listener.send = function () {
+	          if (isOverlayDeltaActive()) return origSend.apply(this, arguments);
 	          if (!CFG.enabled) return origSend.apply(this, arguments);
 	          if (isManualSuppressed()) return origSend.apply(this, arguments);
 	          var type = (arguments && arguments.length) ? arguments[0] : '';
