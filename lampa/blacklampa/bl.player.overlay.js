@@ -308,6 +308,13 @@
     pendingUserCommand: '',
     pendingUserCommandTs: 0,
     pendingUserCommandTimer: null,
+    input: {
+      installed: 0,
+      lastAnyTs: 0,
+      lastKeyTs: 0,
+      lastKey: '',
+      lastPointerTs: 0
+    },
     pause: {
       lastPauseTs: 0,
       lastResumeTs: 0
@@ -586,6 +593,8 @@
       wakeupReason: '',
       pauseProbeUntilTs: 0,
       lastPauseSignalTs: 0,
+      pauseOwner: 'unknown',
+      pauseOwnerTs: 0,
       lastTrigger: '',
       lastAction: '',
       lastErr: '',
@@ -593,6 +602,8 @@
       lastVerifyStage: '',
       lastVerifyReason: '',
       lastVerifyTs: 0,
+      verifyFrameOkSeenTs: 0,
+      verifyTimeupdateOkSeenTs: 0,
       endGuard: {
         blockNextUntilTs: 0,
         blockContentKey: '',
@@ -936,6 +947,7 @@
 
   function dgPauseByUser(tick) {
     tick = tick || STATE.tick || {};
+    if (String(STATE.dg.pauseOwner || '') === 'user' && ageMs(toInt(STATE.dg.pauseOwnerTs, 0)) <= dgUserPauseWindowMs()) return true;
     if (isUserPauseIntent()) return true;
     if (nowMs() < toInt(STATE.dg.userPauseUntilTs, 0)) return true;
     if (String(STATE.user.lastCmdNorm || '') === 'pause' && ageMs(toInt(STATE.user.lastCmdTs, 0)) <= dgUserPauseWindowMs()) return true;
@@ -968,19 +980,31 @@
     STATE.media.paused = true;
     STATE.media.lastPauseTs = ts;
 
-    var byUser = dgPauseByUser(STATE.tick || {});
+    var byUser = dgPauseByUser(STATE.tick || {}) || hadRecentUserInput(600);
     if (!byUser && String(STATE.user.lastCmdNorm || '') === 'pause' && ageMs(toInt(STATE.user.lastCmdTs, 0)) <= dgUserPauseWindowMs()) {
       markDgUserPauseIntent(dgUserPauseWindowMs(), origin + ':recent_cmd_pause');
       byUser = true;
     }
-    var pendingAge = ageMs(toInt(STATE.pendingUserCommandTs, 0));
-    if (!byUser && String(STATE.pendingUserCommand || '') === 'pause' && pendingAge <= 1200) {
+    if (!byUser && hasFreshPendingUserCommand('pause', 1200)) {
       markDgUserPauseIntent(dgUserPauseWindowMs(), origin + ':pending_cmd_pause');
       byUser = true;
     }
 
+    var ages = runtimeAges();
+    var waitingFresh = toInt(ages.waitingAge, 1000000) < 900;
+    var stalledFresh = toInt(ages.stalledAge, 1000000) < 900;
+    var timeupdateOld = toInt(ages.timeupdateAge, 0) > 900;
+    var ctStuck = toInt(STATE.ct.stuckMs, 0) > 900;
+    var frameStuck = toInt(STATE.frames && STATE.frames.supported, 0) && toInt(STATE.frames.frameStuckMs, 0) > 900;
+    var stallNow = waitingFresh || stalledFresh || timeupdateOld || ctStuck || frameStuck;
+    var hardUserPause = hasFreshPendingUserCommand('pause', 450)
+      || (String(STATE.user.lastCmdNorm || '') === 'pause' && ageMs(toInt(STATE.user.lastCmdTs, 0)) <= 450 && hadRecentUserInput(450));
+    if (stallNow && !hardUserPause) byUser = false;
+
     STATE.dg.pauseByUser = byUser ? 1 : 0;
     STATE.dg.internalPause = byUser ? 0 : 1;
+    STATE.dg.pauseOwner = byUser ? 'user' : 'internal';
+    STATE.dg.pauseOwnerTs = ts;
 
     if (byUser) {
       setUserPauseIntent(true, 'onpause:' + origin);
@@ -998,7 +1022,16 @@
     STATE.user.pauseHoldWhy = '';
     STATE.dg.pauseProbeUntilTs = Math.max(toInt(STATE.dg.pauseProbeUntilTs, 0), ts + 350);
     if (isModeDelta()) dgSetState(DG_ST.STALL_CANDIDATE, 'paused_internal');
-    logLine('WRN', 'DG internal pause', { why: origin, byUser: 0, rec: STATE.rec.active ? 1 : 0 });
+    logLine('WRN', 'DG internal pause', {
+      why: origin,
+      byUser: 0,
+      rec: STATE.rec.active ? 1 : 0,
+      ctStuckMs: toInt(STATE.ct.stuckMs, 0),
+      timeupdateAge: toInt(ages.timeupdateAge, 0),
+      waitingAge: toInt(ages.waitingAge, 0),
+      stalledAge: toInt(ages.stalledAge, 0),
+      frameStuckMs: toInt(STATE.frames.frameStuckMs, 0)
+    });
   }
 
   function dgOnPlaySignal(origin) {
@@ -1012,6 +1045,8 @@
     STATE.dg.pauseByUser = 0;
     STATE.dg.internalPause = 0;
     STATE.dg.pauseProbeUntilTs = 0;
+    STATE.dg.pauseOwner = 'unknown';
+    STATE.dg.pauseOwnerTs = nowMs();
     if (String(STATE.dg.wakeupResult || '') === 'attempted') {
       STATE.dg.wakeupResult = 'ok';
       STATE.dg.wakeupReason = origin;
@@ -2529,7 +2564,9 @@
     lines.push('pauseHoldLeftMs=' + String(Math.max(0, toInt(STATE.user.pauseHoldUntilTs, 0) - nowMs()))
       + ' pauseHoldWhy=' + String(STATE.user.pauseHoldWhy || '')
       + ' pendingCmd=' + String(STATE.pendingUserCommand || '')
-      + ' pendingCmdAgeMs=' + String(STATE.pendingUserCommand ? ageMs(toInt(STATE.pendingUserCommandTs, 0)) : 0));
+      + ' pendingCmdAgeMs=' + String(STATE.pendingUserCommand ? ageMs(toInt(STATE.pendingUserCommandTs, 0)) : 0)
+      + ' inputAgeMs=' + String(lastUserInputAgeMs())
+      + ' lastKey=' + String(STATE.input && STATE.input.lastKey ? STATE.input.lastKey : ''));
     lines.push('lastCmdRaw=' + String(STATE.user.lastCmdRaw || '')
       + ' lastCmdNorm=' + String(STATE.user.lastCmdNorm || '')
       + ' lastCmd=' + String(STATE.user.lastCmd || '')
@@ -2552,6 +2589,8 @@
       + ' failsafeLeftMs=' + String(Math.max(0, toInt(STATE.dg.failsafeUntilTs, 0) - nowMs())));
     lines.push('delta.pause: paused=' + (t.paused ? '1' : '0')
       + ' pauseByUser=' + String(toInt(STATE.dg.pauseByUser, 0))
+      + ' pauseOwner=' + String(STATE.dg.pauseOwner || 'unknown')
+      + ' pauseOwnerAgeMs=' + String(ageMs(toInt(STATE.dg.pauseOwnerTs, 0)))
       + ' userPauseLeftMs=' + String(dgUserPauseLeftMs(t))
       + ' internalPause=' + String(toInt(STATE.dg.internalPause, 0))
       + ' wakeupPlay=' + String(STATE.dg.wakeupResult || '-')
@@ -2573,7 +2612,9 @@
       + ' vidDur=' + (isFinite(toNum(t.vidDuration, NaN)) ? toNum(t.vidDuration, 0).toFixed(2) : '-')
       + ' verify=' + (toInt(STATE.dg.lastVerifyOk, 0) ? 'ok' : 'fail')
       + ':' + String(STATE.dg.lastVerifyStage || '')
-      + ':' + String(STATE.dg.lastVerifyReason || ''));
+      + ':' + String(STATE.dg.lastVerifyReason || '')
+      + ' verifyFrameAgeMs=' + String(ageMs(toInt(STATE.dg.verifyFrameOkSeenTs, 0)))
+      + ' verifyTuAgeMs=' + String(ageMs(toInt(STATE.dg.verifyTimeupdateOkSeenTs, 0))));
 
     lines.push('media: t=' + fmtTime(t.ct)
       + ' dur=' + fmtTime(t.dur)
@@ -2915,12 +2956,16 @@
         + ' lastErr=' + String(STATE.dg.lastErr || ''),
       'paused=' + (t.paused ? '1' : '0')
         + ' pauseByUser=' + String(toInt(STATE.dg.pauseByUser, 0))
+        + ' pauseOwner=' + String(STATE.dg.pauseOwner || 'unknown')
+        + ' pauseOwnerAgeMs=' + String(ageMs(toInt(STATE.dg.pauseOwnerTs, 0)))
         + ' userPauseLeftMs=' + String(dgUserPauseLeftMs(t))
         + ' internalPause=' + String(toInt(STATE.dg.internalPause, 0))
         + ' wakeupPlay=' + String(STATE.dg.wakeupResult || '-')
         + ' pauseProbeLeftMs=' + String(Math.max(0, toInt(STATE.dg.pauseProbeUntilTs, 0) - nowMs()))
         + ' pendingCmd=' + String(STATE.pendingUserCommand || '')
-        + ' pendingCmdAgeMs=' + String(STATE.pendingUserCommand ? ageMs(toInt(STATE.pendingUserCommandTs, 0)) : 0),
+        + ' pendingCmdAgeMs=' + String(STATE.pendingUserCommand ? ageMs(toInt(STATE.pendingUserCommandTs, 0)) : 0)
+        + ' inputAgeMs=' + String(lastUserInputAgeMs())
+        + ' lastKey=' + String(STATE.input && STATE.input.lastKey ? STATE.input.lastKey : ''),
       'blockNextLeftMs=' + String(dgCurrentBlockLeftMs())
         + ' falseEndDetected=' + String(toInt(STATE.dg.endGuard && STATE.dg.endGuard.falseEndDetected, 0))
         + ' fakeFullDetected=' + String(toInt(STATE.dg.bufferGuard && STATE.dg.bufferGuard.fakeFullDetected, 0))
@@ -2935,7 +2980,9 @@
       'verify=' + (toInt(STATE.dg.lastVerifyOk, 0) ? 'ok' : 'fail')
         + ' stage=' + String(STATE.dg.lastVerifyStage || '')
         + ' reason=' + String(STATE.dg.lastVerifyReason || '')
-        + ' ageMs=' + String(ageMs(toInt(STATE.dg.lastVerifyTs, 0))),
+        + ' ageMs=' + String(ageMs(toInt(STATE.dg.lastVerifyTs, 0)))
+        + ' verifyFrameOkSeenAgeMs=' + String(ageMs(toInt(STATE.dg.verifyFrameOkSeenTs, 0)))
+        + ' verifyTimeupdateOkSeenAgeMs=' + String(ageMs(toInt(STATE.dg.verifyTimeupdateOkSeenTs, 0))),
       'wakeupReason=' + String(STATE.dg.wakeupReason || ''),
       'ranges=[' + String(STATE.dg.bufferGuard && STATE.dg.bufferGuard.ranges ? STATE.dg.bufferGuard.ranges : '') + ']'
         + ' reason=' + String((STATE.dg.endGuard && STATE.dg.endGuard.falseEndReason) || (STATE.dg.bufferGuard && STATE.dg.bufferGuard.reason) || '')
@@ -3135,6 +3182,96 @@
     if (t === 'pause' || t === 'play' || t === 'toggle' || t === 'toggle_pause' || t === 'toggle_play') return true;
     if (t === 'seek' || t === 'forward' || t === 'backward' || t === 'rewind' || t === 'to' || t === 'totime' || t === 'to_time') return true;
     if (t === 'exit' || t === 'back' || t === 'return' || t === 'close' || t === 'stop' || t === 'cancel' || t === 'resume' || t === 'controller.back') return true;
+    return false;
+  }
+
+  function lastUserInputTs() {
+    return Math.max(
+      toInt(STATE.input && STATE.input.lastAnyTs, 0),
+      toInt(STATE.input && STATE.input.lastKeyTs, 0),
+      toInt(STATE.input && STATE.input.lastPointerTs, 0)
+    );
+  }
+
+  function lastUserInputAgeMs() {
+    return ageMs(lastUserInputTs());
+  }
+
+  function hadRecentUserInput(ms) {
+    ms = clampInt(ms || 600, 80, 5000);
+    return lastUserInputAgeMs() <= ms;
+  }
+
+  function markUserInputSeen(kind, val) {
+    var ts = nowMs();
+    if (!STATE.input) STATE.input = { installed: 0, lastAnyTs: 0, lastKeyTs: 0, lastKey: '', lastPointerTs: 0 };
+    STATE.input.lastAnyTs = ts;
+    if (kind === 'key') {
+      STATE.input.lastKeyTs = ts;
+      if (val !== undefined && val !== null) STATE.input.lastKey = String(val || '');
+    } else if (kind === 'pointer') {
+      STATE.input.lastPointerTs = ts;
+    }
+  }
+
+  function installInputMonitor() {
+    if (!window || !window.addEventListener) return false;
+    if (!STATE.input) STATE.input = { installed: 0, lastAnyTs: 0, lastKeyTs: 0, lastKey: '', lastPointerTs: 0 };
+    if (toInt(STATE.input.installed, 0)) return true;
+
+    var onKey = function (e) {
+      var key = '';
+      try { key = String((e && e.key) || (e && e.code) || ''); } catch (_) { key = ''; }
+      markUserInputSeen('key', key);
+    };
+    var onPointer = function () {
+      markUserInputSeen('pointer', '');
+    };
+
+    try { window.addEventListener('keydown', onKey, true); } catch (_) { }
+    try { window.addEventListener('mousedown', onPointer, true); } catch (_) { }
+    try { window.addEventListener('touchstart', onPointer, true); } catch (_) { }
+
+    STATE.input.installed = 1;
+    logLine('DBG', 'input_monitor_install', { ok: 1 });
+    return true;
+  }
+
+  function hasFreshPendingUserCommand(norm, maxAgeMs) {
+    var pending = String(STATE.pendingUserCommand || '');
+    if (!pending) return false;
+    if (ageMs(toInt(STATE.pendingUserCommandTs, 0)) > clampInt(maxAgeMs || 1200, 120, 6000)) return false;
+    if (!norm) return true;
+    if (pending === norm) return true;
+    if ((pending === 'play' || pending === 'pause') && norm === 'toggle') return true;
+    if (pending === 'toggle' && (norm === 'play' || norm === 'pause')) return true;
+    return false;
+  }
+
+  function commandNeedsInputGate(norm) {
+    norm = String(norm || '');
+    return norm === 'pause' || norm === 'play' || norm === 'toggle' || norm === 'seek';
+  }
+
+  function isLikelyInternalPauseMoment() {
+    var ages = runtimeAges();
+    var waitingFresh = toInt(ages.waitingAge, 1000000) < 900;
+    var stalledFresh = toInt(ages.stalledAge, 1000000) < 900;
+    var timeupdateOld = toInt(ages.timeupdateAge, 0) > 900;
+    var ctStuck = toInt(STATE.ct.stuckMs, 0) > 900;
+    var frameStuck = toInt(STATE.frames && STATE.frames.supported, 0) && toInt(STATE.frames.frameStuckMs, 0) > 900;
+    return waitingFresh || stalledFresh || timeupdateOld || ctStuck || frameStuck;
+  }
+
+  function shouldTreatAsUserCommand(type, payload) {
+    var raw = String(type || '').toLowerCase();
+    var norm = normalizeCommand(raw);
+    if (!norm) return false;
+    if (!commandNeedsInputGate(norm)) return true;
+    if (hadRecentUserInput(600)) return true;
+    if (hasFreshPendingUserCommand(norm, 1200)) return true;
+    if (isLikelyManualNavPayload(payload)) return true;
+    if ((norm === 'pause' || norm === 'play' || norm === 'toggle') && !isLikelyInternalPauseMoment()) return true;
     return false;
   }
 
@@ -4828,8 +4965,12 @@
     STATE.dg.internalPause = 0;
     STATE.dg.pauseByUser = 0;
     STATE.dg.pauseProbeUntilTs = 0;
+    STATE.dg.pauseOwner = 'unknown';
+    STATE.dg.pauseOwnerTs = 0;
     STATE.dg.wakeupVerifyUntilTs = 0;
     STATE.dg.wakeupStartCt = NaN;
+    STATE.dg.verifyFrameOkSeenTs = 0;
+    STATE.dg.verifyTimeupdateOkSeenTs = 0;
     STATE.dg.endGuard.blockNextUntilTs = 0;
     STATE.dg.endGuard.blockContentKey = '';
     if (reason) dgLog('DBG', 'DG_STOP', { reason: String(reason || '') });
@@ -5191,6 +5332,62 @@
     return dgKickRecovery('jump_to_end', { ctJumpDelta: jumpDelta, delayMs: 260, tick: t });
   }
 
+  function dgMaybeDetectRenderFreeze(ages) {
+    if (!isModeDelta()) return false;
+    if (STATE.dg.recoverActive || STATE.rec.active) return false;
+    if (isUserPauseIntent()) return false;
+    if (String(STATE.dg.pauseOwner || '') === 'user') return false;
+
+    var t = STATE.tick || {};
+    if (!t.hasVideo) return false;
+    if (t.paused && !toInt(STATE.dg.internalPause, 0)) return false;
+    if (!toInt(STATE.frames.supported, 0)) return false;
+    if (frameGraceLeftMs() > 0) return false;
+
+    var frameStuckMs = toInt(STATE.frames.frameStuckMs, 0);
+    var frameHangMs = Math.max(1000, toInt(CFG.frameHangMs, 3200));
+    if (frameStuckMs < frameHangMs) return false;
+
+    ages = ages || runtimeAges();
+    var ctStuck = toInt(STATE.ct.stuckMs, 0);
+    var tuOld = toInt(ages.timeupdateAge, 0) >= 900;
+    var waitingFresh = toInt(ages.waitingAge, 1000000) < Math.max(900, frameHangMs);
+    var stalledFresh = toInt(ages.stalledAge, 1000000) < Math.max(900, frameHangMs);
+    var ctDelta = toNum(STATE.frames.ctDeltaSinceFrame, 0);
+    var frameCtNeed = Math.max(0.2, toNum(CFG.frameCtDeltaSec, 1.0) * 0.6);
+    if (!tuOld && ctStuck < 900 && !waitingFresh && !stalledFresh && ctDelta < frameCtNeed) return false;
+
+    var ts = nowMs();
+    if ((ts - toInt(STATE.frames.lastDetectTs, 0)) < 1200) return false;
+    STATE.frames.lastDetectTs = ts;
+    STATE.frames.detectCount = toInt(STATE.frames.detectCount, 0) + 1;
+
+    var bg = STATE.dg.bufferGuard || {};
+    bg.reason = 'render_freeze';
+    bg.reasonTs = ts;
+    bg.bufferSig = dgBufferSig(t);
+    bg.ranges = String(t.rangesText || '');
+    STATE.dg.bufferGuard = bg;
+
+    STATE.dg.lastTrigger = 'render_freeze';
+    STATE.dg.lastAction = 'detect:render_freeze';
+    dgSetBlockNext(Math.max(dgBlockNextMs(), frameHangMs), 'render_freeze');
+    armFalseEndCritical(Math.max(dgBlockNextMs(), frameHangMs * 2), 'dg_render_freeze');
+    setPhase(ST.HUNG, 'dg_render_freeze');
+    dgSetState(DG_ST.RECOVERING, 'render_freeze');
+    dgLog('WRN', 'DG_RENDER_FREEZE', {
+      frameStuckMs: frameStuckMs,
+      ctStuckMs: ctStuck,
+      timeupdateAge: toInt(ages.timeupdateAge, 0),
+      waitingAge: toInt(ages.waitingAge, 0),
+      stalledAge: toInt(ages.stalledAge, 0),
+      ctDeltaSinceFrame: ctDelta.toFixed(2),
+      detectCount: toInt(STATE.frames.detectCount, 0)
+    });
+
+    return startDeltaRecovery('render_freeze');
+  }
+
   function dgMaybeDetectBufferGuards(ages) {
     if (!isModeDelta()) return false;
     if (STATE.dg.recoverActive || STATE.rec.active) return false;
@@ -5292,6 +5489,10 @@
     STATE.dg.wakeupReason = '';
     STATE.dg.pauseProbeUntilTs = 0;
     STATE.dg.lastPauseSignalTs = 0;
+    STATE.dg.pauseOwner = 'unknown';
+    STATE.dg.pauseOwnerTs = 0;
+    STATE.dg.verifyFrameOkSeenTs = 0;
+    STATE.dg.verifyTimeupdateOkSeenTs = 0;
     STATE.dg.endGuard.blockNextUntilTs = 0;
     STATE.dg.endGuard.blockContentKey = '';
     STATE.dg.endGuard.falseEndDetected = 0;
@@ -5476,10 +5677,14 @@
     var startCt = toNum(STATE.tick && STATE.tick.ct, NaN);
     var lastCt = startCt;
     var moveSeenTs = 0;
+    var frameSeenTs = 0;
+    var timeupdateSeenTs = 0;
 
     dgSetState(DG_ST.VERIFYING, stage);
     STATE.dg.verifyAttempts = toInt(STATE.dg.verifyAttempts, 0) + 1;
     STATE.dg.lastAction = String(stage || '');
+    STATE.dg.verifyFrameOkSeenTs = 0;
+    STATE.dg.verifyTimeupdateOkSeenTs = 0;
     dgStopVerifyTimer();
 
     STATE.dg.verifyTimer = setInterval(function () {
@@ -5492,6 +5697,7 @@
 
       var v = STATE.video || getVideo();
       try { collectTick(v); } catch (_) { }
+      try { frameUpdate(v, STATE.tick || {}); } catch (_) { }
       var ct = toNum(v && v.currentTime, NaN);
       if (!isFinite(ct)) ct = toNum(STATE.tick && STATE.tick.ct, NaN);
       if (!isFinite(ct)) {
@@ -5507,21 +5713,39 @@
       if (!moveSeenTs && isFinite(startCt) && (ct - startCt) >= Math.max(moveNeed, 0.15)) moveSeenTs = nowMs();
       lastCt = ct;
 
+      var ra = runtimeAges();
+      if (toInt(ra.timeupdateAge, 0) < 900) {
+        timeupdateSeenTs = nowMs();
+        STATE.dg.verifyTimeupdateOkSeenTs = timeupdateSeenTs;
+      }
+      if (toInt(STATE.frames.supported, 0) && toInt(STATE.frames.frameStuckMs, 0) < 700) {
+        frameSeenTs = nowMs();
+        STATE.dg.verifyFrameOkSeenTs = frameSeenTs;
+      }
+
+      var evidenceOk = false;
+      if (toInt(STATE.frames.supported, 0)) {
+        evidenceOk = (frameSeenTs >= startTs) || (timeupdateSeenTs >= startTs);
+      } else {
+        evidenceOk = (timeupdateSeenTs >= startTs);
+      }
+
       var nearTarget = Math.abs(ct - target) <= nearTol;
-      if (moveSeenTs && nearTarget) {
+      if (moveSeenTs && evidenceOk && nearTarget) {
         dgStopVerifyTimer();
-        dgSetVerifyResult(true, stage, 'ct_moving_near_target');
+        dgSetVerifyResult(true, stage, 'ct_moving_evidence_near_target');
         return cb(true, 'ok');
       }
-      if (moveSeenTs && ct >= (target - nearTol) && (nowMs() - moveSeenTs) >= 280) {
+      if (moveSeenTs && evidenceOk && ct >= (target - nearTol) && (nowMs() - moveSeenTs) >= 280) {
         dgStopVerifyTimer();
-        dgSetVerifyResult(true, stage, 'ct_moving');
+        dgSetVerifyResult(true, stage, 'ct_moving_evidence');
         return cb(true, 'ok');
       }
       if ((nowMs() - startTs) > verifyTimeout) {
         dgStopVerifyTimer();
-        dgSetVerifyResult(false, stage, 'verify_timeout');
-        return cb(false, 'verify_timeout');
+        var timeoutWhy = evidenceOk ? 'verify_timeout_no_target' : 'verify_timeout_no_evidence';
+        dgSetVerifyResult(false, stage, timeoutWhy);
+        return cb(false, timeoutWhy);
       }
     }, 120);
   }
@@ -5610,6 +5834,8 @@
     STATE.dg.lastVerifyStage = 'recover_start';
     STATE.dg.lastVerifyReason = '';
     STATE.dg.lastVerifyTs = 0;
+    STATE.dg.verifyFrameOkSeenTs = 0;
+    STATE.dg.verifyTimeupdateOkSeenTs = 0;
     beginCritical('delta_recover', criticalTtlMs(0));
     dgSetBlockNext(Math.max(dgBlockNextMs(), Math.floor(toInt(CFG.dgStallHardMs, 2500) * 2)), 'recover:' + reason);
     armBlockNext(Math.max(5000, Math.floor(toInt(CFG.dgStallHardMs, 2500) * 3)), 'dg_recover');
@@ -5732,6 +5958,16 @@
     var pauseByUser = dgPauseByUser(t);
     STATE.dg.pauseByUser = pauseByUser ? 1 : 0;
     STATE.dg.internalPause = (t.paused && !pauseByUser) ? 1 : 0;
+    if (t.paused) {
+      var ownerNow = pauseByUser ? 'user' : 'internal';
+      if (String(STATE.dg.pauseOwner || '') !== ownerNow) {
+        STATE.dg.pauseOwner = ownerNow;
+        STATE.dg.pauseOwnerTs = nowMs();
+      }
+    } else if (String(STATE.dg.pauseOwner || '') !== 'unknown') {
+      STATE.dg.pauseOwner = 'unknown';
+      STATE.dg.pauseOwnerTs = nowMs();
+    }
     if (!t.paused && toInt(STATE.dg.wakeupVerifyUntilTs, 0) > 0) {
       dgVerifyWakeupResult(t);
     }
@@ -5774,6 +6010,8 @@
     if (STATE.dg.recoverActive || STATE.rec.active || STATE.dg.verifyTimer) return false;
     dgSetState(DG_ST.TRACKING, 'live');
     if (dgMaybeDetectNearEndJump()) return true;
+    var ages = runtimeAges();
+    if (dgMaybeDetectRenderFreeze(ages)) return true;
 
     var ctStuck = toInt(STATE.ct.stuckMs, 0);
     var stallSoft = toInt(CFG.dgStallSoftMs, 1200);
@@ -5786,7 +6024,6 @@
     if (!STATE.dg.stallCandidateTs) STATE.dg.stallCandidateTs = nowMs();
     dgSetState(DG_ST.STALL_CANDIDATE, 'ct_stall');
 
-    var ages = runtimeAges();
     if (dgMaybeDetectBufferGuards(ages)) return true;
 
     var decoderShouldRun = toInt(t.readyState, 0) >= 3 && toInt(t.networkState, 0) !== 2;
@@ -6077,8 +6314,17 @@
       return;
     }
 
-    if (isLikelyUserCmdType(tl) || (isNavType(tl) && isLikelyManualNavPayload(payload))) {
+    var manualNavCmd = isNavType(tl) && isLikelyManualNavPayload(payload);
+    var trustedCmd = isLikelyUserCmdType(tl) && shouldTreatAsUserCommand(tl, payload);
+    if (trustedCmd || manualNavCmd) {
       handleUserCommand(tl, { type: t, payload: payload });
+    } else if (isLikelyUserCmdType(tl) && !manualNavCmd && isModeDelta()) {
+      logLine('DBG', 'CMD skip_no_input', {
+        type: String(tl || ''),
+        inputAgeMs: lastUserInputAgeMs(),
+        pending: String(STATE.pendingUserCommand || ''),
+        pendingAgeMs: ageMs(toInt(STATE.pendingUserCommandTs, 0))
+      });
     }
   }
 
@@ -6941,6 +7187,8 @@
         lastCmdRaw: String(STATE.user.lastCmdRaw || ''),
         lastCmdNorm: String(STATE.user.lastCmdNorm || ''),
         lastCmdTs: toInt(STATE.user.lastCmdTs, 0),
+        inputAgeMs: lastUserInputAgeMs(),
+        lastKey: String(STATE.input && STATE.input.lastKey ? STATE.input.lastKey : ''),
         pendingUserCommand: String(STATE.pendingUserCommand || ''),
         pendingUserCommandTs: toInt(STATE.pendingUserCommandTs, 0),
         pendingUserCommandAgeMs: ageMs(toInt(STATE.pendingUserCommandTs, 0)),
@@ -7008,9 +7256,13 @@
         lastAction: String(STATE.dg.lastAction || ''),
         lastErr: String(STATE.dg.lastErr || ''),
         pauseByUser: toInt(STATE.dg.pauseByUser, 0),
+        pauseOwner: String(STATE.dg.pauseOwner || 'unknown'),
+        pauseOwnerAgeMs: ageMs(toInt(STATE.dg.pauseOwnerTs, 0)),
         internalPause: toInt(STATE.dg.internalPause, 0),
         wakeupPlay: String(STATE.dg.wakeupResult || ''),
         wakeupReason: String(STATE.dg.wakeupReason || ''),
+        verifyFrameOkSeenAgeMs: ageMs(toInt(STATE.dg.verifyFrameOkSeenTs, 0)),
+        verifyTimeupdateOkSeenAgeMs: ageMs(toInt(STATE.dg.verifyTimeupdateOkSeenTs, 0)),
         falseEndDetected: toInt(STATE.dg.endGuard && STATE.dg.endGuard.falseEndDetected, 0),
         falseEndReason: String(STATE.dg.endGuard && STATE.dg.endGuard.falseEndReason ? STATE.dg.endGuard.falseEndReason : ''),
         ctJumpDelta: toNum(STATE.dg.endGuard && STATE.dg.endGuard.ctJumpDelta, 0),
@@ -7274,6 +7526,7 @@
     STATE.installed = true;
 
     readSettingsFromStorage();
+    installInputMonitor();
     patchAll();
 
     try {
