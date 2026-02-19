@@ -277,12 +277,8 @@
     filesystem_scan: { id: 'filesystem_scan', parent: 'utils', title: 'Scanner', descKey: 'menu.root.filescan.desc', screen: 'action', action: function () { try { if (window.BL && BL.FileScanner && BL.FileScanner.open) BL.FileScanner.open(); } catch (_) { } } },
     localstorage: { id: 'localstorage', parent: 'utils', title: 'LocalStorage', desc: 'LocalStorage Manager (keys + values).', screen: 'action', action: function () { try { if (window.BL && BL.LocalStorageManager && BL.LocalStorageManager.open) BL.LocalStorageManager.open(); } catch (_) { } } },
     danger: { id: 'danger', parent: 'root', titleKey: 'menu.root.danger.title', descKey: 'menu.root.danger.desc', screen: 'danger' },
-    ui: { id: 'ui', parent: 'root', titleKey: 'menu.root.ui.title', descKey: 'menu.root.ui.desc', screen: 'ui', children: ['ui_player_protection', 'ui_pg_legacy', 'ui_pg_overlay', 'ui_deltaguard'] },
-    ui_player_protection: { id: 'ui_player_protection', parent: 'ui', title: 'Player Protection', desc: 'Выбор engine и разделение веток защиты плеера.', screen: 'ui_player_protection' },
-    ui_pg_legacy: { id: 'ui_pg_legacy', parent: 'ui', title: 'PG (legacy)', desc: 'Старые настройки PlayerGuard (не Overlay).', screen: 'ui_pg_legacy' },
-    ui_pg_overlay: { id: 'ui_pg_overlay', parent: 'ui', title: 'PG Overlay', desc: 'Новый Overlay-плеер (идеальный защитник).', screen: 'ui_pg_overlay' },
-    ui_deltaguard: { id: 'ui_deltaguard', parent: 'ui', title: 'DeltaGuard', desc: 'Настройки режима DeltaGuard для PG Overlay.', screen: 'ui_deltaguard' },
-    ui_playerguard: { id: 'ui_playerguard', parent: 'ui', menu: false, title: 'PlayerGuard', desc: 'PlayerGuard settings', screen: 'ui_pg_legacy' },
+    ui: { id: 'ui', parent: 'root', titleKey: 'menu.root.ui.title', descKey: 'menu.root.ui.desc', screen: 'ui', children: ['ui_deltaguard'] },
+    ui_deltaguard: { id: 'ui_deltaguard', parent: 'ui', title: 'DeltaGuard', desc: 'Единый оркестратор защиты плеера.', screen: 'ui_deltaguard' },
     blmod: { id: 'blmod', parent: 'root', title: 'BL-Mod', desc: 'BL-Mod: автономный плеер и настройки.', screen: 'blmod' },
     status: { id: 'status', parent: 'root', titleKey: 'menu.root.status.title', param: { name: 'bl_pi_root_status', type: 'static', values: '', default: '' }, screen: 'status', rootRender: rootStatusRender }
   };
@@ -411,11 +407,7 @@
     network_status: buildNetworkStatusScreen,
     jsqp: buildJsqpScreen,
     ui: buildUiScreen,
-    ui_player_protection: buildUiPlayerProtectionScreen,
-    ui_pg_legacy: buildUiPlayerGuardLegacyScreen,
-    ui_pg_overlay: buildUiPlayerGuardOverlayScreen,
     ui_deltaguard: buildUiDeltaGuardScreen,
-    ui_playerguard: buildUiPlayerGuardLegacyScreen,
     blmod: buildBlModScreen,
     logging: buildLoggingScreen,
     ua_presets: buildUaPresetsScreen,
@@ -998,948 +990,64 @@
     } catch (_) { }
   }
 
-  function refreshPlayerGuardLegacySettings() {
-    try { if (window.BL && BL.PlayerGuard && BL.PlayerGuard.refresh) BL.PlayerGuard.refresh(); } catch (_) { }
-  }
-
-  function refreshPlayerOverlaySettings() {
-    try { if (window.BL && BL.PlayerOverlay && BL.PlayerOverlay.refresh) BL.PlayerOverlay.refresh(); } catch (_) { }
-  }
-
-  function normalizePlayerEngine(v) {
-    try { v = String(v || '').toLowerCase().trim(); } catch (_) { v = ''; }
-    if (v === 'off' || v === 'legacy' || v === 'overlay' || v === 'delta' || v === 'auto') return v;
-    if (v === 'deltaguard' || v === 'delta_guard') return 'delta';
-    return 'auto';
-  }
-
-  function playerEngineKey() {
-    return String(pref() || 'blacklampa_') + 'player_engine_v1';
-  }
-
-  function resolveAutoPlayerEngine() {
-    var p = String(pref() || 'blacklampa_');
-    var ovEnabled = parseBool(sGet(p + 'player_overlay_enabled', '0'), false);
-    var ovMode = String(sGet(p + 'player_overlay_mode', 'legacy') || 'legacy').toLowerCase();
-    if (ovEnabled && (ovMode === 'delta' || ovMode === 'deltaguard' || ovMode === 'delta_guard')) return 'delta';
-    if (ovEnabled) return 'overlay';
-    if (parseBool(sGet(p + 'player_guard_enabled', '0'), false)) return 'legacy';
-    return 'off';
-  }
-
-  function getPlayerEngine() {
-    try {
-      if (window.BL && BL.PlayerEngine && typeof BL.PlayerEngine.get === 'function') {
-        return normalizePlayerEngine(BL.PlayerEngine.get());
-      }
-    } catch (_) { }
-    var raw = normalizePlayerEngine(sGet(playerEngineKey(), 'auto'));
-    if (raw === 'auto') raw = resolveAutoPlayerEngine();
-    return normalizePlayerEngine(raw);
-  }
-
-  function setPlayerEngine(v) {
-    v = normalizePlayerEngine(v);
-    try {
-      if (window.BL && BL.PlayerEngine && typeof BL.PlayerEngine.set === 'function') return BL.PlayerEngine.set(v);
-    } catch (_) { }
-    sSet(playerEngineKey(), v);
-    return getPlayerEngine();
-  }
-
-  function overlayDefaultFallbacks() {
+  function dgDefaultsFallback() {
     return {
-      enabled: 1,
-      mode: 'legacy',
-      debug_on_open: 0,
-      debug_opacity: 0.85,
-      protect_next: 1,
-      store_truth: 1,
-      truth_commit_ms: 100,
-      hang_time_ms: 12000,
-      hang_buf_ms: 18000,
-      resume_guard_ms: 180000,
-      false_end_stale_allow: 1,
-      fake_full_enabled: 1,
-      fake_full_no_prog_ms: 6500,
-      fake_full_no_move_ms: 6500,
-      min_ahead_sec: 0.1,
-      underrun_no_prog_ms: 4500,
-      underrun_no_ahead_move_ms: 4500,
-      soft_attempts: 0,
-      inplayer_attempts: 2,
-      inplayer_rebuild_mode: 'destroy_url',
-      escalate_to_reopen: 1,
-      reopen_cooldown_ms: 8000,
-      resume_backoff_sec: 0.3,
-      resume_min_step_sec: 0.1,
-      seek_verify_delay_ms: 900,
-      seek_delta_sec: 0.1,
-      warmup_ms_after_recover: 18000,
-      user_seek_window_ms: 1800,
-      user_nav_window_ms: 2500,
       dg_enabled: 1,
       dg_debug_on_open: 0,
-      dg_popup_opacity: 85,
-      dg_user_seek_window_ms: 1800,
-      dg_user_nav_window_ms: 2500,
-      dg_stall_soft_ms: 1200,
-      dg_stall_hard_ms: 2500,
-      dg_warmup_grace_ms: 1200,
-      dg_resume_tolerance_sec: 0.12,
-      dg_resume_seek_retry_max: 2,
-      dg_recover_retry_max: 2,
-      dg_failsafe_cooldown_ms: 8000,
-      dg_debug_level: 'normal',
+      dg_debug_on_fail: 1,
+      dg_popup_autoclose_sec: 0,
       dg_block_next_ms: 6000,
       dg_tail_sec: 3.0,
       dg_false_end_jump_sec: 10.0,
       dg_fake_full_enabled: 1,
-      dg_false_end_enabled: 1
+      dg_false_end_enabled: 1,
+      dg_tick_ms: 250,
+      dg_stall_soft_ms: 900,
+      dg_stall_hard_ms: 2000,
+      dg_recover_cooldown_ms: 2500,
+      dg_verify_ms: 1400,
+      dg_hard_reset_enabled: 1,
+      dg_hard_reset_after_n: 2
     };
   }
 
-  function overlayDefaults() {
-    var d = null;
+  function dgDefaults() {
     try {
-      if (window.BL && BL.PlayerOverlay && typeof BL.PlayerOverlay.defaults === 'function') {
-        d = BL.PlayerOverlay.defaults();
-      }
-    } catch (_) { d = null; }
-    if (!isPlainObject(d)) d = overlayDefaultFallbacks();
-    return d || overlayDefaultFallbacks();
-  }
-
-  function overlayStorageDefaults() {
-    var list = null;
-    try {
-      if (window.BL && BL.PlayerOverlay && typeof BL.PlayerOverlay.overlayStorageDefaults === 'function') {
-        list = BL.PlayerOverlay.overlayStorageDefaults();
-      } else if (window.BL && BL.PlayerOverlay && typeof BL.PlayerOverlay.storageDefaults === 'function') {
-        list = BL.PlayerOverlay.storageDefaults();
-        if (Array.isArray(list) && list.length) {
-          var dgPrefix = String(pref() || 'blacklampa_') + 'dg_';
-          var filtered = [];
-          for (var fi = 0; fi < list.length; fi++) {
-            var fit = list[fi] || {};
-            var fk = String(fit.key || '');
-            if (!fk || fk.indexOf(dgPrefix) === 0) continue;
-            filtered.push(fit);
-          }
-          list = filtered;
-        }
-      }
-    } catch (_) { list = null; }
-    if (Array.isArray(list) && list.length) return list;
-
-    var d = overlayDefaults();
-    var p = String(pref() || 'blacklampa_');
-    return [
-      { key: p + 'player_overlay_enabled', def: d.enabled ? 1 : 0 },
-      { key: p + 'player_overlay_mode', def: String(d.mode || 'legacy') },
-      { key: p + 'player_overlay_debug_on_open', def: d.debug_on_open ? 1 : 0 },
-      { key: p + 'player_overlay_popup_opacity', def: Math.max(20, Math.min(100, Math.round((Number(d.debug_opacity) || 0.85) * 100))) },
-      { key: p + 'player_overlay_protect_next', def: d.protect_next ? 1 : 0 },
-      { key: p + 'player_overlay_store_truth', def: d.store_truth ? 1 : 0 },
-      { key: p + 'player_overlay_truth_commit_ms', def: String(d.truth_commit_ms || 100) },
-      { key: p + 'player_overlay_hang_time_ms', def: String(d.hang_time_ms || 12000) },
-      { key: p + 'player_overlay_hang_buf_ms', def: String(d.hang_buf_ms || 18000) },
-      { key: p + 'player_overlay_resume_guard_ms', def: String(d.resume_guard_ms || 180000) },
-      { key: p + 'player_overlay_false_end_stale_allow', def: d.false_end_stale_allow ? 1 : 0 },
-      { key: p + 'player_overlay_fake_full_enabled', def: d.fake_full_enabled ? 1 : 0 },
-      { key: p + 'player_overlay_fake_full_no_prog_ms', def: String(d.fake_full_no_prog_ms || 6500) },
-      { key: p + 'player_overlay_fake_full_no_move_ms', def: String(d.fake_full_no_move_ms || 6500) },
-      { key: p + 'player_overlay_min_ahead_sec', def: String(d.min_ahead_sec || 0.1) },
-      { key: p + 'player_overlay_underrun_no_prog_ms', def: String(d.underrun_no_prog_ms || 4500) },
-      { key: p + 'player_overlay_underrun_no_ahead_move_ms', def: String(d.underrun_no_ahead_move_ms || 4500) },
-      { key: p + 'player_overlay_soft_attempts', def: String((d.soft_attempts !== undefined && d.soft_attempts !== null) ? d.soft_attempts : 0) },
-      { key: p + 'player_overlay_inplayer_attempts', def: String(d.inplayer_attempts || 2) },
-      { key: p + 'player_overlay_inplayer_rebuild_mode', def: String(d.inplayer_rebuild_mode || 'destroy_url') },
-      { key: p + 'player_overlay_escalate_to_reopen', def: d.escalate_to_reopen ? 1 : 0 },
-      { key: p + 'player_overlay_reopen_cooldown_ms', def: String(d.reopen_cooldown_ms || 8000) },
-      { key: p + 'player_overlay_resume_backoff_sec', def: String(d.resume_backoff_sec || 0.3) },
-      { key: p + 'player_overlay_resume_min_step_sec', def: String(d.resume_min_step_sec || 0.1) },
-      { key: p + 'player_overlay_seek_verify_delay_ms', def: String(d.seek_verify_delay_ms || 900) },
-      { key: p + 'player_overlay_seek_delta_sec', def: String(d.seek_delta_sec || 0.1) },
-      { key: p + 'player_overlay_warmup_ms_after_recover', def: String(d.warmup_ms_after_recover || 18000) },
-      { key: p + 'player_overlay_user_seek_window_ms', def: String(d.user_seek_window_ms || 1800) },
-      { key: p + 'player_overlay_user_nav_window_ms', def: String(d.user_nav_window_ms || 2500) }
-    ];
-  }
-
-  function overlayDeltaStorageDefaults() {
-    var list = null;
-    try {
-      if (window.BL && BL.PlayerOverlay && typeof BL.PlayerOverlay.dgStorageDefaults === 'function') {
-        list = BL.PlayerOverlay.dgStorageDefaults();
-      }
-    } catch (_) { list = null; }
-    if (Array.isArray(list) && list.length) return list;
-
-    var d = overlayDefaults();
-    var p = String(pref() || 'blacklampa_');
-    return [
-      { key: p + 'dg_enabled', def: d.dg_enabled ? 1 : 0 },
-      { key: p + 'dg_debug_on_open', def: d.dg_debug_on_open ? 1 : 0 },
-      { key: p + 'dg_popup_opacity', def: String(d.dg_popup_opacity || 85) },
-      { key: p + 'dg_user_seek_window_ms', def: String(d.dg_user_seek_window_ms || 1800) },
-      { key: p + 'dg_user_nav_window_ms', def: String(d.dg_user_nav_window_ms || 2500) },
-      { key: p + 'dg_stall_soft_ms', def: String(d.dg_stall_soft_ms || 1200) },
-      { key: p + 'dg_stall_hard_ms', def: String(d.dg_stall_hard_ms || 2500) },
-      { key: p + 'dg_warmup_grace_ms', def: String(d.dg_warmup_grace_ms || 1200) },
-      { key: p + 'dg_resume_tolerance_sec', def: String(d.dg_resume_tolerance_sec || 0.12) },
-      { key: p + 'dg_resume_seek_retry_max', def: String(d.dg_resume_seek_retry_max || 2) },
-      { key: p + 'dg_recover_retry_max', def: String(d.dg_recover_retry_max || 2) },
-      { key: p + 'dg_failsafe_cooldown_ms', def: String(d.dg_failsafe_cooldown_ms || 8000) },
-      { key: p + 'dg_debug_level', def: String(d.dg_debug_level || 'normal') },
-      { key: p + 'dg_block_next_ms', def: String(d.dg_block_next_ms || 6000) },
-      { key: p + 'dg_tail_sec', def: String(d.dg_tail_sec || 3.0) },
-      { key: p + 'dg_false_end_jump_sec', def: String(d.dg_false_end_jump_sec || 10.0) },
-      { key: p + 'dg_fake_full_enabled', def: d.dg_fake_full_enabled ? 1 : 0 },
-      { key: p + 'dg_false_end_enabled', def: d.dg_false_end_enabled ? 1 : 0 }
-    ];
-  }
-
-  function refreshPlayerGuardSettings() {
-    refreshPlayerGuardLegacySettings();
-  }
-
-  function playerEngineTitle(v) {
-    v = normalizePlayerEngine(v);
-    if (v === 'off') return 'OFF';
-    if (v === 'legacy') return 'PG legacy';
-    if (v === 'overlay') return 'PG Overlay';
-    if (v === 'delta') return 'DeltaGuard';
-    return 'auto';
-  }
-
-  function buildUiPlayerProtectionScreen(ctx) {
-    try {
-      var current = getPlayerEngine();
-      var currentTitle = playerEngineTitle(current);
-
-      P(ctx, {
-        id: 'player_protection_current_engine',
-        type: 'static',
-        values: currentTitle,
-        name: 'Engine (current)',
-        desc: 'Активный engine: ' + currentTitle + '.'
-      });
-
-      P(ctx, {
-        id: 'player_engine_v1',
-        type: 'select',
-        values: { off: 'OFF', legacy: 'PG legacy', overlay: 'PG Overlay', delta: 'DeltaGuard' },
-        default: current,
-        name: 'Engine',
-        desc: 'Выбор оркестратора плеера: OFF / PG legacy / PG Overlay / DeltaGuard.',
-        onChange: function (v) {
-          var next = normalizePlayerEngine(v);
-          if (next === 'auto') next = 'off';
-          var resolved = setPlayerEngine(next);
-          refreshPlayerGuardLegacySettings();
-          refreshPlayerOverlaySettings();
-          try { if (ctx && ctx.notify) ctx.notify('[[BlackLampa]] engine=' + playerEngineTitle(resolved) + ' ; перезапусти воспроизведение (выйди-зайди в видео)'); } catch (_) { }
-          return true;
-        }
-      });
-
-      P(ctx, {
-        id: 'player_protection_restart_hint',
-        type: 'static',
-        values: 'restart playback required',
-        name: 'Подсказка',
-        desc: 'После смены engine: выйди из видео и зайди снова.'
-      });
-
-      P(ctx, {
-        id: 'player_protection_to_legacy',
-        type: 'static',
-        name: 'Settings: legacy',
-        desc: 'Открыть экран настроек PG legacy.',
-        onEnter: function () { try { if (ctx && ctx.push) ctx.push('ui_pg_legacy', null, 0, 0); } catch (_) { } }
-      });
-
-      P(ctx, {
-        id: 'player_protection_to_overlay',
-        type: 'static',
-        name: 'Settings: overlay',
-        desc: 'Открыть экран настроек PG Overlay.',
-        onEnter: function () { try { if (ctx && ctx.push) ctx.push('ui_pg_overlay', null, 0, 0); } catch (_) { } }
-      });
-
-      P(ctx, {
-        id: 'player_protection_to_dg',
-        type: 'static',
-        name: 'Settings: DG',
-        desc: 'Открыть экран настроек DeltaGuard.',
-        onEnter: function () { try { if (ctx && ctx.push) ctx.push('ui_deltaguard', null, 0, 0); } catch (_) { } }
-      });
-    } catch (_) { }
-  }
-
-  function blmodHub() {
-    try {
-      if (window.BL && BL.ModPlayer) return BL.ModPlayer;
-    } catch (_) { }
-    return null;
-  }
-
-  function blmodNotify(ctx, text) {
-    try {
-      if (ctx && typeof ctx.notify === 'function') return ctx.notify(String(text || 'BL-Mod'));
-    } catch (_) { }
-    try { if (window.Lampa && Lampa.Noty && Lampa.Noty.show) Lampa.Noty.show(String(text || 'BL-Mod')); } catch (_) { }
-  }
-
-  function blmodOpenText(title, lines) {
-    var html = '';
-    try {
-      var body = Array.isArray(lines) ? lines.join('\n') : String(lines || '');
-      html = '<div class="about"><pre style="white-space:pre-wrap;word-break:break-word;max-height:70vh;overflow:auto">' +
-        String(body)
-          .replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;')
-          .replace(/\"/g, '&quot;')
-          .replace(/'/g, '&#39;') +
-        '</pre></div>';
-    } catch (_) { html = '<div class="about"><pre>BL-Mod: no data</pre></div>'; }
-    try {
-      if (window.Lampa && Lampa.Modal && typeof Lampa.Modal.open === 'function') {
-        Lampa.Modal.open({ title: String(title || 'BL-Mod'), align: 'center', html: html });
+      if (window.BL && BL.DeltaGuard && typeof BL.DeltaGuard.defaults === 'function') {
+        var d = BL.DeltaGuard.defaults();
+        if (isPlainObject(d)) return d;
       }
     } catch (_) { }
+    return dgDefaultsFallback();
   }
 
-  function blmodDiagLines(diag) {
-    var lines = [];
-    try {
-      lines.push('BL-Mod diagnose');
-      lines.push('enabled=' + (diag && diag.enabled ? 1 : 0) + ' debug=' + (diag && diag.debug ? 1 : 0));
-      lines.push('hasLampa=' + (diag && diag.hasLampa ? 1 : 0) + ' hasOnlineMod=' + (diag && diag.hasOnlineMod ? 1 : 0));
-      lines.push('preferred=' + String(diag && diag.preferredBalancer || ''));
-      lines.push('enabledBalancers=' + String((diag && diag.enabledBalancers && diag.enabledBalancers.join(',')) || ''));
-      lines.push('activeCard=' + (diag && diag.activeCard ? 1 : 0) + ' activeCardId=' + String(diag && diag.activeCardId || ''));
-    } catch (_) { }
-    return lines;
-  }
-
-  function buildBlModScreen(ctx) {
-    try {
-      var h = blmodHub();
-
-      P(ctx, {
-        id: 'blmod_enable_toggle',
-        key: 'blmod.enabled',
-        type: 'toggle',
-        values: { 0: 'OFF', 1: 'ON' },
-        default: 1,
-        name: 'BL-Mod: Enable',
-        desc: 'Включает кнопку BL-Mod.'
-      });
-
-      P(ctx, {
-        id: 'blmod_debug',
-        key: 'blmod.debug',
-        type: 'toggle',
-        values: { 0: 'OFF', 1: 'ON' },
-        default: 0,
-        name: 'BL-Mod: Debug',
-        desc: 'Расширенные логи BL-Mod.'
-      });
-
-      var rows = [];
-      try { if (h && h.builtinBalancers) rows = h.builtinBalancers() || []; } catch (_) { rows = []; }
-
-      if (rows.length) {
-        var vals = {};
-        rows.forEach(function (r) { vals[String(r.id)] = String(r.title || r.id); });
-
-        P(ctx, {
-          id: 'blmod_preferred_balanser',
-          key: 'blmod.preferred_balanser',
-          type: 'select',
-          values: vals,
-          default: String(rows[0].id),
-          name: 'BL-Mod: Preferred balancer',
-          desc: 'Балансер по умолчанию для открытия online_mod.'
-        });
-
-        rows.forEach(function (r) {
-          P(ctx, {
-            id: 'blmod_source_' + String(r.id),
-            key: 'blmod.source.enabled.' + String(r.id),
-            type: 'toggle',
-            values: { 0: 'OFF', 1: 'ON' },
-            default: r.stable ? 1 : 0,
-            name: 'BL-Mod source: ' + String(r.title || r.id),
-            desc: 'Вкл/выкл источник в BL-Mod.'
-          });
-        });
-      }
-
-      P(ctx, {
-        id: 'blmod_sources_dump',
-        type: 'button',
-        name: 'BL-Mod: Show sources',
-        desc: 'Показать встроенный список источников и их состояние.',
-        onChange: function () {
-          var lines = ['BL-Mod sources'];
-          try {
-            var state = (h && h.listBalancers) ? (h.listBalancers() || []) : [];
-            state.forEach(function (row) {
-              lines.push((row.enabled ? '[ON] ' : '[OFF] ') + String(row.id) + ' :: ' + String(row.title || row.id));
-            });
-            lines.push('');
-            lines.push('preferred=' + String((h && h.getPreferredBalancer) ? (h.getPreferredBalancer() || '') : ''));
-          } catch (_) { lines.push('no data'); }
-          blmodOpenText('BL-Mod: Sources', lines);
-        }
-      });
-
-      P(ctx, {
-        id: 'blmod_results_test',
-        type: 'button',
-        name: 'BL-Mod: Open Online-Mod (test)',
-        desc: 'Открыть нативный online_mod для активной карточки.',
-        onChange: function () {
-          try {
-            if (!h || !h.openOnlineMod) return blmodNotify(ctx, 'BL-Mod: ModPlayer missing');
-            h.openOnlineMod(null, 'menu_test').then(function (ok) {
-              if (!ok) blmodNotify(ctx, 'BL-Mod: открой карточку и повтори');
-            });
-          } catch (_) { }
-        }
-      });
-
-      P(ctx, {
-        id: 'blmod_reset_defaults',
-        type: 'button',
-        name: 'BL-Mod: Reset defaults',
-        desc: 'Сбросить все blmod.* к значениям по умолчанию.',
-        onChange: function () {
-          try {
-            if (h && h.resetDefaults) h.resetDefaults();
-            blmodNotify(ctx, 'BL-Mod: defaults restored');
-            try { if (ctx && ctx.refresh) ctx.refresh({ keepFocus: true }); } catch (_) { }
-          } catch (_) { }
-        }
-      });
-    } catch (_) { }
-  }
-
-  function buildUiPlayerGuardLegacyScreen(ctx) {
-    try {
-      P(ctx, {
-        id: 'player_guard_enabled',
-        type: 'toggle',
-        values: { 0: 'OFF', 1: 'ON' },
-        default: 0,
-        name: 'Защита плеера от обрывов (PlayerGuard)',
-        desc: 'Legacy-механика PlayerGuard. Не управляет Overlay.',
-        onChange: refreshPlayerGuardLegacySettings
-      });
-
-      P(ctx, {
-        id: 'player_guard_hard_strategy',
-        type: 'select',
-        values: { off: 'OFF (disable hard strategy)', auto: 'auto (in-player -> reopen)', inplayer: 'in-player only', reopen: 'reopen only' },
-        default: 'auto',
-        name: 'PlayerGuard: Стратегия HARD recovery',
-        desc: 'off: отключить новую hard-стратегию (fallback на старую логику). auto: сначала in-player reconnect, затем reopen (если разрешён). inplayer: без закрытия UI плеера. reopen: классический close/play.',
-        onChange: refreshPlayerGuardLegacySettings
-      });
-
-      P(ctx, {
-        id: 'player_guard_reopen_on_fault',
-        type: 'toggle',
-        values: { 0: 'OFF', 1: 'ON' },
-        default: 1,
-        name: 'PlayerGuard: Перезапускать плеер при обрыве (reopen)',
-        desc: 'Разрешает fallback через close/play. Если OFF, reopen не используется.',
-        onChange: refreshPlayerGuardLegacySettings
-      });
-
-      P(ctx, {
-        id: 'player_guard_auto_reopen_from_position',
-        type: 'toggle',
-        values: { 0: 'OFF', 1: 'ON' },
-        default: 1,
-        name: 'PlayerGuard: Автовосстановление по fault',
-        desc: 'Автоматически запускает recovery после обрыва из буфера/fault событий.',
-        onChange: refreshPlayerGuardLegacySettings
-      });
-
-      P(ctx, {
-        id: 'player_guard_allow_soft',
-        type: 'toggle',
-        values: { 0: 'OFF', 1: 'ON' },
-        default: 1,
-        name: 'PlayerGuard: Разрешить SOFT recovery',
-        desc: 'Быстрые попытки (seek/play/load) перед HARD стратегией.',
-        onChange: refreshPlayerGuardLegacySettings
-      });
-
-      P(ctx, {
-        id: 'player_guard_allow_hard',
-        type: 'toggle',
-        values: { 0: 'OFF', 1: 'ON' },
-        default: 0,
-        name: 'PlayerGuard: Разрешить HARD reset',
-        desc: 'Разрешает тяжёлый reset PlayerVideo (destroy/url).',
-        onChange: refreshPlayerGuardLegacySettings
-      });
-
-      P(ctx, {
-        id: 'player_guard_soft_attempts',
-        type: 'select',
-        values: { '0': '0', '1': '1', '2': '2', '3': '3', '4': '4', '5': '5' },
-        default: '2',
-        name: 'Попыток восстановления (SOFT)',
-        desc: 'Мягкие попытки: seek/play, load, reload URL. Бюджет не сбрасывается при повторных fault в коротком окне.',
-        onChange: refreshPlayerGuardLegacySettings
-      });
-
-      P(ctx, {
-        id: 'player_guard_hard_attempts',
-        type: 'select',
-        values: { '0': '0', '1': '1', '2': '2' },
-        default: '1',
-        name: 'Попыток восстановления (HARD)',
-        desc: 'Бюджет HARD шагов: in-player/reopen/hard-reset (зависит от стратегии).',
-        onChange: refreshPlayerGuardLegacySettings
-      });
-
-      P(ctx, {
-        id: 'player_guard_attempt_delay_sec',
-        type: 'select',
-        values: { '1': '1', '2': '2', '3': '3', '4': '4', '5': '5' },
-        default: '2',
-        name: 'Пауза между попытками (сек)',
-        desc: 'Задержка между шагами восстановления (чтобы не дёргать плеер слишком часто).',
-        onChange: refreshPlayerGuardLegacySettings
-      });
-
-      P(ctx, {
-        id: 'player_guard_popup_min_sec',
-        type: 'select',
-        values: { '1': '1', '2': '2', '3': '3', '4': '4', '5': '5' },
-        default: '2',
-        name: 'Мин. показ попапа (сек)',
-        desc: 'Минимальное время показа каждого шага (1–5 сек).',
-        onChange: refreshPlayerGuardLegacySettings
-      });
-
-      try {
-        var pgAc = [];
-        for (var pgI = 0; pgI <= 60; pgI++) pgAc.push(String(pgI));
-        P(ctx, {
-          id: 'player_guard_popup_autoclose_sec',
-          type: 'select',
-          values: pgAc,
-          default: '10',
-          name: 'PlayerGuard popup: автозакрытие (сек)',
-          desc: 'Автозакрытие попапа при бездействии. 0 = выключено.',
-          onChange: refreshPlayerGuardLegacySettings
-        });
-      } catch (_) { }
-
-      P(ctx, {
-        id: 'player_guard_block_next',
-        type: 'toggle',
-        values: { 0: 'OFF', 1: 'ON' },
-        default: 1,
-        name: 'Блокировать авто-переход к следующему',
-        desc: 'В режиме guardLock блокирует autoplay next при ложном конце/сбросе сессии.',
-        onChange: refreshPlayerGuardLegacySettings
-      });
-
-      P(ctx, {
-        id: 'player_guard_debug_popup',
-        type: 'toggle',
-        values: { 0: 'OFF', 1: 'ON' },
-        default: 1,
-        name: 'Отладка в попапе',
-        desc: 'Показывает readyState/networkState/srcSig/reason.',
-        onChange: refreshPlayerGuardLegacySettings
-      });
-
-      P(ctx, {
-        id: 'player_guard_debug_on_open',
-        type: 'toggle',
-        values: { 0: 'OFF', 1: 'ON' },
-        default: 0,
-        name: 'PG: Debug popup on open',
-        desc: 'Автоматически открывает debug popup при старте плеера и показывает live-статус (buffer/ranges/events/recovery).',
-        onChange: refreshPlayerGuardLegacySettings
-      });
-
-      P(ctx, {
-        id: 'player_guard_store_pos',
-        type: 'toggle',
-        values: { 0: 'OFF', 1: 'ON' },
-        default: 1,
-        name: 'Сохранять позицию в localStorage',
-        desc: 'Truth позиция (throttle) хранится как backup и используется для recovery.',
-        onChange: refreshPlayerGuardLegacySettings
-      });
-    } catch (_) { }
-  }
-
-  function buildUiPlayerGuardOverlayScreen(ctx) {
-    try {
-      var od = overlayDefaults();
-      var opacityPct = Math.max(20, Math.min(100, Math.round((Number(od.debug_opacity) || 0.85) * 100)));
-
-      P(ctx, {
-        id: 'player_overlay_enabled',
-        type: 'toggle',
-        values: { 0: 'OFF', 1: 'ON' },
-        default: od.enabled ? 1 : 0,
-        name: 'Overlay: Enable',
-        desc: 'Независимое включение PlayerGuard Overlay.',
-        onChange: refreshPlayerOverlaySettings
-      });
-
-      P(ctx, {
-        id: 'player_overlay_mode',
-        type: 'select',
-        values: { off: 'Off', legacy: 'Legacy' },
-        default: (String(od.mode || 'legacy') === 'off' ? 'off' : 'legacy'),
-        name: 'Overlay: Mode',
-        desc: 'Legacy-only режим PG Overlay. Выбор DeltaGuard вынесен в Player Protection → Engine.',
-        onChange: refreshPlayerOverlaySettings
-      });
-
-      P(ctx, {
-        id: 'player_overlay_debug_on_open',
-        type: 'toggle',
-        values: { 0: 'OFF', 1: 'ON' },
-        default: od.debug_on_open ? 1 : 0,
-        name: 'Overlay: Debug on open',
-        desc: 'Авто-открытие debug overlay при старте плеера.',
-        onChange: refreshPlayerOverlaySettings
-      });
-
-      P(ctx, {
-        id: 'player_overlay_reset_defaults',
-        type: 'button',
-        name: 'Сбросить настройки PG Overlay',
-        desc: 'Сбросить все настройки PG Overlay к оптимальным значениям по умолчанию.',
-        onChange: function () {
-          var doReset = function () {
-            try {
-              var done = false;
-              try {
-                if (window.BL && BL.PlayerOverlay && typeof BL.PlayerOverlay.applyDefaults === 'function') {
-                  BL.PlayerOverlay.applyDefaults();
-                  done = true;
-                }
-              } catch (_) { done = false; }
-
-              if (!done) {
-                var list = overlayStorageDefaults();
-                for (var i = 0; i < list.length; i++) {
-                  var it = list[i] || {};
-                  if (!it.key) continue;
-                  sSet(String(it.key), it.def);
-                }
-              }
-
-              refreshPlayerOverlaySettings();
-              try { if (ctx && ctx.refresh) ctx.refresh({ keepFocus: true }); } catch (_) { }
-              try { if (ctx && ctx.notify) ctx.notify('[[BlackLampa]] Настройки PG Overlay сброшены'); } catch (_) { }
-            } catch (_) { }
-            return false;
-          };
-
-          try {
-            if (ctx && typeof ctx.confirm === 'function') {
-              ctx.confirm('PG Overlay', 'Сбросить настройки PG Overlay к дефолтам?', function () { doReset(); });
-              return false;
-            }
-          } catch (_) { }
-
-          return doReset();
-        }
-      });
-
-      try {
-        var opVals = {};
-        for (var op = 20; op <= 100; op += 5) opVals[String(op)] = String(op) + '%';
-        P(ctx, {
-          id: 'player_overlay_popup_opacity',
-          type: 'select',
-          values: opVals,
-          default: String(opacityPct),
-          name: 'Overlay: Popup opacity',
-          desc: 'Прозрачность debug popup (20–100%).',
-          onChange: refreshPlayerOverlaySettings
-        });
-      } catch (_) { }
-
-      P(ctx, {
-        id: 'player_overlay_protect_next',
-        type: 'toggle',
-        values: { 0: 'OFF', 1: 'ON' },
-        default: od.protect_next ? 1 : 0,
-        name: 'Overlay: Protect next / false-end',
-        desc: 'Блокировать ложный переход к следующему и восстанавливать truth time.',
-        onChange: refreshPlayerOverlaySettings
-      });
-
-      P(ctx, {
-        id: 'player_overlay_store_truth',
-        type: 'toggle',
-        values: { 0: 'OFF', 1: 'ON' },
-        default: od.store_truth ? 1 : 0,
-        name: 'Overlay: Store truth',
-        desc: 'Хранить реальное время и подпись источника в localStorage.',
-        onChange: refreshPlayerOverlaySettings
-      });
-
-      P(ctx, {
-        id: 'player_overlay_truth_commit_ms',
-        type: 'select',
-        values: { '100': '100', '150': '150', '200': '200', '250': '250', '500': '500', '1000': '1000' },
-        default: String(od.truth_commit_ms || 100),
-        name: 'Overlay: Truth commit (ms)',
-        desc: 'Интервал записи truth в localStorage.',
-        onChange: refreshPlayerOverlaySettings
-      });
-
-      P(ctx, {
-        id: 'player_overlay_hang_time_ms',
-        type: 'select',
-        values: { '6000': '6000', '8000': '8000', '10000': '10000', '12000': '12000', '15000': '15000', '18000': '18000', '20000': '20000', '25000': '25000', '30000': '30000' },
-        default: String(od.hang_time_ms || 12000),
-        name: 'Overlay: Hang time (ms)',
-        desc: 'Порог зависания по currentTime.',
-        onChange: refreshPlayerOverlaySettings
-      });
-
-      P(ctx, {
-        id: 'player_overlay_hang_buf_ms',
-        type: 'select',
-        values: { '8000': '8000', '10000': '10000', '12000': '12000', '15000': '15000', '18000': '18000', '20000': '20000', '25000': '25000', '30000': '30000' },
-        default: String(od.hang_buf_ms || 18000),
-        name: 'Overlay: Hang buffer (ms)',
-        desc: 'Порог отсутствия progress/изменения buffer.',
-        onChange: refreshPlayerOverlaySettings
-      });
-
-      P(ctx, {
-        id: 'player_overlay_resume_guard_ms',
-        type: 'select',
-        values: { '60000': '60000', '120000': '120000', '180000': '180000', '240000': '240000', '300000': '300000' },
-        default: String(od.resume_guard_ms || 180000),
-        name: 'Overlay: Resume guard window (ms)',
-        desc: 'Окно усиленной защиты после resume (агрессивнее hang/false-end guard).',
-        onChange: refreshPlayerOverlaySettings
-      });
-
-      P(ctx, {
-        id: 'player_overlay_false_end_stale_allow',
-        type: 'toggle',
-        values: { 0: 'OFF', 1: 'ON' },
-        default: od.false_end_stale_allow ? 1 : 0,
-        name: 'Overlay: Allow stale false-end',
-        desc: 'Разрешить loose false-end даже при stale truth, если есть stall-сигналы.',
-        onChange: refreshPlayerOverlaySettings
-      });
-
-      P(ctx, {
-        id: 'player_overlay_fake_full_enabled',
-        type: 'toggle',
-        values: { 0: 'OFF', 1: 'ON' },
-        default: od.fake_full_enabled ? 1 : 0,
-        name: 'Overlay: Fake-full detector',
-        desc: 'Ловить фейковую «полную буферизацию» (range 0..dur без движения прогресса/буфера).',
-        onChange: refreshPlayerOverlaySettings
-      });
-
-      P(ctx, {
-        id: 'player_overlay_fake_full_no_prog_ms',
-        type: 'select',
-        values: { '3000': '3000', '4000': '4000', '5000': '5000', '6000': '6000', '6500': '6500', '8000': '8000', '10000': '10000', '12000': '12000' },
-        default: String(od.fake_full_no_prog_ms || 6500),
-        name: 'Overlay: Fake-full no-progress (ms)',
-        desc: 'Сколько ждать без progress перед fake-full детектом.',
-        onChange: refreshPlayerOverlaySettings
-      });
-
-      P(ctx, {
-        id: 'player_overlay_fake_full_no_move_ms',
-        type: 'select',
-        values: { '3000': '3000', '4000': '4000', '5000': '5000', '6000': '6000', '6500': '6500', '8000': '8000', '10000': '10000', '12000': '12000' },
-        default: String(od.fake_full_no_move_ms || 6500),
-        name: 'Overlay: Fake-full no-buffer-move (ms)',
-        desc: 'Сколько ждать без движения buffered-end перед fake-full детектом.',
-        onChange: refreshPlayerOverlaySettings
-      });
-
-      P(ctx, {
-        id: 'player_overlay_min_ahead_sec',
-        type: 'select',
-        values: { '0.1': '0.1', '0.2': '0.2', '0.25': '0.25', '0.5': '0.5', '0.6': '0.6', '0.75': '0.75', '1.0': '1.0', '1.5': '1.5', '2.0': '2.0' },
-        default: String(od.min_ahead_sec || 0.1),
-        name: 'Overlay: Min ahead (sec)',
-        desc: 'Порог ahead для underrun-детектора.',
-        onChange: refreshPlayerOverlaySettings
-      });
-
-      P(ctx, {
-        id: 'player_overlay_underrun_no_prog_ms',
-        type: 'select',
-        values: { '2000': '2000', '3000': '3000', '4000': '4000', '4500': '4500', '5000': '5000', '6000': '6000', '8000': '8000', '10000': '10000' },
-        default: String(od.underrun_no_prog_ms || 4500),
-        name: 'Overlay: Underrun no-progress (ms)',
-        desc: 'Сколько ждать без progress для buffer underrun.',
-        onChange: refreshPlayerOverlaySettings
-      });
-
-      P(ctx, {
-        id: 'player_overlay_underrun_no_ahead_move_ms',
-        type: 'select',
-        values: { '2000': '2000', '3000': '3000', '4000': '4000', '4500': '4500', '5000': '5000', '6000': '6000', '8000': '8000', '10000': '10000' },
-        default: String(od.underrun_no_ahead_move_ms || 4500),
-        name: 'Overlay: Underrun no-ahead-move (ms)',
-        desc: 'Сколько ждать без изменения ahead для buffer underrun.',
-        onChange: refreshPlayerOverlaySettings
-      });
-
-      P(ctx, {
-        id: 'player_overlay_soft_attempts',
-        type: 'select',
-        values: { '0': '0', '1': '1', '2': '2', '3': '3', '4': '4', '5': '5' },
-        default: String((od.soft_attempts !== undefined && od.soft_attempts !== null) ? od.soft_attempts : 0),
-        name: 'Overlay: Soft attempts',
-        desc: 'Количество soft попыток перед in-player.',
-        onChange: refreshPlayerOverlaySettings
-      });
-
-      P(ctx, {
-        id: 'player_overlay_inplayer_attempts',
-        type: 'select',
-        values: { '0': '0', '1': '1', '2': '2', '3': '3', '4': '4', '5': '5', '6': '6' },
-        default: String(od.inplayer_attempts || 2),
-        name: 'Overlay: In-player attempts',
-        desc: 'Количество in-player rebuild попыток.',
-        onChange: refreshPlayerOverlaySettings
-      });
-
-      P(ctx, {
-        id: 'player_overlay_inplayer_rebuild_mode',
-        type: 'select',
-        values: { refresh_src: 'refresh_src', destroy_url: 'destroy_url', video_src: 'video_src' },
-        default: String(od.inplayer_rebuild_mode || 'destroy_url'),
-        name: 'Overlay: In-player rebuild mode',
-        desc: 'Метод пересборки потока внутри плеера.',
-        onChange: refreshPlayerOverlaySettings
-      });
-
-      P(ctx, {
-        id: 'player_overlay_escalate_to_reopen',
-        type: 'toggle',
-        values: { 0: 'OFF', 1: 'ON' },
-        default: od.escalate_to_reopen ? 1 : 0,
-        name: 'Overlay: Escalate to reopen',
-        desc: 'После in-player попыток эскалировать в reopen через PG.',
-        onChange: refreshPlayerOverlaySettings
-      });
-
-      P(ctx, {
-        id: 'player_overlay_reopen_cooldown_ms',
-        type: 'select',
-        values: { '3000': '3000', '5000': '5000', '8000': '8000', '12000': '12000', '15000': '15000', '20000': '20000' },
-        default: String(od.reopen_cooldown_ms || 8000),
-        name: 'Overlay: Reopen cooldown (ms)',
-        desc: 'Кулдаун между reopen-эскалациями.',
-        onChange: refreshPlayerOverlaySettings
-      });
-
-      P(ctx, {
-        id: 'player_overlay_resume_backoff_sec',
-        type: 'select',
-        values: { '0.05': '0.05', '0.1': '0.1', '0.2': '0.2', '0.3': '0.3', '0.5': '0.5', '0.8': '0.8', '1.0': '1.0', '1.5': '1.5', '2.0': '2.0' },
-        default: String(od.resume_backoff_sec || 0.3),
-        name: 'Overlay: Resume backoff (sec)',
-        desc: 'Сдвиг назад при восстановлении позиции после сбоя.',
-        onChange: refreshPlayerOverlaySettings
-      });
-
-      P(ctx, {
-        id: 'player_overlay_resume_min_step_sec',
-        type: 'select',
-        values: { '0.05': '0.05', '0.1': '0.1', '0.2': '0.2', '0.35': '0.35', '0.5': '0.5', '0.8': '0.8', '1.0': '1.0' },
-        default: String(od.resume_min_step_sec || 0.1),
-        name: 'Overlay: Resume min step (sec)',
-        desc: 'Минимальный шаг коррекции при выставлении recovery-позиции.',
-        onChange: refreshPlayerOverlaySettings
-      });
-
-      P(ctx, {
-        id: 'player_overlay_seek_verify_delay_ms',
-        type: 'select',
-        values: { '300': '300', '500': '500', '700': '700', '900': '900', '1200': '1200', '1500': '1500', '2000': '2000' },
-        default: String(od.seek_verify_delay_ms || 900),
-        name: 'Overlay: Seek verify delay (ms)',
-        desc: 'Задержка перед верификацией, что seek реально применился.',
-        onChange: refreshPlayerOverlaySettings
-      });
-
-      P(ctx, {
-        id: 'player_overlay_seek_delta_sec',
-        type: 'select',
-        values: { '0.1': '0.1', '0.2': '0.2', '0.3': '0.3', '0.5': '0.5', '1.0': '1.0', '1.5': '1.5', '2.0': '2.0', '2.5': '2.5', '3.0': '3.0', '4.0': '4.0', '5.0': '5.0' },
-        default: String(od.seek_delta_sec || 0.1),
-        name: 'Overlay: Seek delta (sec)',
-        desc: 'Допустимое расхождение между target и currentTime после seek.',
-        onChange: refreshPlayerOverlaySettings
-      });
-
-      P(ctx, {
-        id: 'player_overlay_warmup_ms_after_recover',
-        type: 'select',
-        values: { '8000': '8000', '10000': '10000', '12000': '12000', '15000': '15000', '18000': '18000', '20000': '20000', '25000': '25000', '30000': '30000' },
-        default: String(od.warmup_ms_after_recover || 18000),
-        name: 'Overlay: Warmup after recover (ms)',
-        desc: 'Пауза детекторов после успешного recovery, чтобы избежать циклов.',
-        onChange: refreshPlayerOverlaySettings
-      });
-    } catch (_) { }
+  function refreshDeltaGuardSettings() {
+    try { if (window.BL && BL.DeltaGuard && typeof BL.DeltaGuard.refresh === 'function') BL.DeltaGuard.refresh(); } catch (_) { }
   }
 
   function buildUiDeltaGuardScreen(ctx) {
     try {
-      var od = overlayDefaults();
-      var engine = getPlayerEngine();
-      if (engine !== 'delta') {
-        P(ctx, {
-          id: 'dg_engine_not_delta',
-          type: 'static',
-          values: 'read-only',
-          name: 'DeltaGuard',
-          desc: 'Engine сейчас не DeltaGuard. Экран read-only. Переключи engine в "Player Protection".'
-        });
-        P(ctx, {
-          id: 'dg_open_engine_selector',
-          type: 'static',
-          name: 'Открыть Player Protection',
-          desc: 'Перейти к выбору engine.',
-          onEnter: function () { try { if (ctx && ctx.push) ctx.push('ui_player_protection', null, 0, 0); } catch (_) { } }
-        });
-        return;
-      }
+      var d = dgDefaults();
 
       P(ctx, {
         id: 'dg_open_debug_popup',
         type: 'button',
-        name: 'Open DG debug popup',
-        desc: 'Открыть автономный debug popup DeltaGuard.',
+        name: 'Open DG Debug Popup',
+        desc: 'Открыть popup отладки DeltaGuard.',
         onChange: function () {
-          try { if (window.BL && BL.PlayerOverlay && typeof BL.PlayerOverlay.debugOpen === 'function') BL.PlayerOverlay.debugOpen(); } catch (_) { }
+          try { if (window.BL && BL.DeltaGuard && typeof BL.DeltaGuard.debugOpen === 'function') BL.DeltaGuard.debugOpen(); } catch (_) { }
+          return false;
+        }
+      });
+
+      P(ctx, {
+        id: 'dg_reset_runtime_state',
+        type: 'button',
+        name: 'Reset DG state',
+        desc: 'Сбросить runtime state DeltaGuard (без изменения localStorage).',
+        onChange: function () {
+          try { if (window.BL && BL.DeltaGuard && typeof BL.DeltaGuard.resetState === 'function') BL.DeltaGuard.resetState(); } catch (_) { }
+          try { if (ctx && ctx.notify) ctx.notify('[[BlackLampa]] DeltaGuard runtime reset'); } catch (_) { }
           return false;
         }
       });
@@ -1948,211 +1056,180 @@
         id: 'dg_enabled',
         type: 'toggle',
         values: { 0: 'OFF', 1: 'ON' },
-        default: od.dg_enabled ? 1 : 0,
-        name: 'DeltaGuard: Enabled',
-        desc: 'Engine=delta принудительно включает DG. Тумблер сохранён для совместимости ключей.',
-        onChange: refreshPlayerOverlaySettings
+        default: d.dg_enabled ? 1 : 0,
+        name: 'Enabled',
+        desc: 'Включить/выключить DeltaGuard.',
+        onChange: refreshDeltaGuardSettings
       });
 
       P(ctx, {
         id: 'dg_debug_on_open',
         type: 'toggle',
         values: { 0: 'OFF', 1: 'ON' },
-        default: od.dg_debug_on_open ? 1 : 0,
-        name: 'DeltaGuard: Debug popup on open',
-        desc: 'Авто-открытие DG popup при старте плеера.',
-        onChange: refreshPlayerOverlaySettings
+        default: d.dg_debug_on_open ? 1 : 0,
+        name: 'Debug on open',
+        desc: 'Автоматически открыть popup при старте воспроизведения.',
+        onChange: refreshDeltaGuardSettings
       });
 
       P(ctx, {
-        id: 'dg_popup_opacity',
-        type: 'select',
-        values: { '20': '20%', '30': '30%', '40': '40%', '50': '50%', '60': '60%', '70': '70%', '80': '80%', '90': '90%', '100': '100%' },
-        default: String(od.dg_popup_opacity || 85),
-        name: 'DeltaGuard: Popup opacity',
-        desc: 'Прозрачность DG popup.',
-        onChange: refreshPlayerOverlaySettings
+        id: 'dg_debug_on_fail',
+        type: 'toggle',
+        values: { 0: 'OFF', 1: 'ON' },
+        default: d.dg_debug_on_fail ? 1 : 0,
+        name: 'Debug on fail',
+        desc: 'Открывать popup при RECOVERING/VERIFYING/FAILED.',
+        onChange: refreshDeltaGuardSettings
       });
 
       P(ctx, {
-        id: 'dg_user_seek_window_ms',
+        id: 'dg_popup_autoclose_sec',
         type: 'select',
-        values: { '1000': '1000', '1200': '1200', '1500': '1500', '1800': '1800', '2000': '2000', '2500': '2500', '3000': '3000' },
-        default: String(od.dg_user_seek_window_ms || 1800),
-        name: 'DeltaGuard: User seek window (ms)',
-        desc: 'Окно, в котором DeltaGuard не вмешивается после ручной перемотки.',
-        onChange: refreshPlayerOverlaySettings
+        values: { '0': '0', '2': '2', '3': '3', '5': '5', '8': '8', '10': '10', '15': '15', '20': '20', '30': '30' },
+        default: String(d.dg_popup_autoclose_sec || 0),
+        name: 'Popup autoclose (sec)',
+        desc: '0 = не закрывать автоматически.',
+        onChange: refreshDeltaGuardSettings
       });
 
       P(ctx, {
-        id: 'dg_user_nav_window_ms',
+        id: 'dg_hard_reset_enabled',
+        type: 'toggle',
+        values: { 0: 'OFF', 1: 'ON' },
+        default: d.dg_hard_reset_enabled ? 1 : 0,
+        name: 'Hard reset enabled',
+        desc: 'Разрешить hard reset в recovery pipeline.',
+        onChange: refreshDeltaGuardSettings
+      });
+
+      P(ctx, {
+        id: 'dg_hard_reset_after_n',
         type: 'select',
-        values: { '1500': '1500', '2000': '2000', '2500': '2500', '3000': '3000', '4000': '4000' },
-        default: String(od.dg_user_nav_window_ms || 2500),
-        name: 'DeltaGuard: User nav window (ms)',
-        desc: 'Окно блокировки вмешательства после ручной навигации.',
-        onChange: refreshPlayerOverlaySettings
+        values: { '1': '1', '2': '2', '3': '3', '4': '4', '5': '5' },
+        default: String(d.dg_hard_reset_after_n || 2),
+        name: 'Hard reset after N',
+        desc: 'После N неудачных попыток запускать hard reset.',
+        onChange: refreshDeltaGuardSettings
+      });
+
+      P(ctx, {
+        id: 'dg_tick_ms',
+        type: 'select',
+        values: { '150': '150', '200': '200', '250': '250', '300': '300', '400': '400', '500': '500', '750': '750', '1000': '1000' },
+        default: String(d.dg_tick_ms || 250),
+        name: 'Tick (ms)',
+        desc: 'Период цикла мониторинга.',
+        onChange: refreshDeltaGuardSettings
+      });
+
+      P(ctx, {
+        id: 'dg_stall_soft_ms',
+        type: 'select',
+        values: { '600': '600', '700': '700', '800': '800', '900': '900', '1000': '1000', '1200': '1200', '1500': '1500', '1800': '1800', '2000': '2000' },
+        default: String(d.dg_stall_soft_ms || 900),
+        name: 'Stall soft (ms)',
+        desc: 'Порог soft-stall.',
+        onChange: refreshDeltaGuardSettings
+      });
+
+      P(ctx, {
+        id: 'dg_stall_hard_ms',
+        type: 'select',
+        values: { '1200': '1200', '1500': '1500', '1800': '1800', '2000': '2000', '2300': '2300', '2500': '2500', '3000': '3000', '3500': '3500', '4000': '4000' },
+        default: String(d.dg_stall_hard_ms || 2000),
+        name: 'Stall hard (ms)',
+        desc: 'Порог hard-stall и recovery.',
+        onChange: refreshDeltaGuardSettings
+      });
+
+      P(ctx, {
+        id: 'dg_recover_cooldown_ms',
+        type: 'select',
+        values: { '1000': '1000', '1500': '1500', '2000': '2000', '2500': '2500', '3000': '3000', '4000': '4000', '5000': '5000', '7000': '7000' },
+        default: String(d.dg_recover_cooldown_ms || 2500),
+        name: 'Recover cooldown (ms)',
+        desc: 'Минимальный интервал между recovery.',
+        onChange: refreshDeltaGuardSettings
+      });
+
+      P(ctx, {
+        id: 'dg_verify_ms',
+        type: 'select',
+        values: { '700': '700', '900': '900', '1100': '1100', '1400': '1400', '1700': '1700', '2000': '2000', '2500': '2500', '3000': '3000' },
+        default: String(d.dg_verify_ms || 1400),
+        name: 'Verify window (ms)',
+        desc: 'Окно верификации восстановления.',
+        onChange: refreshDeltaGuardSettings
       });
 
       P(ctx, {
         id: 'dg_block_next_ms',
         type: 'select',
-        values: { '3000': '3000', '4000': '4000', '5000': '5000', '6000': '6000', '8000': '8000', '10000': '10000', '12000': '12000', '15000': '15000' },
-        default: String(od.dg_block_next_ms || 6000),
-        name: 'DeltaGuard: Block next (ms)',
-        desc: 'Окно жёсткой блокировки auto-next.',
-        onChange: refreshPlayerOverlaySettings
+        values: { '2000': '2000', '3000': '3000', '4000': '4000', '5000': '5000', '6000': '6000', '8000': '8000', '10000': '10000', '12000': '12000', '15000': '15000' },
+        default: String(d.dg_block_next_ms || 6000),
+        name: 'Block next (ms)',
+        desc: 'Окно блокировки next/ended.',
+        onChange: refreshDeltaGuardSettings
       });
 
       P(ctx, {
         id: 'dg_tail_sec',
         type: 'select',
-        values: { '1.0': '1.0', '1.5': '1.5', '2.0': '2.0', '2.5': '2.5', '3.0': '3.0', '4.0': '4.0', '5.0': '5.0' },
-        default: String(od.dg_tail_sec || 3.0),
-        name: 'DeltaGuard: Tail window (sec)',
-        desc: 'Расстояние до конца, где DG включает EndGuard.',
-        onChange: refreshPlayerOverlaySettings
+        values: { '1.0': '1.0', '1.5': '1.5', '2.0': '2.0', '2.5': '2.5', '3.0': '3.0', '4.0': '4.0', '5.0': '5.0', '6.0': '6.0' },
+        default: String(d.dg_tail_sec || 3.0),
+        name: 'Tail sec',
+        desc: 'Tail окно для real-end/fake-end.',
+        onChange: refreshDeltaGuardSettings
       });
 
       P(ctx, {
         id: 'dg_false_end_jump_sec',
         type: 'select',
-        values: { '3': '3', '5': '5', '7': '7', '10': '10', '12': '12', '15': '15', '20': '20' },
-        default: String(od.dg_false_end_jump_sec || 10.0),
-        name: 'DeltaGuard: False-end jump (sec)',
-        desc: 'Минимальный jump до tail, считаемый ложным переходом в конец.',
-        onChange: refreshPlayerOverlaySettings
+        values: { '3': '3', '5': '5', '7': '7', '10': '10', '12': '12', '15': '15', '20': '20', '30': '30' },
+        default: String(d.dg_false_end_jump_sec || 10.0),
+        name: 'False-end jump (sec)',
+        desc: 'Минимальный jump near-end для fake-end.',
+        onChange: refreshDeltaGuardSettings
       });
 
       P(ctx, {
         id: 'dg_fake_full_enabled',
         type: 'toggle',
         values: { 0: 'OFF', 1: 'ON' },
-        default: od.dg_fake_full_enabled ? 1 : 0,
-        name: 'DeltaGuard: Fake-full detector',
-        desc: 'Включить DG BufferGuard fake-full.',
-        onChange: refreshPlayerOverlaySettings
+        default: d.dg_fake_full_enabled ? 1 : 0,
+        name: 'Fake-full detector',
+        desc: 'Включить детектор fake-full.',
+        onChange: refreshDeltaGuardSettings
       });
 
       P(ctx, {
         id: 'dg_false_end_enabled',
         type: 'toggle',
         values: { 0: 'OFF', 1: 'ON' },
-        default: od.dg_false_end_enabled ? 1 : 0,
-        name: 'DeltaGuard: False-end detector',
-        desc: 'Включить DG EndGuard false-end/next-block.',
-        onChange: refreshPlayerOverlaySettings
-      });
-
-      P(ctx, {
-        id: 'dg_stall_soft_ms',
-        type: 'select',
-        values: { '800': '800', '1000': '1000', '1200': '1200', '1500': '1500', '1800': '1800', '2000': '2000' },
-        default: String(od.dg_stall_soft_ms || 1200),
-        name: 'DeltaGuard: Stall soft (ms)',
-        desc: 'Порог перехода в STALL_CANDIDATE.',
-        onChange: refreshPlayerOverlaySettings
-      });
-
-      P(ctx, {
-        id: 'dg_stall_hard_ms',
-        type: 'select',
-        values: { '1800': '1800', '2200': '2200', '2500': '2500', '3000': '3000', '3500': '3500', '4000': '4000', '5000': '5000' },
-        default: String(od.dg_stall_hard_ms || 2500),
-        name: 'DeltaGuard: Stall hard (ms)',
-        desc: 'Порог запуска recovery.',
-        onChange: refreshPlayerOverlaySettings
-      });
-
-      P(ctx, {
-        id: 'dg_warmup_grace_ms',
-        type: 'select',
-        values: { '600': '600', '800': '800', '1000': '1000', '1200': '1200', '1500': '1500', '2000': '2000' },
-        default: String(od.dg_warmup_grace_ms || 1200),
-        name: 'DeltaGuard: Warmup grace (ms)',
-        desc: 'Пауза после старта/seek/recover перед детекцией.',
-        onChange: refreshPlayerOverlaySettings
-      });
-
-      P(ctx, {
-        id: 'dg_resume_tolerance_sec',
-        type: 'select',
-        values: { '0.08': '0.08', '0.1': '0.1', '0.12': '0.12', '0.15': '0.15', '0.2': '0.2', '0.3': '0.3' },
-        default: String(od.dg_resume_tolerance_sec || 0.12),
-        name: 'DeltaGuard: Resume tolerance (sec)',
-        desc: 'Допуск при verify после restart/seek.',
-        onChange: refreshPlayerOverlaySettings
-      });
-
-      P(ctx, {
-        id: 'dg_resume_seek_retry_max',
-        type: 'select',
-        values: { '0': '0', '1': '1', '2': '2', '3': '3' },
-        default: String(od.dg_resume_seek_retry_max || 2),
-        name: 'DeltaGuard: Resume seek retries',
-        desc: 'Максимум корректирующих микросиков вперёд.',
-        onChange: refreshPlayerOverlaySettings
-      });
-
-      P(ctx, {
-        id: 'dg_recover_retry_max',
-        type: 'select',
-        values: { '0': '0', '1': '1', '2': '2', '3': '3' },
-        default: String(od.dg_recover_retry_max || 2),
-        name: 'DeltaGuard: Recover retries',
-        desc: 'Максимум повторных recover перед failsafe.',
-        onChange: refreshPlayerOverlaySettings
-      });
-
-      P(ctx, {
-        id: 'dg_failsafe_cooldown_ms',
-        type: 'select',
-        values: { '4000': '4000', '6000': '6000', '8000': '8000', '10000': '10000', '12000': '12000', '15000': '15000' },
-        default: String(od.dg_failsafe_cooldown_ms || 8000),
-        name: 'DeltaGuard: Failsafe cooldown (ms)',
-        desc: 'Пауза после серии неудачных recover.',
-        onChange: refreshPlayerOverlaySettings
-      });
-
-      P(ctx, {
-        id: 'dg_debug_level',
-        type: 'select',
-        values: { silent: 'silent', normal: 'normal', trace: 'trace' },
-        default: String(od.dg_debug_level || 'normal'),
-        name: 'DeltaGuard: Debug level',
-        desc: 'Уровень логирования DeltaGuard.',
-        onChange: refreshPlayerOverlaySettings
+        default: d.dg_false_end_enabled ? 1 : 0,
+        name: 'False-end detector',
+        desc: 'Включить детектор false-end.',
+        onChange: refreshDeltaGuardSettings
       });
 
       P(ctx, {
         id: 'dg_reset_defaults',
         type: 'button',
-        name: 'Сбросить DeltaGuard defaults',
-        desc: 'Сбросить только параметры DeltaGuard (dg_*).',
+        name: 'Reset DG defaults',
+        desc: 'Сбросить dg_* ключи к дефолтам.',
         onChange: function () {
-          var doReset = function () {
-            try {
-              var list = overlayDeltaStorageDefaults();
-              for (var i = 0; i < list.length; i++) {
-                var it = list[i] || {};
-                if (!it.key) continue;
-                sSet(String(it.key), it.def);
-              }
-              refreshPlayerOverlaySettings();
-              try { if (ctx && ctx.refresh) ctx.refresh({ keepFocus: true }); } catch (_) { }
-              try { if (ctx && ctx.notify) ctx.notify('[[BlackLampa]] DeltaGuard defaults сброшены'); } catch (_) { }
-            } catch (_) { }
-            return false;
-          };
-
           try {
-            if (ctx && typeof ctx.confirm === 'function') {
-              ctx.confirm('DeltaGuard', 'Сбросить только настройки DeltaGuard к дефолтам?', function () { doReset(); });
-              return false;
+            var dd = dgDefaults();
+            var p = String(pref() || 'blacklampa_');
+            for (var key in dd) {
+              if (!Object.prototype.hasOwnProperty.call(dd, key)) continue;
+              sSet(p + String(key), dd[key]);
             }
+            refreshDeltaGuardSettings();
+            try { if (ctx && ctx.refresh) ctx.refresh({ keepFocus: true }); } catch (_) { }
+            try { if (ctx && ctx.notify) ctx.notify('[[BlackLampa]] DeltaGuard defaults restored'); } catch (_) { }
           } catch (_) { }
-
-          return doReset();
+          return false;
         }
       });
     } catch (_) { }
