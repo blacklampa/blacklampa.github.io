@@ -248,7 +248,7 @@
   }
 
   var TOP = BL.MenuTopology = {
-    root: { id: 'root', children: ['plugins', 'network', 'logs', 'utils', 'danger', 'ui', 'blmod', 'status'] },
+    root: { id: 'root', children: ['plugins', 'network', 'logs', 'utils', 'danger', 'ui', 'status'] },
 
     plugins: { id: 'plugins', parent: 'root', titleKey: 'menu.root.plugins.title', descKey: 'menu.root.plugins.desc', children: ['managed', 'extras'] },
     managed: { id: 'managed', parent: 'plugins', title: 'Managed', desc: 'Плагины из bl.autoplugin.json → plugins[].', screen: 'managed' },
@@ -279,7 +279,6 @@
     danger: { id: 'danger', parent: 'root', titleKey: 'menu.root.danger.title', descKey: 'menu.root.danger.desc', screen: 'danger' },
     ui: { id: 'ui', parent: 'root', titleKey: 'menu.root.ui.title', descKey: 'menu.root.ui.desc', screen: 'ui', children: ['ui_deltaguard'] },
     ui_deltaguard: { id: 'ui_deltaguard', parent: 'ui', title: 'DeltaGuard', desc: 'Единый оркестратор защиты плеера.', screen: 'ui_deltaguard' },
-    blmod: { id: 'blmod', parent: 'root', title: 'BL-Mod', desc: 'BL-Mod: автономный плеер и настройки.', screen: 'blmod' },
     status: { id: 'status', parent: 'root', titleKey: 'menu.root.status.title', param: { name: 'bl_pi_root_status', type: 'static', values: '', default: '' }, screen: 'status', rootRender: rootStatusRender }
   };
 
@@ -408,7 +407,6 @@
     jsqp: buildJsqpScreen,
     ui: buildUiScreen,
     ui_deltaguard: buildUiDeltaGuardScreen,
-    blmod: buildBlModScreen,
     logging: buildLoggingScreen,
     ua_presets: buildUaPresetsScreen,
     ua_effective: buildUaEffectiveScreen,
@@ -437,8 +435,7 @@
     if (!n) return;
     try { if (n.guard && typeof n.guard === 'function' && !n.guard(ctx || null)) { route = 'root'; n = node('root'); } } catch (_) { route = 'root'; n = node('root'); }
     if (!n) return;
-    // UI and BL-Mod routes render submenu and extra summary in one screen.
-    if ((route === 'ui' || route === 'blmod') && n.screen && Screens[n.screen]) return Screens[n.screen](ctx || null);
+    if (route === 'ui' && n.screen && Screens[n.screen]) return Screens[n.screen](ctx || null);
     if (n.children && n.children.length) return buildMenu(ctx, route);
     if (n.screen && Screens[n.screen]) return Screens[n.screen](ctx || null);
     buildMenu(ctx, 'root');
