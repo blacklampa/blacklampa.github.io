@@ -407,6 +407,9 @@
     } catch (_) { }
   }
 
+  // Legacy compatibility: older cached code may reference buildBLModScreen.
+  var buildBLModScreen = buildBlModScreen;
+
   var Screens = {
     action: actionScreen,
     managed: function (ctx) { callMod('ModuleInstaller', 'buildManagedScreen', ctx); },
