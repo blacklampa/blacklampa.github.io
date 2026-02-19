@@ -14,6 +14,7 @@
   try { if (BL.Keys && BL.Keys.prefix) LS_PREFIX = String(BL.Keys.prefix || 'blacklampa_'); } catch (_) { }
 
   var K = {
+    engine: LS_PREFIX + 'player_engine_v1',
     enabled: LS_PREFIX + 'player_overlay_enabled',
     mode: LS_PREFIX + 'player_overlay_mode',
     debugOnOpen: LS_PREFIX + 'player_overlay_debug_on_open',
@@ -44,19 +45,24 @@
     userSeekWindowMs: LS_PREFIX + 'player_overlay_user_seek_window_ms',
     userNavWindowMs: LS_PREFIX + 'player_overlay_user_nav_window_ms',
 
-    dgStallSoftMs: LS_PREFIX + 'player_overlay_dg_stall_soft_ms',
-    dgStallHardMs: LS_PREFIX + 'player_overlay_dg_stall_hard_ms',
-    dgWarmupGraceMs: LS_PREFIX + 'player_overlay_dg_warmup_grace_ms',
-    dgResumeToleranceSec: LS_PREFIX + 'player_overlay_dg_resume_tolerance_sec',
-    dgResumeSeekRetryMax: LS_PREFIX + 'player_overlay_dg_resume_seek_retry_max',
-    dgRecoverRetryMax: LS_PREFIX + 'player_overlay_dg_recover_retry_max',
-    dgFailsafeCooldownMs: LS_PREFIX + 'player_overlay_dg_failsafe_cooldown_ms',
-    dgDebugLevel: LS_PREFIX + 'player_overlay_dg_debug_level',
-    dgBlockNextMs: LS_PREFIX + 'player_overlay_dg_block_next_ms',
-    dgTailSec: LS_PREFIX + 'player_overlay_dg_tail_sec',
-    dgFalseEndJumpSec: LS_PREFIX + 'player_overlay_dg_false_end_jump_sec',
-    dgFakeFullEnabled: LS_PREFIX + 'player_overlay_dg_fake_full_enabled',
-    dgFalseEndEnabled: LS_PREFIX + 'player_overlay_dg_false_end_enabled',
+    dgEnabled: LS_PREFIX + 'dg_enabled',
+    dgDebugOnOpen: LS_PREFIX + 'dg_debug_on_open',
+    dgPopupOpacity: LS_PREFIX + 'dg_popup_opacity',
+    dgUserSeekWindowMs: LS_PREFIX + 'dg_user_seek_window_ms',
+    dgUserNavWindowMs: LS_PREFIX + 'dg_user_nav_window_ms',
+    dgStallSoftMs: LS_PREFIX + 'dg_stall_soft_ms',
+    dgStallHardMs: LS_PREFIX + 'dg_stall_hard_ms',
+    dgWarmupGraceMs: LS_PREFIX + 'dg_warmup_grace_ms',
+    dgResumeToleranceSec: LS_PREFIX + 'dg_resume_tolerance_sec',
+    dgResumeSeekRetryMax: LS_PREFIX + 'dg_resume_seek_retry_max',
+    dgRecoverRetryMax: LS_PREFIX + 'dg_recover_retry_max',
+    dgFailsafeCooldownMs: LS_PREFIX + 'dg_failsafe_cooldown_ms',
+    dgDebugLevel: LS_PREFIX + 'dg_debug_level',
+    dgBlockNextMs: LS_PREFIX + 'dg_block_next_ms',
+    dgTailSec: LS_PREFIX + 'dg_tail_sec',
+    dgFalseEndJumpSec: LS_PREFIX + 'dg_false_end_jump_sec',
+    dgFakeFullEnabled: LS_PREFIX + 'dg_fake_full_enabled',
+    dgFalseEndEnabled: LS_PREFIX + 'dg_false_end_enabled',
 
     truthSec: LS_PREFIX + 'player_overlay_truth_sec',
     truthTs: LS_PREFIX + 'player_overlay_truth_ts',
@@ -67,7 +73,24 @@
     oldEnabled: LS_PREFIX + 'player_guard_overlay_enabled',
     oldDebugOnOpen: LS_PREFIX + 'player_guard_overlay_debug_on_open',
     oldHangTimeMs: LS_PREFIX + 'player_guard_overlay_hang_time_ms',
-    oldHangBufMs: LS_PREFIX + 'player_guard_overlay_hang_buf_ms'
+    oldHangBufMs: LS_PREFIX + 'player_guard_overlay_hang_buf_ms',
+    oldDgDebugOnOpen: LS_PREFIX + 'player_overlay_debug_on_open',
+    oldDgPopupOpacity: LS_PREFIX + 'player_overlay_popup_opacity',
+    oldDgUserSeekWindowMs: LS_PREFIX + 'player_overlay_user_seek_window_ms',
+    oldDgUserNavWindowMs: LS_PREFIX + 'player_overlay_user_nav_window_ms',
+    oldDgStallSoftMs: LS_PREFIX + 'player_overlay_dg_stall_soft_ms',
+    oldDgStallHardMs: LS_PREFIX + 'player_overlay_dg_stall_hard_ms',
+    oldDgWarmupGraceMs: LS_PREFIX + 'player_overlay_dg_warmup_grace_ms',
+    oldDgResumeToleranceSec: LS_PREFIX + 'player_overlay_dg_resume_tolerance_sec',
+    oldDgResumeSeekRetryMax: LS_PREFIX + 'player_overlay_dg_resume_seek_retry_max',
+    oldDgRecoverRetryMax: LS_PREFIX + 'player_overlay_dg_recover_retry_max',
+    oldDgFailsafeCooldownMs: LS_PREFIX + 'player_overlay_dg_failsafe_cooldown_ms',
+    oldDgDebugLevel: LS_PREFIX + 'player_overlay_dg_debug_level',
+    oldDgBlockNextMs: LS_PREFIX + 'player_overlay_dg_block_next_ms',
+    oldDgTailSec: LS_PREFIX + 'player_overlay_dg_tail_sec',
+    oldDgFalseEndJumpSec: LS_PREFIX + 'player_overlay_dg_false_end_jump_sec',
+    oldDgFakeFullEnabled: LS_PREFIX + 'player_overlay_dg_fake_full_enabled',
+    oldDgFalseEndEnabled: LS_PREFIX + 'player_overlay_dg_false_end_enabled'
   };
 
   var ST = {
@@ -140,6 +163,9 @@
     userSeekWindowMs: 1800,
     userNavWindowMs: 2500,
 
+    dgEnabled: true,
+    dgDebugOnOpen: false,
+    dgPopupOpacity: 85,
     dgStallSoftMs: 1200,
     dgStallHardMs: 2500,
     dgWarmupGraceMs: 1200,
@@ -195,6 +221,11 @@
     user_nav_window_ms: 2500,
     pause_hold_ms: 15000,
 
+    dg_enabled: 1,
+    dg_debug_on_open: 0,
+    dg_popup_opacity: 85,
+    dg_user_seek_window_ms: 1800,
+    dg_user_nav_window_ms: 2500,
     dg_stall_soft_ms: 1200,
     dg_stall_hard_ms: 2500,
     dg_warmup_grace_ms: 1200,
@@ -259,6 +290,11 @@
       { key: K.warmupAfterRecoverMs, def: clampInt(toInt(d.warmup_ms_after_recover, 18000), 2000, 60000) },
       { key: K.userSeekWindowMs, def: clampInt(toInt(d.user_seek_window_ms, 1800), 300, 15000) },
       { key: K.userNavWindowMs, def: clampInt(toInt(d.user_nav_window_ms, 2500), 300, 15000) },
+      { key: K.dgEnabled, def: toInt(d.dg_enabled, 1) ? 1 : 0 },
+      { key: K.dgDebugOnOpen, def: toInt(d.dg_debug_on_open, 0) ? 1 : 0 },
+      { key: K.dgPopupOpacity, def: clampInt(toInt(d.dg_popup_opacity, 85), 20, 100) },
+      { key: K.dgUserSeekWindowMs, def: clampInt(toInt(d.dg_user_seek_window_ms, 1800), 300, 15000) },
+      { key: K.dgUserNavWindowMs, def: clampInt(toInt(d.dg_user_nav_window_ms, 2500), 300, 15000) },
       { key: K.dgStallSoftMs, def: clampInt(toInt(d.dg_stall_soft_ms, 1200), 500, 15000) },
       { key: K.dgStallHardMs, def: clampInt(toInt(d.dg_stall_hard_ms, 2500), 900, 30000) },
       { key: K.dgWarmupGraceMs, def: clampInt(toInt(d.dg_warmup_grace_ms, 1200), 300, 10000) },
@@ -630,6 +666,8 @@
 
     ui: {
       open: false,
+      sticky: false,
+      kind: '',
       host: null,
       shadow: null,
       root: null,
@@ -878,6 +916,38 @@
     return 'refresh_src';
   }
 
+  function normalizeEngine(v) {
+    try { v = String(v || '').toLowerCase().trim(); } catch (_) { v = ''; }
+    if (v === 'off' || v === 'legacy' || v === 'overlay' || v === 'delta' || v === 'auto') return v;
+    if (v === 'deltaguard' || v === 'delta_guard') return 'delta';
+    return 'auto';
+  }
+
+  function autoEngineFromLegacyKeys() {
+    var overlayEnabled = parseBool(sGet(K.enabled, '0'), false);
+    var overlayMode = normalizeOverlayMode(sGet(K.mode, 'legacy'));
+    if (overlayEnabled && overlayMode === 'delta') return 'delta';
+    if (overlayEnabled) return 'overlay';
+    var pgEnabled = parseBool(sGet(LS_PREFIX + 'player_guard_enabled', '0'), false);
+    return pgEnabled ? 'legacy' : 'off';
+  }
+
+  function selectedEngine() {
+    try {
+      if (window.BL && BL.PlayerEngine && typeof BL.PlayerEngine.get === 'function') {
+        return normalizeEngine(BL.PlayerEngine.get());
+      }
+    } catch (_) { }
+    var raw = normalizeEngine(sGet(K.engine, 'auto'));
+    if (raw === 'auto') raw = autoEngineFromLegacyKeys();
+    return normalizeEngine(raw);
+  }
+
+  function isEngineOverlayOrDelta() {
+    var e = selectedEngine();
+    return e === 'overlay' || e === 'delta';
+  }
+
   function normalizeOverlayMode(v) {
     try { v = String(v || '').toLowerCase(); } catch (_) { v = ''; }
     if (v === 'off') return 'off';
@@ -889,6 +959,11 @@
     try { v = String(v || '').toLowerCase(); } catch (_) { v = ''; }
     if (v === 'silent' || v === 'trace') return v;
     return 'normal';
+  }
+
+  function isDebugOnOpenEnabled() {
+    if (isModeDelta()) return !!CFG.dgDebugOnOpen;
+    return !!CFG.debugOnOpen;
   }
 
   function isModeOff() {
@@ -952,6 +1027,14 @@
     if (nowMs() < toInt(STATE.dg.userPauseUntilTs, 0)) return true;
     if (String(STATE.user.lastCmdNorm || '') === 'pause' && ageMs(toInt(STATE.user.lastCmdTs, 0)) <= dgUserPauseWindowMs()) return true;
     if (!tick || !tick.paused) return false;
+    return false;
+  }
+
+  function isPausedByUser(tick) {
+    tick = tick || STATE.tick || {};
+    if (!tick || !tick.paused) return false;
+    if (isUserPauseIntent()) return true;
+    if (isModeDelta() && dgPauseByUser(tick)) return true;
     return false;
   }
 
@@ -1349,7 +1432,7 @@
   }
 
   function maybeTraceDetectors() {
-    if (!CFG.debugOnOpen) return;
+    if (!isDebugOnOpenEnabled()) return;
     var ts = nowMs();
     if ((ts - toInt(STATE.trace.lastTs, 0)) < 2000) return;
     STATE.trace.lastTs = ts;
@@ -1446,6 +1529,33 @@
       }
     }
 
+    function copyIfMissing(newKey, oldKey) {
+      var cur = sGet(newKey, null);
+      if (!(cur === null || cur === undefined || cur === '')) return false;
+      var old = sGet(oldKey, null);
+      if (old === null || old === undefined || old === '') return false;
+      sSet(newKey, String(old));
+      return true;
+    }
+
+    if (copyIfMissing(K.dgDebugOnOpen, K.oldDgDebugOnOpen)) moved++;
+    if (copyIfMissing(K.dgPopupOpacity, K.oldDgPopupOpacity)) moved++;
+    if (copyIfMissing(K.dgUserSeekWindowMs, K.oldDgUserSeekWindowMs)) moved++;
+    if (copyIfMissing(K.dgUserNavWindowMs, K.oldDgUserNavWindowMs)) moved++;
+    if (copyIfMissing(K.dgStallSoftMs, K.oldDgStallSoftMs)) moved++;
+    if (copyIfMissing(K.dgStallHardMs, K.oldDgStallHardMs)) moved++;
+    if (copyIfMissing(K.dgWarmupGraceMs, K.oldDgWarmupGraceMs)) moved++;
+    if (copyIfMissing(K.dgResumeToleranceSec, K.oldDgResumeToleranceSec)) moved++;
+    if (copyIfMissing(K.dgResumeSeekRetryMax, K.oldDgResumeSeekRetryMax)) moved++;
+    if (copyIfMissing(K.dgRecoverRetryMax, K.oldDgRecoverRetryMax)) moved++;
+    if (copyIfMissing(K.dgFailsafeCooldownMs, K.oldDgFailsafeCooldownMs)) moved++;
+    if (copyIfMissing(K.dgDebugLevel, K.oldDgDebugLevel)) moved++;
+    if (copyIfMissing(K.dgBlockNextMs, K.oldDgBlockNextMs)) moved++;
+    if (copyIfMissing(K.dgTailSec, K.oldDgTailSec)) moved++;
+    if (copyIfMissing(K.dgFalseEndJumpSec, K.oldDgFalseEndJumpSec)) moved++;
+    if (copyIfMissing(K.dgFakeFullEnabled, K.oldDgFakeFullEnabled)) moved++;
+    if (copyIfMissing(K.dgFalseEndEnabled, K.oldDgFalseEndEnabled)) moved++;
+
     if (moved > 0) logLine('INF', 'settings_migrated', { changed: moved });
   }
 
@@ -1469,13 +1579,24 @@
     }
     maybeMigrateLegacyDefaults(defMap);
 
+    function empty(v) {
+      return v === null || v === undefined || v === '';
+    }
+
+    function dgRaw(primaryKey, oldKey, fallback) {
+      var v = sGet(primaryKey, null);
+      if (empty(v) && oldKey) v = sGet(oldKey, null);
+      if (empty(v)) v = fallback;
+      return v;
+    }
+
     var enRaw = sGet(K.enabled, null);
-    if (enRaw === null || enRaw === undefined || enRaw === '') enRaw = sGet(K.oldEnabled, String(d(K.enabled, 1)));
+    if (empty(enRaw)) enRaw = sGet(K.oldEnabled, String(d(K.enabled, 1)));
     CFG.enabled = parseBool(enRaw, !!toInt(d(K.enabled, 1), 1));
     CFG.mode = normalizeOverlayMode(sGet(K.mode, String(d(K.mode, 'legacy'))));
 
     var dbgRaw = sGet(K.debugOnOpen, null);
-    if (dbgRaw === null || dbgRaw === undefined || dbgRaw === '') dbgRaw = sGet(K.oldDebugOnOpen, String(d(K.debugOnOpen, 0)));
+    if (empty(dbgRaw)) dbgRaw = sGet(K.oldDebugOnOpen, String(d(K.debugOnOpen, 0)));
     CFG.debugOnOpen = parseBool(dbgRaw, !!toInt(d(K.debugOnOpen, 0), 0));
 
     CFG.popupOpacity = clampInt(sGet(K.popupOpacity, String(d(K.popupOpacity, 85))), 20, 100);
@@ -1484,11 +1605,11 @@
     CFG.truthCommitMs = clampInt(sGet(K.truthCommitMs, String(d(K.truthCommitMs, 100))), 100, 2000);
 
     var htRaw = sGet(K.hangTimeMs, null);
-    if (htRaw === null || htRaw === undefined || htRaw === '') htRaw = sGet(K.oldHangTimeMs, String(d(K.hangTimeMs, 12000)));
+    if (empty(htRaw)) htRaw = sGet(K.oldHangTimeMs, String(d(K.hangTimeMs, 12000)));
     CFG.hangTimeMs = clampInt(htRaw, 3000, 60000);
 
     var hbRaw = sGet(K.hangBufMs, null);
-    if (hbRaw === null || hbRaw === undefined || hbRaw === '') hbRaw = sGet(K.oldHangBufMs, String(d(K.hangBufMs, 18000)));
+    if (empty(hbRaw)) hbRaw = sGet(K.oldHangBufMs, String(d(K.hangBufMs, 18000)));
     CFG.hangBufMs = clampInt(hbRaw, 3000, 60000);
     CFG.resumeGuardMs = clampInt(sGet(K.resumeGuardMs, String(d(K.resumeGuardMs, 180000))), 30000, 600000);
     CFG.falseEndStaleAllow = parseBool(sGet(K.falseEndStaleAllow, String(d(K.falseEndStaleAllow, 1))), !!toInt(d(K.falseEndStaleAllow, 1), 1));
@@ -1511,20 +1632,55 @@
     CFG.warmupAfterRecoverMs = clampInt(sGet(K.warmupAfterRecoverMs, String(d(K.warmupAfterRecoverMs, 18000))), 2000, 60000);
     CFG.userSeekWindowMs = clampInt(sGet(K.userSeekWindowMs, String(d(K.userSeekWindowMs, 1800))), 300, 15000);
     CFG.userNavWindowMs = clampInt(sGet(K.userNavWindowMs, String(d(K.userNavWindowMs, 2500))), 300, 15000);
-    CFG.dgStallSoftMs = clampInt(sGet(K.dgStallSoftMs, String(d(K.dgStallSoftMs, 1200))), 500, 15000);
-    CFG.dgStallHardMs = clampInt(sGet(K.dgStallHardMs, String(d(K.dgStallHardMs, 2500))), 900, 30000);
+
+    CFG.dgEnabled = parseBool(dgRaw(K.dgEnabled, null, String(d(K.dgEnabled, 1))), true);
+    CFG.dgDebugOnOpen = parseBool(dgRaw(K.dgDebugOnOpen, K.oldDgDebugOnOpen, String(d(K.dgDebugOnOpen, 0))), false);
+    CFG.dgPopupOpacity = clampInt(dgRaw(K.dgPopupOpacity, K.oldDgPopupOpacity, String(d(K.dgPopupOpacity, 85))), 20, 100);
+    var dgUserSeekMs = clampInt(dgRaw(K.dgUserSeekWindowMs, K.oldDgUserSeekWindowMs, String(d(K.dgUserSeekWindowMs, 1800))), 300, 15000);
+    var dgUserNavMs = clampInt(dgRaw(K.dgUserNavWindowMs, K.oldDgUserNavWindowMs, String(d(K.dgUserNavWindowMs, 2500))), 300, 15000);
+    CFG.dgStallSoftMs = clampInt(dgRaw(K.dgStallSoftMs, K.oldDgStallSoftMs, String(d(K.dgStallSoftMs, 1200))), 500, 15000);
+    CFG.dgStallHardMs = clampInt(dgRaw(K.dgStallHardMs, K.oldDgStallHardMs, String(d(K.dgStallHardMs, 2500))), 900, 30000);
     if (CFG.dgStallHardMs <= CFG.dgStallSoftMs) CFG.dgStallHardMs = Math.min(30000, CFG.dgStallSoftMs + 800);
-    CFG.dgWarmupGraceMs = clampInt(sGet(K.dgWarmupGraceMs, String(d(K.dgWarmupGraceMs, 1200))), 300, 10000);
-    CFG.dgResumeToleranceSec = Math.max(0.05, Math.min(2, toNum(sGet(K.dgResumeToleranceSec, String(d(K.dgResumeToleranceSec, 0.12))), toNum(d(K.dgResumeToleranceSec, 0.12), 0.12))));
-    CFG.dgResumeSeekRetryMax = clampInt(sGet(K.dgResumeSeekRetryMax, String(d(K.dgResumeSeekRetryMax, 2))), 0, 5);
-    CFG.dgRecoverRetryMax = clampInt(sGet(K.dgRecoverRetryMax, String(d(K.dgRecoverRetryMax, 2))), 0, 5);
-    CFG.dgFailsafeCooldownMs = clampInt(sGet(K.dgFailsafeCooldownMs, String(d(K.dgFailsafeCooldownMs, 8000))), 1000, 120000);
-    CFG.dgDebugLevel = normalizeDgDebugLevel(sGet(K.dgDebugLevel, String(d(K.dgDebugLevel, 'normal'))));
-    CFG.dgBlockNextMs = clampInt(sGet(K.dgBlockNextMs, String(d(K.dgBlockNextMs, 6000))), 1000, 30000);
-    CFG.dgTailSec = Math.max(0.5, Math.min(12, toNum(sGet(K.dgTailSec, String(d(K.dgTailSec, 3.0))), toNum(d(K.dgTailSec, 3.0), 3.0))));
-    CFG.dgFalseEndJumpSec = Math.max(1, Math.min(120, toNum(sGet(K.dgFalseEndJumpSec, String(d(K.dgFalseEndJumpSec, 10.0))), toNum(d(K.dgFalseEndJumpSec, 10.0), 10.0))));
-    CFG.dgFakeFullEnabled = parseBool(sGet(K.dgFakeFullEnabled, String(d(K.dgFakeFullEnabled, 1))), !!toInt(d(K.dgFakeFullEnabled, 1), 1));
-    CFG.dgFalseEndEnabled = parseBool(sGet(K.dgFalseEndEnabled, String(d(K.dgFalseEndEnabled, 1))), !!toInt(d(K.dgFalseEndEnabled, 1), 1));
+    CFG.dgWarmupGraceMs = clampInt(dgRaw(K.dgWarmupGraceMs, K.oldDgWarmupGraceMs, String(d(K.dgWarmupGraceMs, 1200))), 300, 10000);
+    CFG.dgResumeToleranceSec = Math.max(0.05, Math.min(2, toNum(dgRaw(K.dgResumeToleranceSec, K.oldDgResumeToleranceSec, String(d(K.dgResumeToleranceSec, 0.12))), toNum(d(K.dgResumeToleranceSec, 0.12), 0.12))));
+    CFG.dgResumeSeekRetryMax = clampInt(dgRaw(K.dgResumeSeekRetryMax, K.oldDgResumeSeekRetryMax, String(d(K.dgResumeSeekRetryMax, 2))), 0, 5);
+    CFG.dgRecoverRetryMax = clampInt(dgRaw(K.dgRecoverRetryMax, K.oldDgRecoverRetryMax, String(d(K.dgRecoverRetryMax, 2))), 0, 5);
+    CFG.dgFailsafeCooldownMs = clampInt(dgRaw(K.dgFailsafeCooldownMs, K.oldDgFailsafeCooldownMs, String(d(K.dgFailsafeCooldownMs, 8000))), 1000, 120000);
+    CFG.dgDebugLevel = normalizeDgDebugLevel(dgRaw(K.dgDebugLevel, K.oldDgDebugLevel, String(d(K.dgDebugLevel, 'normal'))));
+    CFG.dgBlockNextMs = clampInt(dgRaw(K.dgBlockNextMs, K.oldDgBlockNextMs, String(d(K.dgBlockNextMs, 6000))), 1000, 30000);
+    CFG.dgTailSec = Math.max(0.5, Math.min(12, toNum(dgRaw(K.dgTailSec, K.oldDgTailSec, String(d(K.dgTailSec, 3.0))), toNum(d(K.dgTailSec, 3.0), 3.0))));
+    CFG.dgFalseEndJumpSec = Math.max(1, Math.min(120, toNum(dgRaw(K.dgFalseEndJumpSec, K.oldDgFalseEndJumpSec, String(d(K.dgFalseEndJumpSec, 10.0))), toNum(d(K.dgFalseEndJumpSec, 10.0), 10.0))));
+    CFG.dgFakeFullEnabled = parseBool(dgRaw(K.dgFakeFullEnabled, K.oldDgFakeFullEnabled, String(d(K.dgFakeFullEnabled, 1))), !!toInt(d(K.dgFakeFullEnabled, 1), 1));
+    CFG.dgFalseEndEnabled = parseBool(dgRaw(K.dgFalseEndEnabled, K.oldDgFalseEndEnabled, String(d(K.dgFalseEndEnabled, 1))), !!toInt(d(K.dgFalseEndEnabled, 1), 1));
+
+    var engine = selectedEngine();
+    STATE.engine = engine;
+    if (engine === 'overlay') {
+      CFG.enabled = true;
+      CFG.mode = 'legacy';
+    } else if (engine === 'delta') {
+      CFG.enabled = true;
+      CFG.mode = 'delta';
+      CFG.dgEnabled = true;
+      CFG.debugOnOpen = !!CFG.dgDebugOnOpen;
+      CFG.popupOpacity = clampInt(CFG.dgPopupOpacity, 20, 100);
+      CFG.userSeekWindowMs = dgUserSeekMs;
+      CFG.userNavWindowMs = dgUserNavMs;
+      CFG.escalateToReopen = false;
+      try { sSet(K.dgEnabled, '1'); } catch (_) { }
+    } else if (engine === 'off' || engine === 'legacy') {
+      CFG.enabled = false;
+      CFG.mode = 'off';
+    } else if (CFG.mode === 'delta') {
+      // compat for engine=auto with old overlay_mode=delta
+      CFG.dgEnabled = true;
+      CFG.debugOnOpen = !!CFG.dgDebugOnOpen;
+      CFG.popupOpacity = clampInt(CFG.dgPopupOpacity, 20, 100);
+      CFG.userSeekWindowMs = dgUserSeekMs;
+      CFG.userNavWindowMs = dgUserNavMs;
+      CFG.escalateToReopen = false;
+    }
+
     CFG.frameHangMs = clampInt(toInt(CFG.frameHangMs, toInt(OVERLAY_DEFAULTS.frame_hang_ms, 3500)), 1200, 15000);
     CFG.frameCtDeltaSec = Math.max(0.2, Math.min(5, toNum(CFG.frameCtDeltaSec, toNum(OVERLAY_DEFAULTS.frame_ct_delta_sec, 1.0))));
     CFG.frameGraceMs = clampInt(toInt(CFG.frameGraceMs, toInt(OVERLAY_DEFAULTS.frame_grace_ms, 12000)), 1000, 20000);
@@ -2330,14 +2486,19 @@
       if (!document) return;
       var oldRoot = document.getElementById('__bl_player_overlay_popup_v2');
       if (oldRoot && oldRoot.parentNode) oldRoot.parentNode.removeChild(oldRoot);
+      var dgRoot = document.getElementById('__bl_deltaguard_popup_v1');
+      if (dgRoot && dgRoot.parentNode) dgRoot.parentNode.removeChild(dgRoot);
     } catch (_) { }
     try {
       if (!document) return;
-      var hosts = document.getElementsByClassName('bl-overlay-host');
-      while (hosts && hosts.length) {
-        var h = hosts[0];
-        if (!h || !h.parentNode) break;
-        h.parentNode.removeChild(h);
+      var classes = ['bl-overlay-host', 'bl-dg-host'];
+      for (var ci = 0; ci < classes.length; ci++) {
+        var hosts = document.getElementsByClassName(classes[ci]);
+        while (hosts && hosts.length) {
+          var h = hosts[0];
+          if (!h || !h.parentNode) break;
+          h.parentNode.removeChild(h);
+        }
       }
     } catch (_) { }
     try {
@@ -2348,7 +2509,9 @@
   }
 
   function ensureUiRoot() {
-    if (STATE.ui.root) return STATE.ui.root;
+    var kind = isModeDelta() ? 'dg' : 'overlay';
+    if (STATE.ui.root && STATE.ui.kind === kind) return STATE.ui.root;
+    if (STATE.ui.root && STATE.ui.kind !== kind) uiDestroy('kind_switch');
 
     cleanupLegacyUi();
 
@@ -2358,7 +2521,8 @@
     try {
       if (!document) return null;
       host = document.createElement('div');
-      host.className = 'bl-overlay-host';
+      host.id = (kind === 'dg') ? '__bl_deltaguard_popup_v1' : '__bl_player_overlay_popup_v2';
+      host.className = (kind === 'dg') ? 'bl-dg-host' : 'bl-overlay-host';
       shadow = host.attachShadow ? host.attachShadow({ mode: 'open' }) : null;
       if (!shadow) return null;
 
@@ -2445,6 +2609,7 @@
       STATE.ui.host = host;
       STATE.ui.shadow = shadow;
       STATE.ui.root = root;
+      STATE.ui.kind = kind;
       STATE.ui.titleEl = title;
       STATE.ui.subTitleEl = subTitle;
       STATE.ui.bodyEl = body;
@@ -2457,7 +2622,8 @@
   }
 
   function popupOpacity() {
-    var op = toNum(CFG.popupOpacity, 85) / 100;
+    var pct = isModeDelta() ? toNum(CFG.dgPopupOpacity, CFG.popupOpacity) : toNum(CFG.popupOpacity, 85);
+    var op = pct / 100;
     if (!isFinite(op)) op = 0.85;
     if (op < 0.2) op = 0.2;
     if (op > 1.0) op = 1.0;
@@ -2513,6 +2679,7 @@
       if (STATE.ui.host && STATE.ui.host.parentNode) STATE.ui.host.parentNode.removeChild(STATE.ui.host);
     } catch (_) { }
     STATE.ui.open = false;
+    STATE.ui.kind = '';
     STATE.ui.root = null;
     STATE.ui.host = null;
     STATE.ui.shadow = null;
@@ -2834,6 +3001,21 @@
 
   function buildDebugHeaderLines() {
     var t = STATE.tick || {};
+    if (isModeDelta()) {
+      var dgPaused = t.paused ? '1' : '0';
+      var dgPauseUser = isPausedByUser(t) ? '1' : '0';
+      return {
+        line1: 'engine=<span class="st st-inf">delta</span>'
+          + ' dg=<span class="st st-inf">' + escHtml(String(STATE.dg.state || 'IDLE')) + '</span>'
+          + ' phase=<span class="st ' + phaseStatusClass(String(STATE.phase || '')) + '">' + escHtml(String(STATE.phase || '')) + '</span>'
+          + ' paused=<span class="st ' + (dgPaused === '1' ? 'st-muted' : 'st-inf') + '">' + escHtml(dgPaused) + '</span>'
+          + ' pauseByUser=<span class="st ' + (dgPauseUser === '1' ? 'st-muted' : 'st-inf') + '">' + escHtml(dgPauseUser) + '</span>',
+        line2: 'ct=<span class="st st-inf">' + escHtml(fmtDbgSec(t.ct)) + '</span>'
+          + ' / dur=<span class="st st-inf">' + escHtml(fmtDbgSec(t.dur)) + '</span>'
+          + ' blockNextLeftMs=<span class="st st-inf">' + escHtml(String(dgCurrentBlockLeftMs())) + '</span>'
+          + ' lastAction=<span class="st st-inf">' + escHtml(String(STATE.dg.lastAction || STATE.rec.lastAction || '-')) + '</span>'
+      };
+    }
     var ticket = STATE.resume.ticket || STATE.resume.lastTicket || null;
     var blockOn = isBlockNextActive() ? 1 : 0;
     var phase = String(STATE.phase || '');
@@ -2858,10 +3040,96 @@
     };
   }
 
+  function dbgNorm(v, max) {
+    var vv = Math.max(0, toNum(v, 0));
+    var mm = Math.max(1, toNum(max, 1));
+    var p = vv / mm;
+    if (!isFinite(p) || p < 0) p = 0;
+    if (p > 1) p = 1;
+    return p;
+  }
+
+  function dbgBar(p) {
+    p = Math.max(0, Math.min(1, toNum(p, 0)));
+    var len = 12;
+    var fill = Math.round(p * len);
+    var out = '';
+    var i = 0;
+    for (i = 0; i < len; i++) out += (i < fill ? '#' : '-');
+    return out;
+  }
+
+  function dbgBarLine(name, valueMs, maxMs) {
+    var p = dbgNorm(valueMs, maxMs);
+    return String(name || '') + ' [' + dbgBar(p) + '] '
+      + p.toFixed(2)
+      + ' (' + String(toInt(valueMs, 0)) + 'ms)';
+  }
+
+  function buildDeltaDebugBodyHtml(t, ba, ra) {
+    var ctThr = Math.max(800, Math.floor(Math.max(1200, toInt(CFG.hangTimeMs, 12000)) * 0.40));
+    var tuThr = Math.max(900, Math.floor(Math.max(1200, toInt(CFG.hangTimeMs, 12000)) * 0.55));
+    var prThr = Math.max(1200, Math.floor(Math.max(1200, toInt(CFG.hangBufMs, 18000)) * 0.45));
+    var frThr = Math.max(1000, toInt(CFG.frameHangMs, 3200));
+    var bmThr = Math.max(900, toInt(CFG.fakeFullNoMoveMs, 6500));
+
+    var stageLines = [
+      'stage=' + String(STATE.dg.state || 'IDLE')
+        + ' phase=' + String(STATE.phase || '')
+        + ' reason=' + String(STATE.dg.reason || ''),
+      'paused=' + (t.paused ? '1' : '0')
+        + ' pauseByUser=' + String(toInt(STATE.dg.pauseByUser, 0))
+        + ' internalPause=' + String(toInt(STATE.dg.internalPause, 0)),
+      'blockNextLeftMs=' + String(dgCurrentBlockLeftMs()),
+      'lastAction=' + String(STATE.dg.lastAction || STATE.rec.lastAction || ''),
+      'lastErr=' + String(STATE.dg.lastErr || STATE.rec.lastErr || '')
+    ];
+
+    var barLines = [
+      dbgBarLine('ctAge', toInt(ra.ctAge, 0), ctThr),
+      dbgBarLine('timeupdateAge', toInt(ra.timeupdateAge, 0), tuThr),
+      dbgBarLine('progressAge', toInt(ra.progAge, 0), prThr),
+      dbgBarLine('frameStuck', toInt(STATE.frames.frameStuckMs, 0), frThr),
+      dbgBarLine('bufMoveAge', toInt(ba.bufEndMoveAge, 0), bmThr)
+    ];
+
+    var guardLines = [
+      'target=' + fmtDbgSec(STATE.dg.targetSec)
+        + ' lastGood=' + fmtDbgSec(STATE.dg.lastGoodSample && STATE.dg.lastGoodSample.ct)
+        + ' lastStable=' + fmtDbgSec(STATE.dg.lastStableSample && STATE.dg.lastStableSample.ct),
+      'falseEndDetected=' + String(toInt(STATE.dg.endGuard && STATE.dg.endGuard.falseEndDetected, 0))
+        + ' fakeFullDetected=' + String(toInt(STATE.dg.bufferGuard && STATE.dg.bufferGuard.fakeFullDetected, 0))
+        + ' underrunDetected=' + String(toInt(STATE.dg.bufferGuard && STATE.dg.bufferGuard.underrunDetected, 0)),
+      'recoverRetry=' + String(toInt(STATE.dg.recoverRetry, 0)) + '/' + String(toInt(CFG.dgRecoverRetryMax, 2))
+        + ' corrections=' + String(toInt(STATE.dg.corrections, 0))
+        + ' failsafeLeftMs=' + String(Math.max(0, toInt(STATE.dg.failsafeUntilTs, 0) - nowMs()))
+    ];
+
+    var logs = [];
+    try {
+      var tail = logRowsTail(Math.min(20, toInt(DET.logLimit, 50)));
+      for (var i = 0; i < tail.length; i++) {
+        var row = tail[i] || {};
+        var msg = String(row.msg || '');
+        var n = toInt(row.n, 1);
+        var txt = n > 1 ? ('×' + String(n) + ' ' + msg) : msg;
+        logs.push({ text: txt, className: logLevelClass(msg) });
+      }
+    } catch (_) { }
+
+    var html = '';
+    html += buildSectionHtml('DELTAGUARD', stageLines);
+    html += buildSectionHtml('LIVENESS', barLines);
+    html += buildSectionHtml('GUARD', guardLines);
+    html += buildSectionHtml('LOGS', logs.length ? logs : ['(empty)'], 'logs');
+    return html;
+  }
+
   function buildDebugBodyHtml() {
     var t = STATE.tick || {};
     var ba = bufferAges();
     var ra = runtimeAges();
+    if (isModeDelta()) return buildDeltaDebugBodyHtml(t, ba, ra);
     var strictFalseEnd = isFalseEnd(toNum(t.ct, NaN), toNum(t.dur, NaN));
     var looseFalseEnd = isFalseEndLooser(toNum(t.ct, NaN), toNum(t.dur, NaN), ra);
     var live = playbackLiveness(t, ra);
@@ -3046,11 +3314,13 @@
   }
 
   function uiShow(reason) {
+    if (isModeDelta()) STATE.ui.sticky = true;
     uiInstallKeyHandler();
     uiRender(reason || 'show');
   }
 
   function uiHide(reason) {
+    STATE.ui.sticky = false;
     try { if (STATE.ui.root) STATE.ui.root.classList.add('ov-hidden'); } catch (_) { }
     uiDestroy('hide:' + String(reason || ''));
     logLine('DBG', 'debug_hide', { reason: String(reason || '') });
@@ -3100,6 +3370,7 @@
     }
 
     detachVideoListeners();
+    if (reason === 'engine_inactive' || reason === 'refresh_disabled' || reason === 'disabled') STATE.ui.sticky = false;
     if (STATE.ui.open || STATE.ui.root) uiDestroy('shutdown:' + reason);
     stopTickTimer('shutdown:' + reason);
     setPhase(ST.IDLE, 'shutdown:' + reason);
@@ -3162,6 +3433,12 @@
     cmd = String(cmd || '').toLowerCase().trim();
     if (!cmd) return '';
 
+    if (cmd === 'controller.pause' || cmd === 'controller.stop') return 'pause';
+    if (cmd === 'controller.play') return 'play';
+    if (cmd === 'controller.toggle') return 'toggle';
+    if (cmd === 'controller.back' || cmd === 'controller.return') return 'exit';
+    if (cmd.indexOf('controller.seek') === 0) return 'seek';
+
     // Exit-like: strict matches only. No broad "contains back" rules.
     if (cmd === 'exit' || cmd === 'back' || cmd === 'close' || cmd === 'return' || cmd === 'cancel' || cmd === 'controller.back') return 'exit';
     // TV remotes often send STOP for pause/stop, not for app exit.
@@ -3179,6 +3456,10 @@
   function isLikelyUserCmdType(type) {
     var t = String(type || '').toLowerCase();
     if (!t) return false;
+    if (t === 'playing' || t === 'canplay') return false;
+    if (t.indexOf('controller.') === 0) {
+      if (/(pause|play|toggle|stop|seek|back|return)/.test(t)) return true;
+    }
     if (t === 'pause' || t === 'play' || t === 'toggle' || t === 'toggle_pause' || t === 'toggle_play') return true;
     if (t === 'seek' || t === 'forward' || t === 'backward' || t === 'rewind' || t === 'to' || t === 'totime' || t === 'to_time') return true;
     if (t === 'exit' || t === 'back' || t === 'return' || t === 'close' || t === 'stop' || t === 'cancel' || t === 'resume' || t === 'controller.back') return true;
@@ -3267,6 +3548,7 @@
     var raw = String(type || '').toLowerCase();
     var norm = normalizeCommand(raw);
     if (!norm) return false;
+    if (raw.indexOf('controller.') === 0) return true;
     if (!commandNeedsInputGate(norm)) return true;
     if (hadRecentUserInput(600)) return true;
     if (hasFreshPendingUserCommand(norm, 1200)) return true;
@@ -3288,12 +3570,14 @@
   }
 
   function beginCritical(tag, ttlMs) {
+    if (isModeDelta()) return;
     var pg = getPg();
     var ttl = criticalTtlMs(ttlMs);
     try { if (pg && typeof pg.beginOverlayCritical === 'function') pg.beginOverlayCritical(String(tag || 'overlay_recover'), ttl); } catch (_) { }
   }
 
   function endCritical(tag) {
+    if (isModeDelta()) return;
     var pg = getPg();
     try { if (pg && typeof pg.endOverlayCritical === 'function') pg.endOverlayCritical(String(tag || 'overlay_recover')); } catch (_) { }
   }
@@ -4110,7 +4394,7 @@
       STATE.rec.lastErr = 'inactive';
       return false;
     }
-    if (STATE.tick && STATE.tick.hasVideo && STATE.tick.paused) {
+    if (STATE.tick && STATE.tick.hasVideo && STATE.tick.paused && isPausedByUser(STATE.tick)) {
       STATE.rec.lastErr = 'media_paused';
       return false;
     }
@@ -4163,7 +4447,7 @@
       STATE.rec.lastErr = 'inactive';
       return false;
     }
-    if (STATE.tick && STATE.tick.hasVideo && STATE.tick.paused) {
+    if (STATE.tick && STATE.tick.hasVideo && STATE.tick.paused && isPausedByUser(STATE.tick)) {
       STATE.rec.lastErr = 'media_paused';
       return false;
     }
@@ -4259,9 +4543,79 @@
     return ok;
   }
 
+  function actionReopenDirect() {
+    if (!toInt(STATE.life.active, 0) || toInt(STATE.life.exitIntent, 0)) {
+      STATE.rec.lastErr = 'inactive';
+      return false;
+    }
+
+    var t = now();
+    if ((t - toInt(STATE.rec.lastReopenTs, 0)) < CFG.reopenCooldownMs) {
+      STATE.rec.lastErr = 'reopen_cooldown';
+      return false;
+    }
+
+    var pv = null;
+    try { pv = (window.Lampa && Lampa.PlayerVideo) ? Lampa.PlayerVideo : null; } catch (_) { pv = null; }
+    var v = STATE.video || getVideo();
+    if (!v && pv && typeof pv.video === 'function') {
+      try { v = pv.video(); } catch (_) { v = null; }
+    }
+
+    if (!pv || typeof pv.url !== 'function') {
+      STATE.rec.lastErr = 'playervideo_missing';
+      return false;
+    }
+
+    var src = getCurrentSrc(v);
+    if (!src) {
+      STATE.rec.lastErr = 'empty_src';
+      return false;
+    }
+
+    var busted = withCacheBust(src);
+    var ok = false;
+    try {
+      if (typeof pv.destroy === 'function') {
+        try { pv.destroy(true); } catch (_) { }
+      }
+      pv.url(String(busted || src), true);
+      ok = true;
+      STATE.rec.lastAction = 'reopen_direct_url';
+      STATE.rec.lastReopenTs = t;
+      resetSignalAges('reopen_direct');
+      armWarmup(8000, 'reopen_direct');
+      armFrameGrace(CFG.frameGraceMs, 'reopen_direct');
+
+      var applyDone = false;
+      function tryApply(tag) {
+        if (!STATE.rec.active || !toInt(STATE.life.active, 0) || toInt(STATE.life.exitIntent, 0)) return;
+        var curVideo = STATE.video || getVideo() || v;
+        if (!curVideo) return;
+        applyResumeTicket(curVideo, 'reopen_direct:' + String(tag || 'direct'), function (seekOk, seekErr) {
+          if (seekOk) applyDone = true;
+          if (!seekOk && seekErr) STATE.rec.lastErr = String(seekErr || '');
+        });
+      }
+      setTimeout(function () { tryApply('rebind_1'); }, 220);
+      setTimeout(function () { if (!applyDone) tryApply('rebind_2'); }, 620);
+      setTimeout(function () { if (!applyDone) tryApply('rebind_3'); }, 1200);
+    } catch (e) {
+      STATE.rec.lastErr = e && e.message ? String(e.message) : 'reopen_direct_exception';
+      ok = false;
+    }
+
+    return ok;
+  }
+
   function actionReopenViaPg() {
     if (!toInt(STATE.life.active, 0) || toInt(STATE.life.exitIntent, 0)) {
       STATE.rec.lastErr = 'inactive';
+      return false;
+    }
+
+    if (isModeDelta()) {
+      STATE.rec.lastErr = 'delta_mode';
       return false;
     }
 
@@ -4501,18 +4855,20 @@
 
         logLine('WRN', 'CARRY not applied', { sec: sec.toFixed(2), err: String(err || '') });
         var escalated = false;
-        var pg = getPg();
-        try {
-          if (pg && typeof pg.reopenAt === 'function') {
-            var r = pg.reopenAt(sec, 'overlay_carry_reopen', { srcSig: String(sig || ''), ticketTs: toInt(carry.ts, 0) });
-            escalated = !!(r && r.started);
-            logLine('WRN', 'CARRY escalate', {
-              via: 'pg.reopenAt',
-              started: escalated ? 1 : 0,
-              why: r && r.why ? String(r.why || '') : ''
-            });
-          }
-        } catch (_) { escalated = false; }
+        if (!isModeDelta()) {
+          var pg = getPg();
+          try {
+            if (pg && typeof pg.reopenAt === 'function') {
+              var r = pg.reopenAt(sec, 'overlay_carry_reopen', { srcSig: String(sig || ''), ticketTs: toInt(carry.ts, 0) });
+              escalated = !!(r && r.started);
+              logLine('WRN', 'CARRY escalate', {
+                via: 'pg.reopenAt',
+                started: escalated ? 1 : 0,
+                why: r && r.why ? String(r.why || '') : ''
+              });
+            }
+          } catch (_) { escalated = false; }
+        }
 
         if (!escalated) {
           try { startRecovery('carry_not_applied'); } catch (_) { }
@@ -5064,6 +5420,8 @@
     if (!toInt(STATE.life.active, 0) || toInt(STATE.life.exitIntent, 0) === 1) return false;
     if (isUserPauseIntent()) return false;
     if (dgPauseByUser(STATE.tick || {})) return false;
+    if (String(STATE.user.lastCmdNorm || '') === 'pause' && ageMs(toInt(STATE.user.lastCmdTs, 0)) <= dgUserPauseWindowMs()) return false;
+    if (hasFreshPendingUserCommand('pause', dgUserPauseWindowMs())) return false;
 
     var ts = nowMs();
     if ((ts - toInt(STATE.dg.wakeupPlayTs, 0)) < dgWakeupPlayCooldownMs()) return false;
@@ -5340,7 +5698,7 @@
 
     var t = STATE.tick || {};
     if (!t.hasVideo) return false;
-    if (t.paused && !toInt(STATE.dg.internalPause, 0)) return false;
+    if (t.paused && isPausedByUser(t)) return false;
     if (!toInt(STATE.frames.supported, 0)) return false;
     if (frameGraceLeftMs() > 0) return false;
 
@@ -5869,16 +6227,16 @@
       if (stop) return failRecovery(stop);
       if (reopenTry >= 1) return failRecovery('reopen_exhausted:' + String(whyFromPrev || ''));
       reopenTry++;
-      STATE.dg.lastAction = 'step2_reopen';
-      dgSetState(DG_ST.RECOVERING, 'step2_reopen');
-      if (!actionReopenViaPg()) return failRecovery('reopen_rejected');
+      STATE.dg.lastAction = 'step2_reopen_direct';
+      dgSetState(DG_ST.RECOVERING, 'step2_reopen_direct');
+      if (!actionReopenDirect()) return failRecovery('reopen_direct_rejected');
 
       dgWaitVideoForStep(token, Math.max(4500, toInt(CFG.dgStallHardMs, 2500) * 3), function (v, waitWhy) {
-        if (!v) return failRecovery(String(waitWhy || 'reopen_no_video'));
-        dgSeekForRecovery(token, 'step2_reopen_seek', toNum(targets.apply, 0), function (okSeek, seekWhy) {
-          if (!okSeek) return failRecovery('reopen_seek:' + String(seekWhy || 'seek_fail'));
-          verifyStep('step2_reopen_verify', function (vWhy) {
-            failRecovery('reopen_verify:' + String(vWhy || 'verify_fail'));
+        if (!v) return failRecovery(String(waitWhy || 'reopen_direct_no_video'));
+        dgSeekForRecovery(token, 'step2_reopen_direct_seek', toNum(targets.apply, 0), function (okSeek, seekWhy) {
+          if (!okSeek) return failRecovery('reopen_direct_seek:' + String(seekWhy || 'seek_fail'));
+          verifyStep('step2_reopen_direct_verify', function (vWhy) {
+            failRecovery('reopen_direct_verify:' + String(vWhy || 'verify_fail'));
           });
         });
       });
@@ -5996,6 +6354,9 @@
         return false;
       }
       dgSetState(DG_ST.STALL_CANDIDATE, 'paused_internal');
+      var agesInternal = runtimeAges();
+      if (dgMaybeDetectRenderFreeze(agesInternal)) return true;
+      if (dgMaybeDetectBufferGuards(agesInternal)) return true;
       if (dgVerifyWakeupResult(t)) return true;
       if (String(STATE.dg.wakeupResult || '') === 'fail' && !STATE.dg.recoverActive && !STATE.rec.active) {
         if (startDeltaRecovery('internal_paused_wakeup_fail_fast')) return true;
@@ -6292,7 +6653,7 @@
         if (dgKey !== String(STATE.dg.contentKey || '')) dgResetForContent(dgKey, 'player_start');
         else dgSetState(DG_ST.TRACKING, 'player_start');
       }
-      if (CFG.enabled && CFG.debugOnOpen) uiShow('player_start');
+      if (CFG.enabled && (isDebugOnOpenEnabled() || (isModeDelta() && STATE.ui.sticky))) uiShow('player_start');
       maybeApplyCarryOnPlayerStart('player_start');
       return;
     }
@@ -7125,6 +7486,7 @@
     var ticket = STATE.resume.ticket || STATE.resume.lastTicket || null;
     return {
       cfg: {
+        engine: String(STATE.engine || selectedEngine() || ''),
         enabled: !!CFG.enabled,
         mode: String(CFG.mode || 'legacy'),
         debugOnOpen: !!CFG.debugOnOpen,
@@ -7161,6 +7523,9 @@
         dgResumeSeekRetryMax: toInt(CFG.dgResumeSeekRetryMax, 0),
         dgRecoverRetryMax: toInt(CFG.dgRecoverRetryMax, 0),
         dgFailsafeCooldownMs: toInt(CFG.dgFailsafeCooldownMs, 0),
+        dgEnabled: !!CFG.dgEnabled,
+        dgDebugOnOpen: !!CFG.dgDebugOnOpen,
+        dgPopupOpacity: toInt(CFG.dgPopupOpacity, 85),
         dgDebugLevel: String(CFG.dgDebugLevel || 'normal'),
         dgBlockNextMs: toInt(CFG.dgBlockNextMs, 0),
         dgTailSec: toNum(CFG.dgTailSec, 0),
@@ -7409,6 +7774,34 @@
     return out;
   };
 
+  API.overlayStorageDefaults = function () {
+    var all = API.storageDefaults();
+    var out = [];
+    var dgPrefix = String(LS_PREFIX || 'blacklampa_') + 'dg_';
+    var i = 0;
+    for (i = 0; i < all.length; i++) {
+      var it = all[i] || {};
+      var key = String(it.key || '');
+      if (!key || key.indexOf(dgPrefix) === 0) continue;
+      out.push({ key: key, def: it.def });
+    }
+    return out;
+  };
+
+  API.dgStorageDefaults = function () {
+    var all = API.storageDefaults();
+    var out = [];
+    var dgPrefix = String(LS_PREFIX || 'blacklampa_') + 'dg_';
+    var i = 0;
+    for (i = 0; i < all.length; i++) {
+      var it = all[i] || {};
+      var key = String(it.key || '');
+      if (!key || key.indexOf(dgPrefix) !== 0) continue;
+      out.push({ key: key, def: it.def });
+    }
+    return out;
+  };
+
   API.applyDefaults = function () {
     var items = overlayStorageDefaultsList();
     var i = 0;
@@ -7505,6 +7898,12 @@
 
   API.refresh = function () {
     readSettingsFromStorage();
+    if (!isEngineOverlayOrDelta()) {
+      API.__inactiveByEngine = 1;
+      shutdownOverlay('engine_inactive', false);
+      return CFG;
+    }
+    API.__inactiveByEngine = 0;
     if (!CFG.enabled || isModeOff()) {
       shutdownOverlay('refresh_disabled', false);
     } else {
@@ -7523,9 +7922,16 @@
 
   API.install = function () {
     if (STATE.installed) return true;
-    STATE.installed = true;
 
     readSettingsFromStorage();
+    if (!isEngineOverlayOrDelta()) {
+      API.__inactiveByEngine = 1;
+      STATE.installed = true;
+      logLine('INF', 'inactive_by_engine', { engine: String(selectedEngine() || 'off') });
+      return true;
+    }
+    API.__inactiveByEngine = 0;
+    STATE.installed = true;
     installInputMonitor();
     patchAll();
 
@@ -7535,7 +7941,10 @@
           try {
             if (!e || !e.name) return;
             var n = String(e.name || '');
-            if (n === K.enabled || n === K.mode || n === K.debugOnOpen || n === K.popupOpacity || n === K.protectNext || n === K.storeTruth || n === K.truthCommitMs || n === K.hangTimeMs || n === K.hangBufMs || n === K.resumeGuardMs || n === K.falseEndStaleAllow || n === K.fakeFullEnabled || n === K.fakeFullNoProgMs || n === K.fakeFullNoMoveMs || n === K.minAheadSec || n === K.underrunNoProgMs || n === K.underrunNoAheadMoveMs || n === K.softAttempts || n === K.inplayerAttempts || n === K.inplayerMode || n === K.escalateToReopen || n === K.reopenCooldownMs || n === K.resumeBackoffSec || n === K.resumeMinStepSec || n === K.seekVerifyDelayMs || n === K.seekDeltaSec || n === K.warmupAfterRecoverMs || n === K.userSeekWindowMs || n === K.userNavWindowMs || n === K.dgStallSoftMs || n === K.dgStallHardMs || n === K.dgWarmupGraceMs || n === K.dgResumeToleranceSec || n === K.dgResumeSeekRetryMax || n === K.dgRecoverRetryMax || n === K.dgFailsafeCooldownMs || n === K.dgDebugLevel || n === K.dgBlockNextMs || n === K.dgTailSec || n === K.dgFalseEndJumpSec || n === K.dgFakeFullEnabled || n === K.dgFalseEndEnabled || n === K.oldEnabled || n === K.oldDebugOnOpen || n === K.oldHangTimeMs || n === K.oldHangBufMs) API.refresh();
+            var dgPrefix = String(LS_PREFIX || 'blacklampa_') + 'dg_';
+            var ovDgPrefix = String(LS_PREFIX || 'blacklampa_') + 'player_overlay_dg_';
+            if (n.indexOf(dgPrefix) === 0 || n.indexOf(ovDgPrefix) === 0) return API.refresh();
+            if (n === K.engine || n === K.enabled || n === K.mode || n === K.debugOnOpen || n === K.popupOpacity || n === K.protectNext || n === K.storeTruth || n === K.truthCommitMs || n === K.hangTimeMs || n === K.hangBufMs || n === K.resumeGuardMs || n === K.falseEndStaleAllow || n === K.fakeFullEnabled || n === K.fakeFullNoProgMs || n === K.fakeFullNoMoveMs || n === K.minAheadSec || n === K.underrunNoProgMs || n === K.underrunNoAheadMoveMs || n === K.softAttempts || n === K.inplayerAttempts || n === K.inplayerMode || n === K.escalateToReopen || n === K.reopenCooldownMs || n === K.resumeBackoffSec || n === K.resumeMinStepSec || n === K.seekVerifyDelayMs || n === K.seekDeltaSec || n === K.warmupAfterRecoverMs || n === K.userSeekWindowMs || n === K.userNavWindowMs || n === K.oldEnabled || n === K.oldDebugOnOpen || n === K.oldHangTimeMs || n === K.oldHangBufMs) API.refresh();
           } catch (_) { }
         });
       }

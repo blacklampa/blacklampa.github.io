@@ -28,6 +28,7 @@
   var KEY_POPUP_AUTOCLOSE_SEC = LS_PREFIX + 'player_guard_popup_autoclose_sec';
   var KEY_HARD_STRATEGY = LS_PREFIX + 'player_guard_hard_strategy';
   var KEY_DEBUG_ON_OPEN = LS_PREFIX + 'player_guard_debug_on_open';
+  var KEY_ENGINE = LS_PREFIX + 'player_engine_v1';
   var KEY_OVERLAY_ENABLED = LS_PREFIX + 'player_overlay_enabled';
   var KEY_OVERLAY_MODE = LS_PREFIX + 'player_overlay_mode';
 
@@ -274,19 +275,48 @@
     return (v === undefined || v === null || v === '') ? fallback : v;
   }
 
-  var OVERLAY_MODE_CACHE = { ts: 0, active: false };
-  function isOverlayDeltaActive() {
+  var ENGINE_CACHE = { ts: 0, val: 'off' };
+
+  function normalizeEngine(v) {
+    try { v = String(v || '').toLowerCase().trim(); } catch (_) { v = ''; }
+    if (v === 'off' || v === 'legacy' || v === 'overlay' || v === 'delta' || v === 'auto') return v;
+    if (v === 'deltaguard' || v === 'delta_guard') return 'delta';
+    return 'auto';
+  }
+
+  function autoEngineFromLegacyKeys() {
+    var overlayEnabled = parseBool(sGet(KEY_OVERLAY_ENABLED, '0'), false);
+    var overlayMode = String(sGet(KEY_OVERLAY_MODE, 'legacy') || '').toLowerCase();
+    if (overlayEnabled && (overlayMode === 'delta' || overlayMode === 'deltaguard' || overlayMode === 'delta_guard')) return 'delta';
+    if (overlayEnabled) return 'overlay';
+    if (parseBool(sGet(KEY_ENABLED, '0'), false)) return 'legacy';
+    return 'off';
+  }
+
+  function getEngine() {
     try {
       var ts = now();
-      if ((ts - toInt(OVERLAY_MODE_CACHE.ts, 0)) < 250) return !!OVERLAY_MODE_CACHE.active;
-      var enabled = parseBool(sGet(KEY_OVERLAY_ENABLED, '0'), false);
-      var mode = String(sGet(KEY_OVERLAY_MODE, 'off') || '').toLowerCase();
-      OVERLAY_MODE_CACHE.ts = ts;
-      OVERLAY_MODE_CACHE.active = !!(enabled && mode === 'delta');
-      return !!OVERLAY_MODE_CACHE.active;
+      if ((ts - toInt(ENGINE_CACHE.ts, 0)) < 250) return String(ENGINE_CACHE.val || 'off');
+      var out = 'off';
+      try {
+        if (window.BL && BL.PlayerEngine && typeof BL.PlayerEngine.get === 'function') {
+          out = normalizeEngine(BL.PlayerEngine.get());
+        } else {
+          var raw = normalizeEngine(sGet(KEY_ENGINE, 'auto'));
+          out = (raw === 'auto') ? autoEngineFromLegacyKeys() : raw;
+        }
+      } catch (_) { out = autoEngineFromLegacyKeys(); }
+      if (out === 'auto') out = autoEngineFromLegacyKeys();
+      ENGINE_CACHE.ts = ts;
+      ENGINE_CACHE.val = out;
+      return out;
     } catch (_) {
-      return false;
+      return autoEngineFromLegacyKeys();
     }
+  }
+
+  function isOverlayDeltaActive() {
+    return getEngine() === 'delta';
   }
 
   function parseBool(v, def) {
@@ -3953,6 +3983,16 @@
 
   API.install = function () {
     if (STATE.installed) return true;
+    var engine = '';
+    try { engine = String(getEngine() || 'off'); } catch (_) { engine = 'off'; }
+    API.__engine = engine;
+    if (engine !== 'legacy') {
+      API.__inactiveByEngine = 1;
+      STATE.installed = true;
+      logEvt('INF', 'inactive_by_engine', { engine: engine }, 'pg:engine:inactive', 5000);
+      return true;
+    }
+    API.__inactiveByEngine = 0;
     STATE.installed = true;
 
     readSettingsFromStorage();

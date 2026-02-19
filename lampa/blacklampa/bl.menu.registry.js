@@ -277,7 +277,8 @@
     filesystem_scan: { id: 'filesystem_scan', parent: 'utils', title: 'Scanner', descKey: 'menu.root.filescan.desc', screen: 'action', action: function () { try { if (window.BL && BL.FileScanner && BL.FileScanner.open) BL.FileScanner.open(); } catch (_) { } } },
     localstorage: { id: 'localstorage', parent: 'utils', title: 'LocalStorage', desc: 'LocalStorage Manager (keys + values).', screen: 'action', action: function () { try { if (window.BL && BL.LocalStorageManager && BL.LocalStorageManager.open) BL.LocalStorageManager.open(); } catch (_) { } } },
     danger: { id: 'danger', parent: 'root', titleKey: 'menu.root.danger.title', descKey: 'menu.root.danger.desc', screen: 'danger' },
-    ui: { id: 'ui', parent: 'root', titleKey: 'menu.root.ui.title', descKey: 'menu.root.ui.desc', screen: 'ui', children: ['ui_pg_legacy', 'ui_pg_overlay', 'ui_deltaguard'] },
+    ui: { id: 'ui', parent: 'root', titleKey: 'menu.root.ui.title', descKey: 'menu.root.ui.desc', screen: 'ui', children: ['ui_player_protection', 'ui_pg_legacy', 'ui_pg_overlay', 'ui_deltaguard'] },
+    ui_player_protection: { id: 'ui_player_protection', parent: 'ui', title: 'Player Protection', desc: 'Выбор engine и разделение веток защиты плеера.', screen: 'ui_player_protection' },
     ui_pg_legacy: { id: 'ui_pg_legacy', parent: 'ui', title: 'PG (legacy)', desc: 'Старые настройки PlayerGuard (не Overlay).', screen: 'ui_pg_legacy' },
     ui_pg_overlay: { id: 'ui_pg_overlay', parent: 'ui', title: 'PG Overlay', desc: 'Новый Overlay-плеер (идеальный защитник).', screen: 'ui_pg_overlay' },
     ui_deltaguard: { id: 'ui_deltaguard', parent: 'ui', title: 'DeltaGuard', desc: 'Настройки режима DeltaGuard для PG Overlay.', screen: 'ui_deltaguard' },
@@ -410,6 +411,7 @@
     network_status: buildNetworkStatusScreen,
     jsqp: buildJsqpScreen,
     ui: buildUiScreen,
+    ui_player_protection: buildUiPlayerProtectionScreen,
     ui_pg_legacy: buildUiPlayerGuardLegacyScreen,
     ui_pg_overlay: buildUiPlayerGuardOverlayScreen,
     ui_deltaguard: buildUiDeltaGuardScreen,
@@ -1004,6 +1006,47 @@
     try { if (window.BL && BL.PlayerOverlay && BL.PlayerOverlay.refresh) BL.PlayerOverlay.refresh(); } catch (_) { }
   }
 
+  function normalizePlayerEngine(v) {
+    try { v = String(v || '').toLowerCase().trim(); } catch (_) { v = ''; }
+    if (v === 'off' || v === 'legacy' || v === 'overlay' || v === 'delta' || v === 'auto') return v;
+    if (v === 'deltaguard' || v === 'delta_guard') return 'delta';
+    return 'auto';
+  }
+
+  function playerEngineKey() {
+    return String(pref() || 'blacklampa_') + 'player_engine_v1';
+  }
+
+  function resolveAutoPlayerEngine() {
+    var p = String(pref() || 'blacklampa_');
+    var ovEnabled = parseBool(sGet(p + 'player_overlay_enabled', '0'), false);
+    var ovMode = String(sGet(p + 'player_overlay_mode', 'legacy') || 'legacy').toLowerCase();
+    if (ovEnabled && (ovMode === 'delta' || ovMode === 'deltaguard' || ovMode === 'delta_guard')) return 'delta';
+    if (ovEnabled) return 'overlay';
+    if (parseBool(sGet(p + 'player_guard_enabled', '0'), false)) return 'legacy';
+    return 'off';
+  }
+
+  function getPlayerEngine() {
+    try {
+      if (window.BL && BL.PlayerEngine && typeof BL.PlayerEngine.get === 'function') {
+        return normalizePlayerEngine(BL.PlayerEngine.get());
+      }
+    } catch (_) { }
+    var raw = normalizePlayerEngine(sGet(playerEngineKey(), 'auto'));
+    if (raw === 'auto') raw = resolveAutoPlayerEngine();
+    return normalizePlayerEngine(raw);
+  }
+
+  function setPlayerEngine(v) {
+    v = normalizePlayerEngine(v);
+    try {
+      if (window.BL && BL.PlayerEngine && typeof BL.PlayerEngine.set === 'function') return BL.PlayerEngine.set(v);
+    } catch (_) { }
+    sSet(playerEngineKey(), v);
+    return getPlayerEngine();
+  }
+
   function overlayDefaultFallbacks() {
     return {
       enabled: 1,
@@ -1035,6 +1078,11 @@
       warmup_ms_after_recover: 18000,
       user_seek_window_ms: 1800,
       user_nav_window_ms: 2500,
+      dg_enabled: 1,
+      dg_debug_on_open: 0,
+      dg_popup_opacity: 85,
+      dg_user_seek_window_ms: 1800,
+      dg_user_nav_window_ms: 2500,
       dg_stall_soft_ms: 1200,
       dg_stall_hard_ms: 2500,
       dg_warmup_grace_ms: 1200,
@@ -1065,8 +1113,21 @@
   function overlayStorageDefaults() {
     var list = null;
     try {
-      if (window.BL && BL.PlayerOverlay && typeof BL.PlayerOverlay.storageDefaults === 'function') {
+      if (window.BL && BL.PlayerOverlay && typeof BL.PlayerOverlay.overlayStorageDefaults === 'function') {
+        list = BL.PlayerOverlay.overlayStorageDefaults();
+      } else if (window.BL && BL.PlayerOverlay && typeof BL.PlayerOverlay.storageDefaults === 'function') {
         list = BL.PlayerOverlay.storageDefaults();
+        if (Array.isArray(list) && list.length) {
+          var dgPrefix = String(pref() || 'blacklampa_') + 'dg_';
+          var filtered = [];
+          for (var fi = 0; fi < list.length; fi++) {
+            var fit = list[fi] || {};
+            var fk = String(fit.key || '');
+            if (!fk || fk.indexOf(dgPrefix) === 0) continue;
+            filtered.push(fit);
+          }
+          list = filtered;
+        }
       }
     } catch (_) { list = null; }
     if (Array.isArray(list) && list.length) return list;
@@ -1102,49 +1163,119 @@
       { key: p + 'player_overlay_seek_delta_sec', def: String(d.seek_delta_sec || 0.1) },
       { key: p + 'player_overlay_warmup_ms_after_recover', def: String(d.warmup_ms_after_recover || 18000) },
       { key: p + 'player_overlay_user_seek_window_ms', def: String(d.user_seek_window_ms || 1800) },
-      { key: p + 'player_overlay_user_nav_window_ms', def: String(d.user_nav_window_ms || 2500) },
-      { key: p + 'player_overlay_dg_stall_soft_ms', def: String(d.dg_stall_soft_ms || 1200) },
-      { key: p + 'player_overlay_dg_stall_hard_ms', def: String(d.dg_stall_hard_ms || 2500) },
-      { key: p + 'player_overlay_dg_warmup_grace_ms', def: String(d.dg_warmup_grace_ms || 1200) },
-      { key: p + 'player_overlay_dg_resume_tolerance_sec', def: String(d.dg_resume_tolerance_sec || 0.12) },
-      { key: p + 'player_overlay_dg_resume_seek_retry_max', def: String(d.dg_resume_seek_retry_max || 2) },
-      { key: p + 'player_overlay_dg_recover_retry_max', def: String(d.dg_recover_retry_max || 2) },
-      { key: p + 'player_overlay_dg_failsafe_cooldown_ms', def: String(d.dg_failsafe_cooldown_ms || 8000) },
-      { key: p + 'player_overlay_dg_debug_level', def: String(d.dg_debug_level || 'normal') },
-      { key: p + 'player_overlay_dg_block_next_ms', def: String(d.dg_block_next_ms || 6000) },
-      { key: p + 'player_overlay_dg_tail_sec', def: String(d.dg_tail_sec || 3.0) },
-      { key: p + 'player_overlay_dg_false_end_jump_sec', def: String(d.dg_false_end_jump_sec || 10.0) },
-      { key: p + 'player_overlay_dg_fake_full_enabled', def: d.dg_fake_full_enabled ? 1 : 0 },
-      { key: p + 'player_overlay_dg_false_end_enabled', def: d.dg_false_end_enabled ? 1 : 0 }
+      { key: p + 'player_overlay_user_nav_window_ms', def: String(d.user_nav_window_ms || 2500) }
     ];
   }
 
   function overlayDeltaStorageDefaults() {
+    var list = null;
+    try {
+      if (window.BL && BL.PlayerOverlay && typeof BL.PlayerOverlay.dgStorageDefaults === 'function') {
+        list = BL.PlayerOverlay.dgStorageDefaults();
+      }
+    } catch (_) { list = null; }
+    if (Array.isArray(list) && list.length) return list;
+
     var d = overlayDefaults();
     var p = String(pref() || 'blacklampa_');
     return [
-      { key: p + 'player_overlay_truth_commit_ms', def: String(d.truth_commit_ms || 100) },
-      { key: p + 'player_overlay_min_ahead_sec', def: String(d.min_ahead_sec || 0.1) },
-      { key: p + 'player_overlay_user_seek_window_ms', def: String(d.user_seek_window_ms || 1800) },
-      { key: p + 'player_overlay_user_nav_window_ms', def: String(d.user_nav_window_ms || 2500) },
-      { key: p + 'player_overlay_dg_stall_soft_ms', def: String(d.dg_stall_soft_ms || 1200) },
-      { key: p + 'player_overlay_dg_stall_hard_ms', def: String(d.dg_stall_hard_ms || 2500) },
-      { key: p + 'player_overlay_dg_warmup_grace_ms', def: String(d.dg_warmup_grace_ms || 1200) },
-      { key: p + 'player_overlay_dg_resume_tolerance_sec', def: String(d.dg_resume_tolerance_sec || 0.12) },
-      { key: p + 'player_overlay_dg_resume_seek_retry_max', def: String(d.dg_resume_seek_retry_max || 2) },
-      { key: p + 'player_overlay_dg_recover_retry_max', def: String(d.dg_recover_retry_max || 2) },
-      { key: p + 'player_overlay_dg_failsafe_cooldown_ms', def: String(d.dg_failsafe_cooldown_ms || 8000) },
-      { key: p + 'player_overlay_dg_debug_level', def: String(d.dg_debug_level || 'normal') },
-      { key: p + 'player_overlay_dg_block_next_ms', def: String(d.dg_block_next_ms || 6000) },
-      { key: p + 'player_overlay_dg_tail_sec', def: String(d.dg_tail_sec || 3.0) },
-      { key: p + 'player_overlay_dg_false_end_jump_sec', def: String(d.dg_false_end_jump_sec || 10.0) },
-      { key: p + 'player_overlay_dg_fake_full_enabled', def: d.dg_fake_full_enabled ? 1 : 0 },
-      { key: p + 'player_overlay_dg_false_end_enabled', def: d.dg_false_end_enabled ? 1 : 0 }
+      { key: p + 'dg_enabled', def: d.dg_enabled ? 1 : 0 },
+      { key: p + 'dg_debug_on_open', def: d.dg_debug_on_open ? 1 : 0 },
+      { key: p + 'dg_popup_opacity', def: String(d.dg_popup_opacity || 85) },
+      { key: p + 'dg_user_seek_window_ms', def: String(d.dg_user_seek_window_ms || 1800) },
+      { key: p + 'dg_user_nav_window_ms', def: String(d.dg_user_nav_window_ms || 2500) },
+      { key: p + 'dg_stall_soft_ms', def: String(d.dg_stall_soft_ms || 1200) },
+      { key: p + 'dg_stall_hard_ms', def: String(d.dg_stall_hard_ms || 2500) },
+      { key: p + 'dg_warmup_grace_ms', def: String(d.dg_warmup_grace_ms || 1200) },
+      { key: p + 'dg_resume_tolerance_sec', def: String(d.dg_resume_tolerance_sec || 0.12) },
+      { key: p + 'dg_resume_seek_retry_max', def: String(d.dg_resume_seek_retry_max || 2) },
+      { key: p + 'dg_recover_retry_max', def: String(d.dg_recover_retry_max || 2) },
+      { key: p + 'dg_failsafe_cooldown_ms', def: String(d.dg_failsafe_cooldown_ms || 8000) },
+      { key: p + 'dg_debug_level', def: String(d.dg_debug_level || 'normal') },
+      { key: p + 'dg_block_next_ms', def: String(d.dg_block_next_ms || 6000) },
+      { key: p + 'dg_tail_sec', def: String(d.dg_tail_sec || 3.0) },
+      { key: p + 'dg_false_end_jump_sec', def: String(d.dg_false_end_jump_sec || 10.0) },
+      { key: p + 'dg_fake_full_enabled', def: d.dg_fake_full_enabled ? 1 : 0 },
+      { key: p + 'dg_false_end_enabled', def: d.dg_false_end_enabled ? 1 : 0 }
     ];
   }
 
   function refreshPlayerGuardSettings() {
     refreshPlayerGuardLegacySettings();
+  }
+
+  function playerEngineTitle(v) {
+    v = normalizePlayerEngine(v);
+    if (v === 'off') return 'OFF';
+    if (v === 'legacy') return 'PG legacy';
+    if (v === 'overlay') return 'PG Overlay';
+    if (v === 'delta') return 'DeltaGuard';
+    return 'auto';
+  }
+
+  function buildUiPlayerProtectionScreen(ctx) {
+    try {
+      var current = getPlayerEngine();
+      var currentTitle = playerEngineTitle(current);
+
+      P(ctx, {
+        id: 'player_protection_current_engine',
+        type: 'static',
+        values: currentTitle,
+        name: 'Engine (current)',
+        desc: 'Активный engine: ' + currentTitle + '.'
+      });
+
+      P(ctx, {
+        id: 'player_engine_v1',
+        type: 'select',
+        values: { off: 'OFF', legacy: 'PG legacy', overlay: 'PG Overlay', delta: 'DeltaGuard' },
+        default: current,
+        name: 'Engine',
+        desc: 'Выбор оркестратора плеера: OFF / PG legacy / PG Overlay / DeltaGuard.',
+        onChange: function (v) {
+          var next = normalizePlayerEngine(v);
+          if (next === 'auto') next = 'off';
+          var resolved = setPlayerEngine(next);
+          refreshPlayerGuardLegacySettings();
+          refreshPlayerOverlaySettings();
+          try { if (ctx && ctx.notify) ctx.notify('[[BlackLampa]] engine=' + playerEngineTitle(resolved) + ' ; перезапусти воспроизведение (выйди-зайди в видео)'); } catch (_) { }
+          return true;
+        }
+      });
+
+      P(ctx, {
+        id: 'player_protection_restart_hint',
+        type: 'static',
+        values: 'restart playback required',
+        name: 'Подсказка',
+        desc: 'После смены engine: выйди из видео и зайди снова.'
+      });
+
+      P(ctx, {
+        id: 'player_protection_to_legacy',
+        type: 'static',
+        name: 'Settings: legacy',
+        desc: 'Открыть экран настроек PG legacy.',
+        onEnter: function () { try { if (ctx && ctx.push) ctx.push('ui_pg_legacy', null, 0, 0); } catch (_) { } }
+      });
+
+      P(ctx, {
+        id: 'player_protection_to_overlay',
+        type: 'static',
+        name: 'Settings: overlay',
+        desc: 'Открыть экран настроек PG Overlay.',
+        onEnter: function () { try { if (ctx && ctx.push) ctx.push('ui_pg_overlay', null, 0, 0); } catch (_) { } }
+      });
+
+      P(ctx, {
+        id: 'player_protection_to_dg',
+        type: 'static',
+        name: 'Settings: DG',
+        desc: 'Открыть экран настроек DeltaGuard.',
+        onEnter: function () { try { if (ctx && ctx.push) ctx.push('ui_deltaguard', null, 0, 0); } catch (_) { } }
+      });
+    } catch (_) { }
   }
 
   function blmodHub() {
@@ -1474,10 +1605,10 @@
       P(ctx, {
         id: 'player_overlay_mode',
         type: 'select',
-        values: { off: 'Off', legacy: 'Legacy', delta: 'DeltaGuard' },
-        default: String(od.mode || 'legacy'),
+        values: { off: 'Off', legacy: 'Legacy' },
+        default: (String(od.mode || 'legacy') === 'off' ? 'off' : 'legacy'),
         name: 'Overlay: Mode',
-        desc: 'Off: выключен. Legacy: текущая логика. DeltaGuard: отдельный точный restart/verify алгоритм.',
+        desc: 'Legacy-only режим PG Overlay. Выбор DeltaGuard вынесен в Player Protection → Engine.',
         onChange: refreshPlayerOverlaySettings
       });
 
@@ -1783,39 +1914,98 @@
   function buildUiDeltaGuardScreen(ctx) {
     try {
       var od = overlayDefaults();
+      var engine = getPlayerEngine();
+      if (engine !== 'delta') {
+        P(ctx, {
+          id: 'dg_engine_not_delta',
+          type: 'static',
+          values: 'read-only',
+          name: 'DeltaGuard',
+          desc: 'Engine сейчас не DeltaGuard. Экран read-only. Переключи engine в "Player Protection".'
+        });
+        P(ctx, {
+          id: 'dg_open_engine_selector',
+          type: 'static',
+          name: 'Открыть Player Protection',
+          desc: 'Перейти к выбору engine.',
+          onEnter: function () { try { if (ctx && ctx.push) ctx.push('ui_player_protection', null, 0, 0); } catch (_) { } }
+        });
+        return;
+      }
 
       P(ctx, {
-        id: 'player_overlay_user_seek_window_ms',
+        id: 'dg_open_debug_popup',
+        type: 'button',
+        name: 'Open DG debug popup',
+        desc: 'Открыть автономный debug popup DeltaGuard.',
+        onChange: function () {
+          try { if (window.BL && BL.PlayerOverlay && typeof BL.PlayerOverlay.debugOpen === 'function') BL.PlayerOverlay.debugOpen(); } catch (_) { }
+          return false;
+        }
+      });
+
+      P(ctx, {
+        id: 'dg_enabled',
+        type: 'toggle',
+        values: { 0: 'OFF', 1: 'ON' },
+        default: od.dg_enabled ? 1 : 0,
+        name: 'DeltaGuard: Enabled',
+        desc: 'Engine=delta принудительно включает DG. Тумблер сохранён для совместимости ключей.',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
+        id: 'dg_debug_on_open',
+        type: 'toggle',
+        values: { 0: 'OFF', 1: 'ON' },
+        default: od.dg_debug_on_open ? 1 : 0,
+        name: 'DeltaGuard: Debug popup on open',
+        desc: 'Авто-открытие DG popup при старте плеера.',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
+        id: 'dg_popup_opacity',
+        type: 'select',
+        values: { '20': '20%', '30': '30%', '40': '40%', '50': '50%', '60': '60%', '70': '70%', '80': '80%', '90': '90%', '100': '100%' },
+        default: String(od.dg_popup_opacity || 85),
+        name: 'DeltaGuard: Popup opacity',
+        desc: 'Прозрачность DG popup.',
+        onChange: refreshPlayerOverlaySettings
+      });
+
+      P(ctx, {
+        id: 'dg_user_seek_window_ms',
         type: 'select',
         values: { '1000': '1000', '1200': '1200', '1500': '1500', '1800': '1800', '2000': '2000', '2500': '2500', '3000': '3000' },
-        default: String(od.user_seek_window_ms || 1800),
+        default: String(od.dg_user_seek_window_ms || 1800),
         name: 'DeltaGuard: User seek window (ms)',
         desc: 'Окно, в котором DeltaGuard не вмешивается после ручной перемотки.',
         onChange: refreshPlayerOverlaySettings
       });
 
       P(ctx, {
-        id: 'player_overlay_user_nav_window_ms',
+        id: 'dg_user_nav_window_ms',
         type: 'select',
         values: { '1500': '1500', '2000': '2000', '2500': '2500', '3000': '3000', '4000': '4000' },
-        default: String(od.user_nav_window_ms || 2500),
+        default: String(od.dg_user_nav_window_ms || 2500),
         name: 'DeltaGuard: User nav window (ms)',
-        desc: 'Окно блокировки вмешательства после ручной навигации по сериям/файлам.',
+        desc: 'Окно блокировки вмешательства после ручной навигации.',
         onChange: refreshPlayerOverlaySettings
       });
 
       P(ctx, {
-        id: 'player_overlay_dg_block_next_ms',
+        id: 'dg_block_next_ms',
         type: 'select',
         values: { '3000': '3000', '4000': '4000', '5000': '5000', '6000': '6000', '8000': '8000', '10000': '10000', '12000': '12000', '15000': '15000' },
         default: String(od.dg_block_next_ms || 6000),
         name: 'DeltaGuard: Block next (ms)',
-        desc: 'Окно жёсткой блокировки auto-next после false-end/fake-full/underrun.',
+        desc: 'Окно жёсткой блокировки auto-next.',
         onChange: refreshPlayerOverlaySettings
       });
 
       P(ctx, {
-        id: 'player_overlay_dg_tail_sec',
+        id: 'dg_tail_sec',
         type: 'select',
         values: { '1.0': '1.0', '1.5': '1.5', '2.0': '2.0', '2.5': '2.5', '3.0': '3.0', '4.0': '4.0', '5.0': '5.0' },
         default: String(od.dg_tail_sec || 3.0),
@@ -1825,7 +2015,7 @@
       });
 
       P(ctx, {
-        id: 'player_overlay_dg_false_end_jump_sec',
+        id: 'dg_false_end_jump_sec',
         type: 'select',
         values: { '3': '3', '5': '5', '7': '7', '10': '10', '12': '12', '15': '15', '20': '20' },
         default: String(od.dg_false_end_jump_sec || 10.0),
@@ -1835,7 +2025,7 @@
       });
 
       P(ctx, {
-        id: 'player_overlay_dg_fake_full_enabled',
+        id: 'dg_fake_full_enabled',
         type: 'toggle',
         values: { 0: 'OFF', 1: 'ON' },
         default: od.dg_fake_full_enabled ? 1 : 0,
@@ -1845,7 +2035,7 @@
       });
 
       P(ctx, {
-        id: 'player_overlay_dg_false_end_enabled',
+        id: 'dg_false_end_enabled',
         type: 'toggle',
         values: { 0: 'OFF', 1: 'ON' },
         default: od.dg_false_end_enabled ? 1 : 0,
@@ -1855,7 +2045,7 @@
       });
 
       P(ctx, {
-        id: 'player_overlay_dg_stall_soft_ms',
+        id: 'dg_stall_soft_ms',
         type: 'select',
         values: { '800': '800', '1000': '1000', '1200': '1200', '1500': '1500', '1800': '1800', '2000': '2000' },
         default: String(od.dg_stall_soft_ms || 1200),
@@ -1865,7 +2055,7 @@
       });
 
       P(ctx, {
-        id: 'player_overlay_dg_stall_hard_ms',
+        id: 'dg_stall_hard_ms',
         type: 'select',
         values: { '1800': '1800', '2200': '2200', '2500': '2500', '3000': '3000', '3500': '3500', '4000': '4000', '5000': '5000' },
         default: String(od.dg_stall_hard_ms || 2500),
@@ -1875,7 +2065,7 @@
       });
 
       P(ctx, {
-        id: 'player_overlay_dg_warmup_grace_ms',
+        id: 'dg_warmup_grace_ms',
         type: 'select',
         values: { '600': '600', '800': '800', '1000': '1000', '1200': '1200', '1500': '1500', '2000': '2000' },
         default: String(od.dg_warmup_grace_ms || 1200),
@@ -1885,7 +2075,7 @@
       });
 
       P(ctx, {
-        id: 'player_overlay_dg_resume_tolerance_sec',
+        id: 'dg_resume_tolerance_sec',
         type: 'select',
         values: { '0.08': '0.08', '0.1': '0.1', '0.12': '0.12', '0.15': '0.15', '0.2': '0.2', '0.3': '0.3' },
         default: String(od.dg_resume_tolerance_sec || 0.12),
@@ -1895,7 +2085,7 @@
       });
 
       P(ctx, {
-        id: 'player_overlay_dg_resume_seek_retry_max',
+        id: 'dg_resume_seek_retry_max',
         type: 'select',
         values: { '0': '0', '1': '1', '2': '2', '3': '3' },
         default: String(od.dg_resume_seek_retry_max || 2),
@@ -1905,7 +2095,7 @@
       });
 
       P(ctx, {
-        id: 'player_overlay_dg_recover_retry_max',
+        id: 'dg_recover_retry_max',
         type: 'select',
         values: { '0': '0', '1': '1', '2': '2', '3': '3' },
         default: String(od.dg_recover_retry_max || 2),
@@ -1915,7 +2105,7 @@
       });
 
       P(ctx, {
-        id: 'player_overlay_dg_failsafe_cooldown_ms',
+        id: 'dg_failsafe_cooldown_ms',
         type: 'select',
         values: { '4000': '4000', '6000': '6000', '8000': '8000', '10000': '10000', '12000': '12000', '15000': '15000' },
         default: String(od.dg_failsafe_cooldown_ms || 8000),
@@ -1925,7 +2115,7 @@
       });
 
       P(ctx, {
-        id: 'player_overlay_dg_debug_level',
+        id: 'dg_debug_level',
         type: 'select',
         values: { silent: 'silent', normal: 'normal', trace: 'trace' },
         default: String(od.dg_debug_level || 'normal'),
@@ -1935,10 +2125,10 @@
       });
 
       P(ctx, {
-        id: 'player_overlay_reset_delta_defaults',
+        id: 'dg_reset_defaults',
         type: 'button',
         name: 'Сбросить DeltaGuard defaults',
-        desc: 'Сбросить только параметры DeltaGuard (без изменения legacy-параметров).',
+        desc: 'Сбросить только параметры DeltaGuard (dg_*).',
         onChange: function () {
           var doReset = function () {
             try {

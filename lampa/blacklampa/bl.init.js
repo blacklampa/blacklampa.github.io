@@ -843,6 +843,7 @@
 	        'bl.ui.localstorage.js',
 	        'bl.backup.js',
 	        'bl.ext.filters.js',
+	        'bl.player.engine.js',
 	        'bl.player.guard.js',
 	        'bl.player.overlay.js',
 	        'bl.mod.player/ui/button.js',
