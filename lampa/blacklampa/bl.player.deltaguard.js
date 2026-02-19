@@ -15,6 +15,7 @@
     enabled: LS_PREFIX + 'dg_enabled',
     debugOnOpen: LS_PREFIX + 'dg_debug_on_open',
     debugOnFail: LS_PREFIX + 'dg_debug_on_fail',
+    popupOpacity: LS_PREFIX + 'dg_popup_opacity',
     popupAutocloseSec: LS_PREFIX + 'dg_popup_autoclose_sec',
     blockNextMs: LS_PREFIX + 'dg_block_next_ms',
     tailSec: LS_PREFIX + 'dg_tail_sec',
@@ -34,6 +35,7 @@
     dg_enabled: 1,
     dg_debug_on_open: 0,
     dg_debug_on_fail: 1,
+    dg_popup_opacity: 0.5,
     dg_popup_autoclose_sec: 0,
     dg_block_next_ms: 6000,
     dg_tail_sec: 3.0,
@@ -88,6 +90,9 @@
       pauseOwnerTs: 0,
       userPauseUntilTs: 0,
       userSeekUntilTs: 0,
+      lastUserSeekCt: NaN,
+      lastUserSeekTs: 0,
+      userSeekCommitUntilTs: 0,
       lastCmdNorm: '',
       lastCmdTs: 0
     },
@@ -157,6 +162,11 @@
       failCounter: 0,
       hardResetCount: 0,
       nextAllowedTs: 0,
+      lastAttemptTs: 0,
+      lastAttemptSig: '',
+      backoffFactor: 0,
+      suppressUntilTs: 0,
+      lastTriggerHash: '',
       verifyUntilTs: 0,
       verifyStartCt: NaN,
       verifyStartTimeupdateTs: 0,
@@ -206,6 +216,10 @@
   function toNum(v, d) {
     var n = parseFloat(v);
     return isNaN(n) ? d : n;
+  }
+
+  function readFloat(key, fallback) {
+    return toNum(sGet(String(key || ''), String(fallback)), fallback);
   }
 
   function clampInt(v, minV, maxV) {
@@ -267,6 +281,7 @@
       dg_enabled: DG_DEFAULTS.dg_enabled,
       dg_debug_on_open: DG_DEFAULTS.dg_debug_on_open,
       dg_debug_on_fail: DG_DEFAULTS.dg_debug_on_fail,
+      dg_popup_opacity: DG_DEFAULTS.dg_popup_opacity,
       dg_popup_autoclose_sec: DG_DEFAULTS.dg_popup_autoclose_sec,
       dg_block_next_ms: DG_DEFAULTS.dg_block_next_ms,
       dg_tail_sec: DG_DEFAULTS.dg_tail_sec,
@@ -289,6 +304,7 @@
       enabled: parseBool(sGet(K.enabled, String(d.dg_enabled)), !!d.dg_enabled),
       debugOnOpen: parseBool(sGet(K.debugOnOpen, String(d.dg_debug_on_open)), !!d.dg_debug_on_open),
       debugOnFail: parseBool(sGet(K.debugOnFail, String(d.dg_debug_on_fail)), !!d.dg_debug_on_fail),
+      popupOpacity: clampNum(readFloat(K.popupOpacity, d.dg_popup_opacity), 0.2, 1.0),
       popupAutocloseSec: clampInt(sGet(K.popupAutocloseSec, String(d.dg_popup_autoclose_sec)), 0, 120),
       blockNextMs: clampInt(sGet(K.blockNextMs, String(d.dg_block_next_ms)), 1000, 30000),
       tailSec: clampNum(sGet(K.tailSec, String(d.dg_tail_sec)), 0.5, 12),
@@ -298,7 +314,7 @@
       tickMs: clampInt(sGet(K.tickMs, String(d.dg_tick_ms)), 100, 2000),
       stallSoftMs: clampInt(sGet(K.stallSoftMs, String(d.dg_stall_soft_ms)), 500, 10000),
       stallHardMs: clampInt(sGet(K.stallHardMs, String(d.dg_stall_hard_ms)), 800, 20000),
-      recoverCooldownMs: clampInt(sGet(K.recoverCooldownMs, String(d.dg_recover_cooldown_ms)), 500, 30000),
+      recoverCooldownMs: clampInt(sGet(K.recoverCooldownMs, String(d.dg_recover_cooldown_ms)), 250, 20000),
       verifyMs: clampInt(sGet(K.verifyMs, String(d.dg_verify_ms)), 500, 10000),
       hardResetEnabled: parseBool(sGet(K.hardResetEnabled, String(d.dg_hard_reset_enabled)), !!d.dg_hard_reset_enabled),
       hardResetAfterN: clampInt(sGet(K.hardResetAfterN, String(d.dg_hard_reset_after_n)), 1, 10)
@@ -453,10 +469,39 @@
     return nowMs() < toInt(STATE.user.userSeekUntilTs, 0);
   }
 
+  function userSeekCommitActive() {
+    return nowMs() < toInt(STATE.user.userSeekCommitUntilTs, 0);
+  }
+
   function armUserSeekWindow(ms, why) {
     ms = clampInt(ms || 1200, 300, 6000);
     STATE.user.userSeekUntilTs = Math.max(toInt(STATE.user.userSeekUntilTs, 0), nowMs() + ms);
     if (why) log('DBG', 'user_seek_window', { ms: ms, why: String(why) });
+  }
+
+  function commitUserSeekPoint(ct, why) {
+    var nowT = nowMs();
+    ct = toNum(ct, NaN);
+    if (!isFinite(ct) || ct < 0) return false;
+
+    STATE.user.lastUserSeekCt = ct;
+    STATE.user.lastUserSeekTs = nowT;
+    STATE.user.userSeekCommitUntilTs = Math.max(toInt(STATE.user.userSeekCommitUntilTs, 0), nowT + 4000);
+
+    STATE.media.recentCtFloor = Math.max(toNum(STATE.media.recentCtFloor, 0), Math.max(0, ct - 1.0));
+    if (!isFinite(toNum(STATE.media.lastGoodCt, NaN))) STATE.media.lastGoodCt = ct;
+    else STATE.media.lastGoodCt = Math.max(toNum(STATE.media.lastGoodCt, 0), ct);
+    STATE.media.lastGoodCt = Math.max(toNum(STATE.media.lastGoodCt, 0), toNum(STATE.media.recentCtFloor, 0));
+    STATE.media.lastGoodTs = nowT;
+
+    if (why) {
+      log('DBG', 'user_seek_commit', {
+        why: String(why),
+        ct: toNum(ct, 0),
+        commitLeftMs: Math.max(0, toInt(STATE.user.userSeekCommitUntilTs, 0) - nowT)
+      });
+    }
+    return true;
   }
 
   function setPauseOwner(owner, why) {
@@ -695,6 +740,7 @@
     add('seeked', function () {
       markEvent('seeked');
       armUserSeekWindow(900, 'video_seeked');
+      commitUserSeekPoint(safe(function () { return toNum(video.currentTime, NaN); }, NaN), 'video_seeked');
     });
 
     STATE.media.video = video;
@@ -737,9 +783,19 @@
     STATE.media.lastGoodTs = 0;
     STATE.media.recentCtFloor = 0;
 
+    STATE.user.lastUserSeekCt = NaN;
+    STATE.user.lastUserSeekTs = 0;
+    STATE.user.userSeekCommitUntilTs = 0;
+
     STATE.recovery.active = false;
     STATE.recovery.step = '';
     STATE.recovery.trigger = '';
+    STATE.recovery.failCounter = 0;
+    STATE.recovery.backoffFactor = 0;
+    STATE.recovery.lastAttemptTs = 0;
+    STATE.recovery.lastAttemptSig = '';
+    STATE.recovery.lastTriggerHash = '';
+    STATE.recovery.suppressUntilTs = 0;
     STATE.recovery.verifyUntilTs = 0;
     STATE.recovery.verifyStartCt = NaN;
     STATE.recovery.verifyTarget = NaN;
@@ -762,10 +818,19 @@
     STATE.media.lastGoodTs = 0;
     STATE.media.recentCtFloor = 0;
 
+    STATE.user.lastUserSeekCt = NaN;
+    STATE.user.lastUserSeekTs = 0;
+    STATE.user.userSeekCommitUntilTs = 0;
+
     STATE.recovery.failCounter = 0;
+    STATE.recovery.backoffFactor = 0;
     STATE.recovery.active = false;
     STATE.recovery.step = '';
     STATE.recovery.trigger = '';
+    STATE.recovery.lastAttemptTs = 0;
+    STATE.recovery.lastAttemptSig = '';
+    STATE.recovery.lastTriggerHash = '';
+    STATE.recovery.suppressUntilTs = 0;
     STATE.recovery.verifyUntilTs = 0;
     STATE.recovery.verifyStartCt = NaN;
     STATE.recovery.verifyTarget = NaN;
@@ -815,6 +880,7 @@
     var ts = nowMs();
     var ct = NaN;
     var dur = NaN;
+    var ctDelta = 0;
     var paused = false;
     var rs = 0;
     var ns = 0;
@@ -827,6 +893,9 @@
       ns = toInt(v.networkState, 0);
       updateFrameState(v);
     }
+
+    var prevCt = toNum(STATE.media.lastCt, NaN);
+    if (isFinite(ct) && isFinite(prevCt)) ctDelta = ct - prevCt;
 
     STATE.media.ct = ct;
     STATE.media.dur = dur;
@@ -877,6 +946,7 @@
     return {
       ts: ts,
       ct: ct,
+      ctDelta: ctDelta,
       dur: dur,
       paused: paused,
       readyState: rs,
@@ -991,7 +1061,7 @@
 
   function fakeEndJumpDetected(snapshot) {
     if (!STATE.cfg.falseEndEnabled) return false;
-    if (userSeekWindowActive()) return false;
+    if (userSeekWindowActive() || userSeekCommitActive()) return false;
     if (!snapshot || !isFinite(toNum(snapshot.ct, NaN)) || !isFinite(toNum(snapshot.dur, NaN))) return false;
 
     var tailSec = Math.max(0.5, toNum(STATE.cfg.tailSec, 3.0));
@@ -1024,6 +1094,30 @@
     };
   }
 
+  function triggerSignature(snapshot, trigger) {
+    snapshot = snapshot || {};
+    var ctAgeB = Math.floor(ageMs(STATE.media.lastCtTs) / 500);
+    var tuAgeB = Math.floor(toInt(snapshot.timeupdateAgeMs, 0) / 500);
+    var frAgeB = Math.floor(toInt(snapshot.frameStuckMs, 0) / 500);
+    var covB = Math.floor(Math.max(0, Math.min(1, toNum(snapshot.bufferCoverage, 0))) * 10);
+    var aheadB = Math.floor(Math.max(0, toNum(snapshot.aheadSec, 0)));
+    var raw = [
+      String(trigger || 'stall'),
+      String(STATE.media.contentKeyShort || STATE.media.contentKey || '-'),
+      snapshot.paused ? '1' : '0',
+      String(ctAgeB),
+      String(tuAgeB),
+      String(frAgeB),
+      String(covB),
+      String(aheadB)
+    ].join('|');
+    return shortKey(raw);
+  }
+
+  function recoveryBaseCooldownMs() {
+    return clampInt(toInt(STATE.cfg.recoverCooldownMs, 2500), 250, 20000);
+  }
+
   function shouldRunRecovery() {
     if (!STATE.enabled) return false;
     if (STATE.recovery.active) return false;
@@ -1037,14 +1131,25 @@
     var dur = toNum(snapshot.dur, NaN);
     var good = toNum(STATE.media.lastGoodCt, NaN);
     var cur = toNum(snapshot.ct, NaN);
+    var nowT = nowMs();
+    var prefer = toNum(STATE.user.lastUserSeekCt, NaN);
+    var seekCommitActive = nowT < toInt(STATE.user.userSeekCommitUntilTs, 0);
 
     var t = NaN;
     if (isFinite(good) && good >= 0) t = Math.max(0, good + 0.08);
     else if (isFinite(cur) && cur >= 0) t = Math.max(0, cur);
     else t = 0;
 
+    if (seekCommitActive && isFinite(prefer)) {
+      t = Math.max(t, prefer);
+    }
+
     if (isFinite(dur) && dur > 2) {
       t = Math.min(t, Math.max(0, dur - 2));
+    }
+
+    if (seekCommitActive && isFinite(prefer)) {
+      t = Math.max(t, Math.max(0, prefer - 2.0));
     }
 
     return Math.max(0, t);
@@ -1201,28 +1306,40 @@
   }
 
   function recoveryFinish(ok, reason) {
+    var nowT = nowMs();
+    var baseCooldownMs = recoveryBaseCooldownMs();
+
     STATE.recovery.active = false;
     STATE.recovery.step = '';
     STATE.recovery.verifyUntilTs = 0;
-    STATE.recovery.nextAllowedTs = nowMs() + toInt(STATE.cfg.recoverCooldownMs, 2500);
+    STATE.recovery.lastAttemptTs = nowT;
+    STATE.recovery.lastTriggerHash = String(STATE.recovery.lastAttemptSig || '');
 
     if (ok) {
       STATE.recovery.failCounter = 0;
+      STATE.recovery.backoffFactor = 0;
+      STATE.recovery.suppressUntilTs = nowT + 500;
+      STATE.recovery.nextAllowedTs = nowT + Math.min(baseCooldownMs, 500);
       STATE.recovery.lastErr = '';
-      STATE.recovery.lastOkTs = nowMs();
+      STATE.recovery.lastOkTs = nowT;
       setStage(ST.TRACKING, 'recover_ok:' + String(reason || 'ok'));
       log('OK', 'recover_ok', { reason: String(reason || '') });
       return true;
     }
 
     STATE.recovery.failCounter = toInt(STATE.recovery.failCounter, 0) + 1;
+    STATE.recovery.backoffFactor = clampInt(toInt(STATE.recovery.backoffFactor, 0) + 1, 1, 6);
+    STATE.recovery.suppressUntilTs = nowT + Math.min(2000, baseCooldownMs);
+    STATE.recovery.nextAllowedTs = nowT + Math.min(20000, baseCooldownMs * (1 + toInt(STATE.recovery.backoffFactor, 1)));
     STATE.recovery.lastErr = String(reason || 'recover_fail');
-    STATE.recovery.lastFailTs = nowMs();
+    STATE.recovery.lastFailTs = nowT;
     setStage(ST.FAILED, STATE.recovery.lastErr);
     armBlockNext(Math.max(toInt(STATE.cfg.blockNextMs, 6000), 4000), 'recover_fail');
     log('WRN', 'recover_fail', {
       reason: STATE.recovery.lastErr,
-      failCounter: toInt(STATE.recovery.failCounter, 0)
+      failCounter: toInt(STATE.recovery.failCounter, 0),
+      backoffFactor: toInt(STATE.recovery.backoffFactor, 0),
+      nextAllowedLeftMs: Math.max(0, toInt(STATE.recovery.nextAllowedTs, 0) - nowT)
     });
     return false;
   }
@@ -1253,13 +1370,28 @@
   }
 
   function startRecovery(trigger, snapshot) {
+    trigger = String(trigger || 'stall');
+    snapshot = snapshot || collectSnapshot();
+
+    if (toNum(snapshot.ctDelta, 0) > 0 && toInt(snapshot.timeupdateAgeMs, 999999) < Math.max(120, Math.floor(toInt(STATE.cfg.stallSoftMs, 900) / 2))) {
+      setStage(ST.TRACKING, 'flow_restored');
+      return false;
+    }
+
+    var nowT = nowMs();
+    var sig = triggerSignature(snapshot, trigger);
+    if (sig && sig === String(STATE.recovery.lastTriggerHash || '') && nowT < toInt(STATE.recovery.suppressUntilTs, 0)) {
+      setStage(ST.STALL, trigger + ':suppressed');
+      return false;
+    }
+
     if (!shouldRunRecovery()) return false;
 
-    trigger = String(trigger || 'stall');
     STATE.recovery.active = true;
     STATE.recovery.token = toInt(STATE.recovery.token, 0) + 1;
     STATE.recovery.trigger = trigger;
     STATE.recovery.step = 'start';
+    STATE.recovery.lastAttemptSig = sig;
     STATE.recovery.lastTrigger = trigger;
     STATE.recovery.lastReason = trigger;
     STATE.recovery.lastAction = 'recover_start';
@@ -1304,6 +1436,7 @@
   function handleFalseEndAndRecover(reason, snapshot) {
     if (!STATE.cfg.falseEndEnabled) return false;
     if (!snapshot) return false;
+    if (userSeekWindowActive() || userSeekCommitActive()) return false;
 
     var dur = toNum(snapshot.dur, NaN);
     var good = toNum(STATE.media.lastGoodCt, NaN);
@@ -1467,6 +1600,7 @@
 
     var root = document.createElement('div');
     root.className = 'dg-root dg-hidden';
+    root.style.opacity = String(clampNum(toNum(STATE.cfg.popupOpacity, 0.5), 0.2, 1.0));
 
     var head = document.createElement('div');
     head.className = 'dg-head';
@@ -1524,6 +1658,7 @@
     snapshot = snapshot || collectSnapshot();
     var root = ensurePopup();
     if (!root) return;
+    root.style.opacity = String(clampNum(toNum(STATE.cfg.popupOpacity, 0.5), 0.2, 1.0));
 
     var ctAge = ageMs(STATE.media.lastCtTs);
     var tuAge = toInt(snapshot.timeupdateAgeMs, 0);
@@ -1570,11 +1705,23 @@
     html += '</div>';
 
     html += '<div class="dg-sec"><h4>State</h4>';
+    var nowT = nowMs();
+    var userSeekCt = toNum(STATE.user.lastUserSeekCt, NaN);
+    var userSeekAge = isFinite(userSeekCt) ? ageMs(STATE.user.lastUserSeekTs) : 0;
+    var seekCommitLeft = Math.max(0, toInt(STATE.user.userSeekCommitUntilTs, 0) - nowT);
+    var suppressLeft = Math.max(0, toInt(STATE.recovery.suppressUntilTs, 0) - nowT);
     html += '<div class="dg-mini">paused=' + (STATE.media.paused ? '1' : '0')
       + ' ; userPaused=' + (isUserPaused() ? '1' : '0')
       + ' ; internalPaused=' + (isInternalPaused() ? '1' : '0')
       + ' ; content=' + String(STATE.media.contentKeyShort || '-')
       + ' ; lastGood=' + (isFinite(toNum(STATE.media.lastGoodCt, NaN)) ? toNum(STATE.media.lastGoodCt, 0).toFixed(2) : '-')
+      + ' ; recentCtFloor=' + toNum(STATE.media.recentCtFloor, 0).toFixed(2)
+      + ' ; userSeekCt=' + (isFinite(userSeekCt) ? userSeekCt.toFixed(2) : '-')
+      + ' ; userSeekAgeMs=' + String(clampInt(userSeekAge, 0, 999999))
+      + ' ; seekCommitLeftMs=' + String(clampInt(seekCommitLeft, 0, 999999))
+      + ' ; lastTriggerHash=' + String(STATE.recovery.lastTriggerHash || '-')
+      + ' ; suppressLeftMs=' + String(clampInt(suppressLeft, 0, 999999))
+      + ' ; backoffFactor=' + String(toInt(STATE.recovery.backoffFactor, 0))
       + ' ; failCounter=' + String(toInt(STATE.recovery.failCounter, 0))
       + ' ; hardResets=' + String(toInt(STATE.recovery.hardResetCount, 0))
       + '</div>';
@@ -1741,6 +1888,10 @@
         else if (lower === 'seeking' || lower === 'seeked') {
           markEvent(lower);
           armUserSeekWindow(1200, 'pv_' + lower);
+          if (lower === 'seeked') {
+            var vv = STATE.media.video || getVideo();
+            commitUserSeekPoint(safe(function () { return toNum(vv && vv.currentTime, NaN); }, NaN), 'pv_seeked');
+          }
         }
         else if (lower === 'ended') {
           markEvent('ended');
@@ -1753,11 +1904,12 @@
           if (lower === 'ended') {
             if (shouldAllowRealEnd(s)) {
               // allow true end
-            } else if (STATE.cfg.falseEndEnabled) {
+            } else if (STATE.cfg.falseEndEnabled && shouldBlockNextNow(s)) {
               armBlockNext(STATE.cfg.blockNextMs, 'pv_ended');
-              handleFalseEndAndRecover('pv_ended', s);
-              log('WRN', 'block_pv_ended', { leftMs: blockNextLeftMs(), stage: STATE.stage.name });
-              return;
+              if (handleFalseEndAndRecover('pv_ended', s)) {
+                log('WRN', 'block_pv_ended', { leftMs: blockNextLeftMs(), stage: STATE.stage.name });
+                return;
+              }
             }
           }
           if (shouldBlockNextType(lower) && lower !== 'ended' && shouldBlockNextNow(s)) {
@@ -1860,12 +2012,21 @@
         active: !!STATE.recovery.active,
         step: String(STATE.recovery.step || ''),
         failCounter: toInt(STATE.recovery.failCounter, 0),
+        backoffFactor: toInt(STATE.recovery.backoffFactor, 0),
         hardResetCount: toInt(STATE.recovery.hardResetCount, 0),
         nextAllowedLeftMs: Math.max(0, toInt(STATE.recovery.nextAllowedTs, 0) - nowMs()),
         verifyLeftMs: Math.max(0, toInt(STATE.recovery.verifyUntilTs, 0) - nowMs()),
+        suppressLeftMs: Math.max(0, toInt(STATE.recovery.suppressUntilTs, 0) - nowMs()),
+        lastTriggerHash: String(STATE.recovery.lastTriggerHash || ''),
         lastAction: String(STATE.recovery.lastAction || ''),
         lastErr: String(STATE.recovery.lastErr || ''),
         lastTrigger: String(STATE.recovery.lastTrigger || '')
+      },
+      user: {
+        seekWindowLeftMs: Math.max(0, toInt(STATE.user.userSeekUntilTs, 0) - nowMs()),
+        seekCommitLeftMs: Math.max(0, toInt(STATE.user.userSeekCommitUntilTs, 0) - nowMs()),
+        lastUserSeekCt: toNum(STATE.user.lastUserSeekCt, NaN),
+        lastUserSeekAgeMs: isFinite(toNum(STATE.user.lastUserSeekCt, NaN)) ? ageMs(STATE.user.lastUserSeekTs) : 0
       },
       guard: {
         blockNextLeftMs: blockNextLeftMs(),

@@ -1006,6 +1006,7 @@
       dg_enabled: 1,
       dg_debug_on_open: 0,
       dg_debug_on_fail: 1,
+      dg_popup_opacity: 0.5,
       dg_popup_autoclose_sec: 0,
       dg_block_next_ms: 6000,
       dg_tail_sec: 3.0,
@@ -1039,6 +1040,17 @@
   function buildUiDeltaGuardScreen(ctx) {
     try {
       var d = dgDefaults();
+
+      P(ctx, {
+        id: 'dg_apply',
+        type: 'button',
+        name: 'Apply',
+        desc: 'Применить текущие dg_* настройки сразу.',
+        onChange: function () {
+          refreshDeltaGuardSettings();
+          return false;
+        }
+      });
 
       P(ctx, {
         id: 'dg_open_debug_popup',
@@ -1104,6 +1116,34 @@
       });
 
       P(ctx, {
+        id: 'dg_popup_opacity',
+        type: 'select',
+        values: {
+          '0.2': '0.20',
+          '0.25': '0.25',
+          '0.3': '0.30',
+          '0.35': '0.35',
+          '0.4': '0.40',
+          '0.45': '0.45',
+          '0.5': '0.50',
+          '0.55': '0.55',
+          '0.6': '0.60',
+          '0.65': '0.65',
+          '0.7': '0.70',
+          '0.75': '0.75',
+          '0.8': '0.80',
+          '0.85': '0.85',
+          '0.9': '0.90',
+          '0.95': '0.95',
+          '1.0': '1.00'
+        },
+        default: String(d.dg_popup_opacity != null ? d.dg_popup_opacity : 0.5),
+        name: 'Debug popup opacity',
+        desc: 'Прозрачность popup: 0.20..1.00 (шаг 0.05).',
+        onChange: refreshDeltaGuardSettings
+      });
+
+      P(ctx, {
         id: 'dg_hard_reset_enabled',
         type: 'toggle',
         values: { 0: 'OFF', 1: 'ON' },
@@ -1156,7 +1196,24 @@
       P(ctx, {
         id: 'dg_recover_cooldown_ms',
         type: 'select',
-        values: { '1000': '1000', '1500': '1500', '2000': '2000', '2500': '2500', '3000': '3000', '4000': '4000', '5000': '5000', '7000': '7000' },
+        values: {
+          '250': '250',
+          '500': '500',
+          '750': '750',
+          '1000': '1000',
+          '1500': '1500',
+          '2000': '2000',
+          '2500': '2500',
+          '3000': '3000',
+          '4000': '4000',
+          '5000': '5000',
+          '7000': '7000',
+          '9000': '9000',
+          '12000': '12000',
+          '15000': '15000',
+          '18000': '18000',
+          '20000': '20000'
+        },
         default: String(d.dg_recover_cooldown_ms || 2500),
         name: 'Recover cooldown (ms)',
         desc: 'Минимальный интервал между recovery.',
