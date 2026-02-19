@@ -393,6 +393,20 @@
     } catch (_) { }
   }
 
+  // Compatibility guard: if stale route/cached code still references blmod screen,
+  // keep settings UI alive instead of throwing ReferenceError.
+  function buildBlModScreen(ctx) {
+    try {
+      P(ctx, {
+        id: 'blmod_removed',
+        type: 'static',
+        values: 'removed',
+        name: 'BL-Mod route removed',
+        desc: 'В DG-only сборке отдельный BL-Mod экран отключен.'
+      });
+    } catch (_) { }
+  }
+
   var Screens = {
     action: actionScreen,
     managed: function (ctx) { callMod('ModuleInstaller', 'buildManagedScreen', ctx); },
