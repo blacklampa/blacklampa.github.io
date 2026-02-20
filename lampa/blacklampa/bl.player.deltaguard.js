@@ -26,6 +26,10 @@
     stallSoftMs: LS_PREFIX + 'dg_stall_soft_ms',
     stallHardMs: LS_PREFIX + 'dg_stall_hard_ms',
     recoverCooldownMs: LS_PREFIX + 'dg_recover_cooldown_ms',
+    startGraceMs: LS_PREFIX + 'dg_start_grace_ms',
+    nextMinRemainSec: LS_PREFIX + 'dg_next_min_remain_sec',
+    ctFloorLagSec: LS_PREFIX + 'dg_ct_floor_lag_sec',
+    userActionCooldownMs: LS_PREFIX + 'dg_user_action_cooldown_ms',
     verifyMs: LS_PREFIX + 'dg_verify_ms',
     hardResetEnabled: LS_PREFIX + 'dg_hard_reset_enabled',
     hardResetAfterN: LS_PREFIX + 'dg_hard_reset_after_n'
@@ -46,6 +50,10 @@
     dg_stall_soft_ms: 900,
     dg_stall_hard_ms: 2000,
     dg_recover_cooldown_ms: 2500,
+    dg_start_grace_ms: 18000,
+    dg_next_min_remain_sec: 12.0,
+    dg_ct_floor_lag_sec: 30.0,
+    dg_user_action_cooldown_ms: 1500,
     dg_verify_ms: 1400,
     dg_hard_reset_enabled: 1,
     dg_hard_reset_after_n: 2
@@ -53,6 +61,7 @@
 
   var ST = {
     IDLE: 'IDLE',
+    LOADING: 'LOADING',
     TRACKING: 'TRACKING',
     STALL: 'STALL',
     RECOVERING: 'RECOVERING',
@@ -72,7 +81,9 @@
 
     patched: {
       player: false,
-      playerVideo: false
+      playerVideo: false,
+      playlist: false,
+      playerNext: false
     },
 
     input: {
@@ -92,6 +103,7 @@
       userPausedTs: 0,
       userPauseUntilTs: 0,
       userSeekUntilTs: 0,
+      userActionUntilTs: 0,
       lastUserSeekCt: NaN,
       lastUserSeekTs: 0,
       userSeekCommitUntilTs: 0,
@@ -137,6 +149,7 @@
       lastStalledTs: 0,
       lastEndedTs: 0,
       lastPlayingTs: 0,
+      lastCanplayTs: 0,
       lastPauseTs: 0,
       lastPlayTs: 0,
       lastSeekTs: 0,
@@ -151,6 +164,7 @@
       bufferCount: 0,
       bufferCoverage: 0,
       aheadSec: 0,
+      maxSeenCt: NaN,
 
       srcSig: '',
       contentKey: '',
@@ -159,7 +173,13 @@
       ring: [],
       lastGoodCt: NaN,
       lastGoodTs: 0,
-      recentCtFloor: 0
+      recentCtFloor: 0,
+      startupUntilTs: 0,
+      startupStartCt: NaN,
+      startupSoftTried: 0,
+      startupKickTs: 0,
+      playbackProven: false,
+      playbackProvenTs: 0
     },
 
     recovery: {
@@ -180,6 +200,8 @@
       verifyStartTimeupdateTs: 0,
       verifyStartFrameTs: 0,
       verifyTarget: NaN,
+      sessionId: 0,
+      contentKey: '',
       lastAction: '',
       lastErr: '',
       lastFailTs: 0,
@@ -190,7 +212,12 @@
 
     guard: {
       blockNextUntilTs: 0,
-      blockReason: ''
+      blockReason: '',
+      falseEndSuspectActive: 0,
+      falseEndSuspectTs: 0,
+      falseEndSuspectCt: NaN,
+      falseEndSuspectPrevCt: NaN,
+      falseEndSuspectReason: ''
     },
 
     popup: {
@@ -204,7 +231,9 @@
       closeBtn: null,
       autoCloseTimer: null,
       lastOpenTs: 0,
-      lastEdgeOpenTs: 0
+      lastEdgeOpenTs: 0,
+      lastRenderTs: 0,
+      lastBodyHtml: ''
     }
   };
 
@@ -300,6 +329,10 @@
       dg_stall_soft_ms: DG_DEFAULTS.dg_stall_soft_ms,
       dg_stall_hard_ms: DG_DEFAULTS.dg_stall_hard_ms,
       dg_recover_cooldown_ms: DG_DEFAULTS.dg_recover_cooldown_ms,
+      dg_start_grace_ms: DG_DEFAULTS.dg_start_grace_ms,
+      dg_next_min_remain_sec: DG_DEFAULTS.dg_next_min_remain_sec,
+      dg_ct_floor_lag_sec: DG_DEFAULTS.dg_ct_floor_lag_sec,
+      dg_user_action_cooldown_ms: DG_DEFAULTS.dg_user_action_cooldown_ms,
       dg_verify_ms: DG_DEFAULTS.dg_verify_ms,
       dg_hard_reset_enabled: DG_DEFAULTS.dg_hard_reset_enabled,
       dg_hard_reset_after_n: DG_DEFAULTS.dg_hard_reset_after_n
@@ -323,6 +356,10 @@
       stallSoftMs: clampInt(sGet(K.stallSoftMs, String(d.dg_stall_soft_ms)), 500, 10000),
       stallHardMs: clampInt(sGet(K.stallHardMs, String(d.dg_stall_hard_ms)), 800, 20000),
       recoverCooldownMs: clampInt(sGet(K.recoverCooldownMs, String(d.dg_recover_cooldown_ms)), 250, 20000),
+      startGraceMs: clampInt(sGet(K.startGraceMs, String(d.dg_start_grace_ms)), 5000, 30000),
+      nextMinRemainSec: clampNum(sGet(K.nextMinRemainSec, String(d.dg_next_min_remain_sec)), 1.0, 120.0),
+      ctFloorLagSec: clampNum(sGet(K.ctFloorLagSec, String(d.dg_ct_floor_lag_sec)), 1.0, 120.0),
+      userActionCooldownMs: clampInt(sGet(K.userActionCooldownMs, String(d.dg_user_action_cooldown_ms)), 200, 5000),
       verifyMs: clampInt(sGet(K.verifyMs, String(d.dg_verify_ms)), 500, 10000),
       hardResetEnabled: parseBool(sGet(K.hardResetEnabled, String(d.dg_hard_reset_enabled)), !!d.dg_hard_reset_enabled),
       hardResetAfterN: clampInt(sGet(K.hardResetAfterN, String(d.dg_hard_reset_after_n)), 1, 10)
@@ -478,8 +515,16 @@
       resetRuntimeState('enter:' + reason);
     }
 
+    STATE.media.startupUntilTs = nowT + clampInt(toInt(STATE.cfg.startGraceMs, 18000), 5000, 30000);
+    STATE.media.startupStartCt = NaN;
+    STATE.media.startupSoftTried = 0;
+    STATE.media.startupKickTs = 0;
+    STATE.media.playbackProven = false;
+    STATE.media.playbackProvenTs = 0;
+    clearFalseEndSuspect('enter_session');
+
     startTimer();
-    if (!STATE.recovery.active && STATE.stage.name === ST.IDLE) setStage(ST.TRACKING, 'enter:' + reason);
+    if (!STATE.recovery.active && STATE.stage.name === ST.IDLE) setStage(ST.LOADING, 'enter:' + reason);
     return true;
   }
 
@@ -500,6 +545,11 @@
     var v = STATE.media.video || getVideo();
     if (wasSessionActive && opts.bestEffortStop !== false && v) {
       try { if (typeof v.pause === 'function') v.pause(); } catch (_) { }
+      if (opts.hardStop) {
+        try { if (typeof v.removeAttribute === 'function') v.removeAttribute('src'); } catch (_) { }
+        try { v.src = ''; } catch (_) { }
+        try { if (typeof v.load === 'function') v.load(); } catch (_) { }
+      }
     }
 
     if (wasSessionActive && opts.destroyOnExit) {
@@ -524,6 +574,7 @@
 
     STATE.guard.blockNextUntilTs = 0;
     STATE.guard.blockReason = '';
+    clearFalseEndSuspect('leave_session');
 
     STATE.user.pendingCmd = '';
     STATE.user.pendingTs = 0;
@@ -533,9 +584,11 @@
     STATE.user.userSeekCommitUntilTs = 0;
     STATE.user.lastUserSeekCt = NaN;
     STATE.user.lastUserSeekTs = 0;
+    STATE.user.userActionUntilTs = 0;
 
     setPauseOwner('none', 'leave_session');
     setStage(ST.IDLE, 'leave:' + reason);
+    popupHide('leave_session');
     log('INF', 'session_leave', {
       reason: reason,
       exitMs: exitMs,
@@ -610,6 +663,29 @@
     return ageMs(STATE.input.lastInputTs) <= 600;
   }
 
+  function markUserAction(why) {
+    var ms = clampInt(toInt(STATE.cfg.userActionCooldownMs, 1500), 200, 5000);
+    STATE.user.userActionUntilTs = Math.max(toInt(STATE.user.userActionUntilTs, 0), nowMs() + ms);
+    if (why) log('DBG', 'user_action_cooldown', { why: String(why), ms: ms });
+  }
+
+  function userActionCooldownActive() {
+    return nowMs() < toInt(STATE.user.userActionUntilTs, 0);
+  }
+
+  function isExplicitUserNextIntent(rawType, payload) {
+    var t = String(rawType || '').toLowerCase();
+    if (!t) return false;
+    if (t.indexOf('controller.next') >= 0 || t.indexOf('controller.select') >= 0) return true;
+    if (payload && typeof payload === 'object') {
+      try {
+        if (payload.user === true || payload.by_user === true || payload.byUser === true) return true;
+      } catch (_) { }
+    }
+    if (isUserIntent(t) && (t.indexOf('next') >= 0 || t.indexOf('select') >= 0)) return true;
+    return false;
+  }
+
   function userSeekWindowActive() {
     return nowMs() < toInt(STATE.user.userSeekUntilTs, 0);
   }
@@ -653,11 +729,23 @@
     STATE.user.lastUserSeekTs = nowT;
     STATE.user.userSeekCommitUntilTs = Math.max(toInt(STATE.user.userSeekCommitUntilTs, 0), nowT + 4000);
 
-    STATE.media.recentCtFloor = Math.max(toNum(STATE.media.recentCtFloor, 0), Math.max(0, ct - 1.0));
-    if (!isFinite(toNum(STATE.media.lastGoodCt, NaN))) STATE.media.lastGoodCt = ct;
-    else STATE.media.lastGoodCt = Math.max(toNum(STATE.media.lastGoodCt, 0), ct);
-    STATE.media.lastGoodCt = Math.max(toNum(STATE.media.lastGoodCt, 0), toNum(STATE.media.recentCtFloor, 0));
+    STATE.media.lastGoodCt = ct;
     STATE.media.lastGoodTs = nowT;
+    STATE.media.recentCtFloor = Math.max(0, ct - 1.0);
+    STATE.media.lastCt = ct;
+    STATE.media.lastCtTs = nowT;
+
+    clearFalseEndSuspect('user_seek_commit');
+
+    STATE.recovery.lastReason = '';
+    STATE.recovery.lastTrigger = '';
+    STATE.recovery.suppressUntilTs = 0;
+    if (STATE.recovery.active) {
+      STATE.recovery.active = false;
+      STATE.recovery.token = toInt(STATE.recovery.token, 0) + 1;
+    }
+    STATE.recovery.step = '';
+    STATE.recovery.verifyUntilTs = 0;
 
     if (why) {
       log('DBG', 'user_seek_commit', {
@@ -693,12 +781,21 @@
   }
 
   function handleUserCommand(rawType, payload) {
+    rawType = String(rawType || '').toLowerCase();
     var norm = normalizeCommand(rawType);
     if (!norm) return;
     if (isMediaEventType(rawType)) return;
 
-    var intent = isUserIntent(rawType);
+    var payloadUser = false;
+    if (payload && typeof payload === 'object') {
+      try { payloadUser = (payload.user === true || payload.by_user === true || payload.byUser === true); } catch (_) { payloadUser = false; }
+    }
+    var rawIsController = rawType.indexOf('controller.') === 0;
+    if (!rawIsController && !payloadUser && (norm === 'pause' || norm === 'play' || norm === 'seek' || norm === 'toggle')) return;
+
+    var intent = rawIsController || payloadUser || isUserIntent(rawType);
     if (!intent) return;
+    if (!STATE.life.sessionActive && (norm === 'pause' || norm === 'play' || norm === 'seek' || norm === 'toggle')) return;
 
     if (norm === 'toggle') {
       norm = (STATE.media.paused || toInt(STATE.user.userPausedLatched, 0) === 1) ? 'play' : 'pause';
@@ -709,6 +806,7 @@
       STATE.user.pendingTs = nowMs();
       STATE.user.lastCmdNorm = norm;
       STATE.user.lastCmdTs = nowMs();
+      markUserAction('cmd_' + norm);
     }
 
     if (norm === 'pause') {
@@ -724,7 +822,7 @@
     } else if (norm === 'exit') {
       armUserSeekWindow(1500, 'cmd_exit');
       setUserPausedLatched(false, 'cmd_exit');
-      leaveSession('user_exit', { destroyOnExit: true, bestEffortStop: true, exitMs: 3600 });
+      if (STATE.life.sessionActive) leaveSession('user_exit', { destroyOnExit: true, bestEffortStop: true, hardStop: true, exitMs: 3600 });
     }
 
     if (payload && typeof payload === 'object') {
@@ -794,6 +892,7 @@
     else if (name === 'stalled') STATE.media.lastStalledTs = ts;
     else if (name === 'ended') STATE.media.lastEndedTs = ts;
     else if (name === 'playing') STATE.media.lastPlayingTs = ts;
+    else if (name === 'canplay') STATE.media.lastCanplayTs = ts;
     else if (name === 'pause') STATE.media.lastPauseTs = ts;
     else if (name === 'play') STATE.media.lastPlayTs = ts;
     else if (name === 'seeked' || name === 'seeking') STATE.media.lastSeekTs = ts;
@@ -903,6 +1002,7 @@
     add('progress', function () { markEvent('progress'); });
     add('waiting', function () { markEvent('waiting'); });
     add('stalled', function () { markEvent('stalled'); });
+    add('canplay', function () { markEvent('canplay'); });
     add('ended', function () { markEvent('ended'); });
     add('playing', function () {
       markEvent('playing');
@@ -969,12 +1069,20 @@
     STATE.media.lastGoodCt = NaN;
     STATE.media.lastGoodTs = 0;
     STATE.media.recentCtFloor = 0;
+    STATE.media.maxSeenCt = NaN;
+    STATE.media.startupUntilTs = 0;
+    STATE.media.startupStartCt = NaN;
+    STATE.media.startupSoftTried = 0;
+    STATE.media.startupKickTs = 0;
+    STATE.media.playbackProven = false;
+    STATE.media.playbackProvenTs = 0;
 
     STATE.user.lastUserSeekCt = NaN;
     STATE.user.lastUserSeekTs = 0;
     STATE.user.userSeekCommitUntilTs = 0;
     STATE.user.userPausedLatched = 0;
     STATE.user.userPausedTs = 0;
+    STATE.user.userActionUntilTs = 0;
 
     STATE.recovery.active = false;
     STATE.recovery.step = '';
@@ -988,10 +1096,13 @@
     STATE.recovery.verifyUntilTs = 0;
     STATE.recovery.verifyStartCt = NaN;
     STATE.recovery.verifyTarget = NaN;
+    STATE.recovery.sessionId = 0;
+    STATE.recovery.contentKey = '';
     STATE.recovery.lastErr = '';
 
     STATE.guard.blockNextUntilTs = 0;
     STATE.guard.blockReason = '';
+    clearFalseEndSuspect('runtime_reset');
 
     setStage(ST.IDLE, 'reset:' + reason);
     log('INF', 'state_reset', { reason: reason });
@@ -1006,12 +1117,20 @@
     STATE.media.lastGoodCt = NaN;
     STATE.media.lastGoodTs = 0;
     STATE.media.recentCtFloor = 0;
+    STATE.media.maxSeenCt = NaN;
+    STATE.media.startupUntilTs = nowMs() + clampInt(toInt(STATE.cfg.startGraceMs, 18000), 5000, 30000);
+    STATE.media.startupStartCt = NaN;
+    STATE.media.startupSoftTried = 0;
+    STATE.media.startupKickTs = 0;
+    STATE.media.playbackProven = false;
+    STATE.media.playbackProvenTs = 0;
 
     STATE.user.lastUserSeekCt = NaN;
     STATE.user.lastUserSeekTs = 0;
     STATE.user.userSeekCommitUntilTs = 0;
     STATE.user.userPausedLatched = 0;
     STATE.user.userPausedTs = 0;
+    STATE.user.userActionUntilTs = 0;
 
     STATE.recovery.failCounter = 0;
     STATE.recovery.backoffFactor = 0;
@@ -1025,13 +1144,16 @@
     STATE.recovery.verifyUntilTs = 0;
     STATE.recovery.verifyStartCt = NaN;
     STATE.recovery.verifyTarget = NaN;
+    STATE.recovery.sessionId = 0;
+    STATE.recovery.contentKey = '';
     STATE.recovery.lastErr = '';
 
     STATE.guard.blockNextUntilTs = 0;
     STATE.guard.blockReason = '';
+    clearFalseEndSuspect('content_change');
 
     setPauseOwner('none', 'content_change');
-    setStage(ST.TRACKING, 'content_changed:' + String(reason || 'tick'));
+    setStage(ST.LOADING, 'content_changed:' + String(reason || 'tick'));
     log('INF', 'content_changed', { key: STATE.media.contentKeyShort, reason: String(reason || '') });
   }
 
@@ -1055,12 +1177,29 @@
     if (userSeekWindowActive() || isUserPaused()) return;
     if (STATE.recovery.active) return;
 
+    if (!isFinite(toNum(STATE.media.maxSeenCt, NaN))) STATE.media.maxSeenCt = ct;
+    else STATE.media.maxSeenCt = Math.max(toNum(STATE.media.maxSeenCt, 0), ct);
+
+    var tailSec = Math.max(0.5, toNum(STATE.cfg.tailSec, 3.0));
+    var nearTail = ct >= (dur - tailSec);
+    var falseTailJump = dur >= 60
+      && !userSeekWindowActive()
+      && !userSeekCommitActive()
+      && nearTail
+      && dCt >= Math.max(1, toNum(STATE.cfg.falseEndJumpSec, 10.0));
+    if (falseTailJump) {
+      setFalseEndSuspect({ ct: ct }, prev ? toNum(prev.ct, NaN) : NaN, 'tail_jump');
+      return;
+    }
+
+    var suspiciousJump = !userSeekCommitActive() && dCt >= Math.max(6, toNum(STATE.cfg.falseEndJumpSec, 10.0));
+    if (suspiciousJump) return;
+
     if (dCt > 0.03) {
-      STATE.media.recentCtFloor = Math.max(toNum(STATE.media.recentCtFloor, 0), Math.max(0, ct - 30));
-      if (!isFinite(toNum(STATE.media.lastGoodCt, NaN))) STATE.media.lastGoodCt = ct;
-      else STATE.media.lastGoodCt = Math.max(toNum(STATE.media.lastGoodCt, 0), ct);
-      STATE.media.lastGoodCt = Math.max(toNum(STATE.media.lastGoodCt, 0), toNum(STATE.media.recentCtFloor, 0));
+      STATE.media.lastGoodCt = ct;
+      STATE.media.recentCtFloor = Math.max(0, ct - Math.max(1, toNum(STATE.cfg.ctFloorLagSec, 30.0)));
       STATE.media.lastGoodTs = ts;
+      clearFalseEndSuspect('flow_progress');
     }
   }
 
@@ -1077,7 +1216,7 @@
       if (v || STATE.life.sessionActive) {
         if (!toInt(STATE.life.hiddenSinceTs, 0)) STATE.life.hiddenSinceTs = ts;
         if (STATE.life.sessionActive && ageMs(STATE.life.hiddenSinceTs) >= sessionHiddenGraceMs()) {
-          leaveSession('video_hidden', { bestEffortStop: false, exitMs: 3200 });
+          leaveSession('video_hidden', { bestEffortStop: true, hardStop: true, exitMs: 3200 });
         }
       } else {
         STATE.life.hiddenSinceTs = 0;
@@ -1119,6 +1258,30 @@
       }
     }
 
+    if (STATE.life.sessionActive && videoUsable) {
+      if (!isFinite(toNum(STATE.media.startupStartCt, NaN)) && isFinite(ct)) STATE.media.startupStartCt = ct;
+      if (!STATE.media.playbackProven) {
+        var startCt = toNum(STATE.media.startupStartCt, NaN);
+        var ctProgress = isFinite(startCt) && isFinite(ct) && (ct - startCt) >= 0.3;
+        var tuFresh = eventAgeTs(STATE.media.lastTimeupdateTs) <= 900;
+        var playingFresh = eventAgeTs(STATE.media.lastPlayingTs) <= 3000;
+        var canplayFresh = eventAgeTs(STATE.media.lastCanplayTs) <= 3000;
+        var frameFresh = STATE.media.frameSupported && eventAgeTs(STATE.media.frameLastTs) <= 900;
+        if (ctProgress || (tuFresh && (playingFresh || canplayFresh)) || frameFresh) {
+          STATE.media.playbackProven = true;
+          STATE.media.playbackProvenTs = ts;
+          clearFalseEndSuspect('playback_proven');
+          log('INF', 'playback_proven', {
+            ct: toNum(ct, NaN),
+            ctProgress: ctProgress ? 1 : 0,
+            tuFresh: tuFresh ? 1 : 0,
+            canplayFresh: canplayFresh ? 1 : 0,
+            frameFresh: frameFresh ? 1 : 0
+          });
+        }
+      }
+    }
+
     var b = parseBuffered(v, ct, dur);
     STATE.media.bufferStart = b.start;
     STATE.media.bufferEnd = b.end;
@@ -1153,6 +1316,7 @@
 
     var hiddenAge = toInt(STATE.life.hiddenSinceTs, 0) ? ageMs(STATE.life.hiddenSinceTs) : 0;
     var hiddenLeft = Math.max(0, sessionHiddenGraceMs() - hiddenAge);
+    var startupLeft = Math.max(0, toInt(STATE.media.startupUntilTs, 0) - ts);
 
     return {
       ts: ts,
@@ -1161,6 +1325,8 @@
       exitLeftMs: sessionExitLeftMs(),
       hiddenAgeMs: hiddenAge,
       hiddenLeftMs: hiddenLeft,
+      playbackProven: !!STATE.media.playbackProven,
+      startupLeftMs: startupLeft,
       ct: ct,
       ctDelta: ctDelta,
       dur: dur,
@@ -1182,7 +1348,7 @@
 
   function stageBlocksNext() {
     var n = String(STATE.stage.name || '');
-    return n === ST.STALL || n === ST.RECOVERING || n === ST.VERIFYING;
+    return n === ST.LOADING || n === ST.STALL || n === ST.RECOVERING || n === ST.VERIFYING;
   }
 
   function blockNextLeftMs() {
@@ -1194,6 +1360,39 @@
     var until = nowMs() + ms;
     if (until > toInt(STATE.guard.blockNextUntilTs, 0)) STATE.guard.blockNextUntilTs = until;
     STATE.guard.blockReason = String(reason || 'guard');
+  }
+
+  function clearFalseEndSuspect(why) {
+    STATE.guard.falseEndSuspectActive = 0;
+    STATE.guard.falseEndSuspectTs = 0;
+    STATE.guard.falseEndSuspectCt = NaN;
+    STATE.guard.falseEndSuspectPrevCt = NaN;
+    STATE.guard.falseEndSuspectReason = '';
+    if (why) log('DBG', 'false_end_suspect_clear', { why: String(why) });
+  }
+
+  function setFalseEndSuspect(snapshot, prevCt, why) {
+    snapshot = snapshot || {};
+    STATE.guard.falseEndSuspectActive = 1;
+    STATE.guard.falseEndSuspectTs = nowMs();
+    STATE.guard.falseEndSuspectCt = toNum(snapshot.ct, NaN);
+    STATE.guard.falseEndSuspectPrevCt = toNum(prevCt, NaN);
+    STATE.guard.falseEndSuspectReason = String(why || 'false_end_jump');
+    armBlockNext(Math.max(toInt(STATE.cfg.blockNextMs, 6000), 4000), 'false_end_suspect');
+    log('WRN', 'false_end_suspect', {
+      reason: STATE.guard.falseEndSuspectReason,
+      ct: toNum(STATE.guard.falseEndSuspectCt, NaN),
+      prevCt: toNum(STATE.guard.falseEndSuspectPrevCt, NaN)
+    });
+  }
+
+  function falseEndSuspectActive() {
+    if (!toInt(STATE.guard.falseEndSuspectActive, 0)) return false;
+    if (ageMs(STATE.guard.falseEndSuspectTs) > Math.max(2000, toInt(STATE.cfg.blockNextMs, 6000))) {
+      clearFalseEndSuspect('expired');
+      return false;
+    }
+    return true;
   }
 
   function setStage(stage, reason) {
@@ -1244,6 +1443,7 @@
   function shouldAllowRealEnd(snapshot) {
     if (!snapshot) return false;
     if (!sessionOperational()) return false;
+    if (falseEndSuspectActive()) return false;
     if (stageBlocksNext() || STATE.recovery.active) return false;
     if (!isFinite(toNum(snapshot.ct, NaN)) || !isFinite(toNum(snapshot.dur, NaN))) return false;
     if (toNum(snapshot.ct, 0) < (toNum(snapshot.dur, 0) - 2.6)) return false;
@@ -1282,12 +1482,9 @@
     if (!snapshot || !isFinite(toNum(snapshot.ct, NaN)) || !isFinite(toNum(snapshot.dur, NaN))) return false;
 
     var tailSec = Math.max(0.5, toNum(STATE.cfg.tailSec, 3.0));
+    if (toNum(snapshot.dur, 0) < 60) return false;
     if (toNum(snapshot.ct, 0) < (toNum(snapshot.dur, 0) - tailSec)) return false;
-
-    var good = toNum(STATE.media.lastGoodCt, NaN);
-    if (!isFinite(good)) return false;
-
-    var jump = (toNum(snapshot.dur, 0) - tailSec) - good;
+    var jump = Math.max(0, toNum(snapshot.ctDelta, 0));
     return jump >= Math.max(1, toNum(STATE.cfg.falseEndJumpSec, 10.0));
   }
 
@@ -1335,10 +1532,18 @@
     return clampInt(toInt(STATE.cfg.recoverCooldownMs, 2500), 250, 20000);
   }
 
+  function recoveryInvariantOk(token) {
+    if (token !== toInt(STATE.recovery.token, 0)) return false;
+    if (toInt(STATE.recovery.sessionId, 0) !== toInt(STATE.life.sessionId, 0)) return false;
+    if (String(STATE.recovery.contentKey || '') !== String(STATE.media.contentKey || '')) return false;
+    return true;
+  }
+
   function shouldRunRecovery() {
     if (!sessionOperational()) return false;
     if (STATE.recovery.active) return false;
     if (toInt(STATE.user.userPausedLatched, 0) === 1) return false;
+    if (userActionCooldownActive()) return false;
     if (isUserPaused()) return false;
     if (nowMs() < toInt(STATE.recovery.nextAllowedTs, 0)) return false;
     return true;
@@ -1409,7 +1614,7 @@
     setStage(ST.VERIFYING, 'verify');
 
     while (nowMs() < toInt(STATE.recovery.verifyUntilTs, 0)) {
-      if (token !== toInt(STATE.recovery.token, 0)) return { ok: false, err: 'token_changed' };
+      if (!recoveryInvariantOk(token)) return { ok: false, err: 'token_changed' };
       if (!sessionOperational()) return { ok: false, err: 'session_inactive' };
       var s = collectSnapshot();
       if (isUserPaused()) return { ok: false, err: 'user_paused' };
@@ -1425,6 +1630,16 @@
         return { ok: true, err: '' };
       }
 
+      if (!userSeekWindowActive()
+        && !userSeekCommitActive()
+        && isFinite(curCt)
+        && curCt <= 0.2
+        && toNum(expectedSec, 0) >= 5
+        && String(STATE.recovery.contentKey || '') === String(STATE.media.contentKey || '')) {
+        STATE.recovery.verifyUntilTs = 0;
+        return { ok: false, err: 'ct_reset_anomaly' };
+      }
+
       await waitMs(120);
     }
 
@@ -1434,6 +1649,7 @@
 
   async function stepWakeup(token) {
     if (!sessionOperational()) return { ok: false, err: 'session_inactive' };
+    if (!recoveryInvariantOk(token)) return { ok: false, err: 'session_changed' };
     if (toInt(STATE.user.userPausedLatched, 0) === 1) return { ok: false, err: 'user_paused_latched' };
     if (!isInternalPaused()) return { ok: false, err: 'not_internal_paused' };
     var v = STATE.media.video || getVideo();
@@ -1455,6 +1671,7 @@
 
   async function stepSeekVerify(token, trg) {
     if (!sessionOperational()) return { ok: false, err: 'session_inactive' };
+    if (!recoveryInvariantOk(token)) return { ok: false, err: 'session_changed' };
     var v = STATE.media.video || getVideo();
     if (!v) return { ok: false, err: 'no_video' };
 
@@ -1467,7 +1684,7 @@
     var started = nowMs();
     maxMs = clampInt(maxMs || 3000, 300, 10000);
     while ((nowMs() - started) <= maxMs) {
-      if (token !== toInt(STATE.recovery.token, 0)) return null;
+      if (!recoveryInvariantOk(token)) return null;
       var v = getVideo();
       if (v) return v;
       await waitMs(120);
@@ -1485,7 +1702,7 @@
 
     STATE.recovery.step = 'inplayer_rebuild';
     STATE.recovery.lastAction = 'inplayer_rebuild';
-    if (token !== toInt(STATE.recovery.token, 0) || !sessionOperational()) return { ok: false, err: 'session_changed' };
+    if (!recoveryInvariantOk(token) || !sessionOperational()) return { ok: false, err: 'session_changed' };
 
     try {
       if (typeof pv.destroy === 'function') {
@@ -1513,7 +1730,7 @@
 
     STATE.recovery.step = 'hard_reset';
     STATE.recovery.lastAction = 'hard_reset';
-    if (token !== toInt(STATE.recovery.token, 0) || !sessionOperational()) return { ok: false, err: 'session_changed' };
+    if (!recoveryInvariantOk(token) || !sessionOperational()) return { ok: false, err: 'session_changed' };
 
     try {
       if (typeof pv.destroy === 'function') {
@@ -1558,6 +1775,7 @@
       STATE.recovery.nextAllowedTs = nowT + Math.min(baseCooldownMs, 500);
       STATE.recovery.lastErr = '';
       STATE.recovery.lastOkTs = nowT;
+      clearFalseEndSuspect('recover_ok');
       setStage(ST.TRACKING, 'recover_ok:' + String(reason || 'ok'));
       log('OK', 'recover_ok', { reason: String(reason || '') });
       return true;
@@ -1584,18 +1802,19 @@
     var token = toInt(STATE.recovery.token, 0);
     var trg = targetSec(snapshot);
     if (!sessionOperational()) return recoveryFinish(false, 'session_inactive');
+    if (!recoveryInvariantOk(token)) return recoveryFinish(false, 'session_changed');
 
     var step = await stepWakeup(token);
     if (step.ok) return recoveryFinish(true, 'wakeup');
-    if (!sessionOperational()) return recoveryFinish(false, step.err || 'session_inactive');
+    if (!sessionOperational() || !recoveryInvariantOk(token)) return recoveryFinish(false, step.err || 'session_inactive');
 
     step = await stepSeekVerify(token, trg);
     if (step.ok) return recoveryFinish(true, 'seek_verify');
-    if (!sessionOperational()) return recoveryFinish(false, step.err || 'session_inactive');
+    if (!sessionOperational() || !recoveryInvariantOk(token)) return recoveryFinish(false, step.err || 'session_inactive');
 
     step = await stepInplayerRebuild(token, trg);
     if (step.ok) return recoveryFinish(true, 'inplayer_rebuild');
-    if (!sessionOperational()) return recoveryFinish(false, step.err || 'session_inactive');
+    if (!sessionOperational() || !recoveryInvariantOk(token)) return recoveryFinish(false, step.err || 'session_inactive');
 
     var shouldHard = STATE.cfg.hardResetEnabled
       && (toInt(STATE.recovery.failCounter, 0) + 1) >= toInt(STATE.cfg.hardResetAfterN, 2);
@@ -1621,6 +1840,10 @@
       setStage(ST.SUSPENDED, 'recover_blocked_user_pause');
       return false;
     }
+    if (userSeekWindowActive() || userSeekCommitActive()) {
+      setStage(ST.SUSPENDED, 'recover_blocked_user_seek');
+      return false;
+    }
 
     if (toNum(snapshot.ctDelta, 0) > 0 && toInt(snapshot.timeupdateAgeMs, 999999) < Math.max(120, Math.floor(toInt(STATE.cfg.stallSoftMs, 900) / 2))) {
       setStage(ST.TRACKING, 'flow_restored');
@@ -1644,6 +1867,8 @@
     STATE.recovery.lastTrigger = trigger;
     STATE.recovery.lastReason = trigger;
     STATE.recovery.lastAction = 'recover_start';
+    STATE.recovery.sessionId = toInt(STATE.life.sessionId, 0);
+    STATE.recovery.contentKey = String(STATE.media.contentKey || '');
 
     setStage(ST.RECOVERING, trigger);
     armBlockNext(Math.max(toInt(STATE.cfg.blockNextMs, 6000), toInt(STATE.cfg.stallHardMs, 2000) * 2), trigger);
@@ -1671,19 +1896,34 @@
     return false;
   }
 
-  function shouldBlockNextNow(snapshot) {
+  function falseNextFarFromEnd(snapshot, rawType, payload) {
+    if (!snapshot) return false;
+    var t = String(rawType || '').toLowerCase();
+    if (!shouldBlockNextType(t)) return false;
+    var dur = toNum(snapshot.dur, NaN);
+    var ct = toNum(snapshot.ct, NaN);
+    if (!isFinite(dur) || !isFinite(ct)) return false;
+    var remain = Math.max(0, dur - ct);
+    if (remain <= Math.max(1, toNum(STATE.cfg.nextMinRemainSec, 12.0))) return false;
+    if (isExplicitUserNextIntent(t, payload)) return false;
+    return true;
+  }
+
+  function shouldBlockNextNow(snapshot, rawType, payload) {
     if (!sessionOperational()) return false;
     if (stageBlocksNext()) return true;
     if (blockNextLeftMs() > 0) return true;
+    if (falseEndSuspectActive()) return true;
 
     if (!snapshot) return false;
+    if (falseNextFarFromEnd(snapshot, rawType, payload)) return true;
+
     if (fakeEndJumpDetected(snapshot)) return true;
 
     return false;
   }
 
   function handleFalseEndAndRecover(reason, snapshot) {
-    if (!STATE.cfg.falseEndEnabled) return false;
     if (!snapshot) return false;
     if (!sessionOperational()) return false;
     if (userSeekWindowActive() || userSeekCommitActive()) return false;
@@ -1745,8 +1985,40 @@
       return;
     }
 
+    if (userActionCooldownActive()) {
+      setStage(ST.SUSPENDED, 'user_action_cooldown');
+      return;
+    }
+
     if (userSeekWindowActive() || userSeekCommitActive()) {
       setStage(ST.SUSPENDED, 'user_seek');
+      return;
+    }
+
+    if (!snapshot.playbackProven) {
+      if (toInt(snapshot.startupLeftMs, 0) > 0) {
+        setStage(ST.LOADING, 'startup_grace');
+        return;
+      }
+      if (!toInt(STATE.media.startupSoftTried, 0)) {
+        STATE.media.startupSoftTried = 1;
+        STATE.media.startupKickTs = nowMs();
+        var kickV = STATE.media.video || getVideo();
+        try {
+          if (kickV && typeof kickV.play === 'function' && !toInt(STATE.user.userPausedLatched, 0)) {
+            var kp = kickV.play();
+            if (kp && typeof kp.catch === 'function') kp.catch(function () { });
+          }
+        } catch (_) { }
+        setStage(ST.LOADING, 'startup_soft_kick');
+        return;
+      }
+      if (ageMs(STATE.media.startupKickTs) <= 1500) {
+        setStage(ST.LOADING, 'startup_wait');
+        return;
+      }
+      setStage(ST.STALL, 'startup_unproven');
+      startRecovery('startup_unproven', snapshot);
       return;
     }
 
@@ -1757,6 +2029,12 @@
 
     if (STATE.recovery.active) {
       if (STATE.stage.name !== ST.VERIFYING) setStage(ST.RECOVERING, STATE.recovery.trigger || 'recovering');
+      return;
+    }
+
+    if (falseEndSuspectActive()) {
+      setStage(ST.STALL, 'false_end_suspect');
+      handleFalseEndAndRecover('false_end_suspect', snapshot);
       return;
     }
 
@@ -1921,13 +2199,17 @@
   function stageBadgeClass(name) {
     name = String(name || '');
     if (name === ST.TRACKING) return 'ok';
+    if (name === ST.LOADING) return 'warn';
     if (name === ST.RECOVERING || name === ST.VERIFYING || name === ST.STALL) return 'warn';
     if (name === ST.FAILED) return 'err';
     return '';
   }
 
-  function popupRender(snapshot) {
+  function popupRender(snapshot, force) {
     if (!STATE.popup.open) return;
+    var nowT = nowMs();
+    if (!force && (nowT - toInt(STATE.popup.lastRenderTs, 0)) < 250) return;
+    STATE.popup.lastRenderTs = nowT;
 
     snapshot = snapshot || collectSnapshot();
     var root = ensurePopup();
@@ -1984,6 +2266,8 @@
     var userSeekAge = isFinite(userSeekCt) ? ageMs(STATE.user.lastUserSeekTs) : 0;
     var seekCommitLeft = Math.max(0, toInt(STATE.user.userSeekCommitUntilTs, 0) - nowT);
     var suppressLeft = Math.max(0, toInt(STATE.recovery.suppressUntilTs, 0) - nowT);
+    var userActLeft = Math.max(0, toInt(STATE.user.userActionUntilTs, 0) - nowT);
+    var startupLeft = Math.max(0, toInt(snapshot.startupLeftMs, 0));
     var exitLeft = sessionExitLeftMs();
     var hiddenAge = toInt(snapshot.hiddenAgeMs, 0);
     var hiddenLeft = toInt(snapshot.hiddenLeftMs, 0);
@@ -1997,6 +2281,10 @@
       + ' ; videoUsable=' + (snapshot.videoUsable ? '1' : '0')
       + ' ; hiddenAgeMs=' + String(clampInt(hiddenAge, 0, 999999))
       + ' ; hiddenLeftMs=' + String(clampInt(hiddenLeft, 0, 999999))
+      + ' ; startupLeftMs=' + String(clampInt(startupLeft, 0, 999999))
+      + ' ; playbackProven=' + (snapshot.playbackProven ? '1' : '0')
+      + ' ; userActionLeftMs=' + String(clampInt(userActLeft, 0, 999999))
+      + ' ; falseEndSuspect=' + String(toInt(STATE.guard.falseEndSuspectActive, 0))
       + ' ; content=' + String(STATE.media.contentKeyShort || '-')
       + ' ; lastGood=' + (isFinite(toNum(STATE.media.lastGoodCt, NaN)) ? toNum(STATE.media.lastGoodCt, 0).toFixed(2) : '-')
       + ' ; recentCtFloor=' + toNum(STATE.media.recentCtFloor, 0).toFixed(2)
@@ -2011,7 +2299,10 @@
       + '</div>';
     html += '</div>';
 
-    if (STATE.popup.body) STATE.popup.body.innerHTML = html;
+    if (STATE.popup.body && String(STATE.popup.lastBodyHtml || '') !== String(html)) {
+      STATE.popup.body.innerHTML = html;
+      STATE.popup.lastBodyHtml = html;
+    }
     root.classList.remove('dg-hidden');
 
     if (toInt(STATE.cfg.popupAutocloseSec, 0) > 0) {
@@ -2028,8 +2319,10 @@
   function popupOpen(reason) {
     ensurePopup();
     STATE.popup.open = true;
+    STATE.popup.lastRenderTs = 0;
+    STATE.popup.lastBodyHtml = '';
     STATE.popup.lastOpenTs = nowMs();
-    popupRender();
+    popupRender(null, true);
     log('INF', 'popup_open', { reason: String(reason || '') });
   }
 
@@ -2046,6 +2339,8 @@
       STATE.popup.autoCloseTimer = null;
     }
     STATE.popup.open = false;
+    STATE.popup.lastBodyHtml = '';
+    STATE.popup.lastRenderTs = 0;
     try { if (STATE.popup.root) STATE.popup.root.classList.add('dg-hidden'); } catch (_) { }
     log('DBG', 'popup_hide', { reason: String(reason || '') });
   }
@@ -2055,7 +2350,7 @@
       if (!STATE.enabled) return;
       var s = collectSnapshot();
       dgDecisionTick(s);
-      if (STATE.popup.open) popupRender(s);
+      if (STATE.popup.open) popupRender(s, false);
     } catch (e) {
       log('ERR', 'tick_exception', { err: e && e.message ? String(e.message) : String(e) });
     }
@@ -2113,7 +2408,7 @@
       try { handleUserCommand(lower, payload); } catch (_) { }
       try {
         if (lower === 'start') enterSession('player_start', { force: true });
-        else if (norm === 'exit') leaveSession('user_exit', { destroyOnExit: true, bestEffortStop: true, exitMs: 3600 });
+        else if (norm === 'exit' && STATE.life.sessionActive) leaveSession('user_exit', { destroyOnExit: true, bestEffortStop: true, hardStop: true, exitMs: 3600 });
       } catch (_) { }
 
       if (shouldInterceptNow()) {
@@ -2128,9 +2423,10 @@
           if (shouldBlockNextType(lower)) {
             if (lower === 'ended' && shouldAllowRealEnd(s)) {
               // real ending path
-            } else if (shouldBlockNextNow(s)) {
+            } else if (shouldBlockNextNow(s, lower, payload)) {
+              var blockReason = falseNextFarFromEnd(s, lower, payload) ? 'false_next_far_from_end' : ('send:' + lower);
               armBlockNext(STATE.cfg.blockNextMs, 'send:' + lower);
-              handleFalseEndAndRecover('send:' + lower, s);
+              handleFalseEndAndRecover(blockReason, s);
               log('WRN', 'block_next_send', { type: lower, stage: STATE.stage.name, leftMs: blockNextLeftMs() });
               return;
             }
@@ -2163,14 +2459,16 @@
       var lower = String(type || '').toLowerCase();
       var norm = normalizeCommand(lower);
 
-      try { handleUserCommand(lower, payload); } catch (_) { }
+      if (lower.indexOf('controller.') === 0) {
+        try { handleUserCommand(lower, payload); } catch (_) { }
+      }
 
       try {
         if (!STATE.life.sessionActive && (lower === 'play' || lower === 'playing' || lower === 'timeupdate' || lower === 'progress')) {
           var autoV = getVideo();
           if (isVideoUsable(autoV)) enterSession('pv_' + lower);
-        } else if (norm === 'exit') {
-          leaveSession('user_exit', { destroyOnExit: true, bestEffortStop: true, exitMs: 3600 });
+        } else if (norm === 'exit' && STATE.life.sessionActive) {
+          leaveSession('user_exit', { destroyOnExit: true, bestEffortStop: true, hardStop: true, exitMs: 3600 });
         }
       } catch (_) { }
 
@@ -2211,17 +2509,19 @@
           if (lower === 'ended') {
             if (shouldAllowRealEnd(s)) {
               // allow true end
-            } else if (STATE.cfg.falseEndEnabled && shouldBlockNextNow(s)) {
+            } else if (shouldBlockNextNow(s, lower, payload)) {
+              var pvBlockReason = falseNextFarFromEnd(s, lower, payload) ? 'false_next_far_from_end' : 'pv_ended';
               armBlockNext(STATE.cfg.blockNextMs, 'pv_ended');
-              if (handleFalseEndAndRecover('pv_ended', s)) {
+              if (handleFalseEndAndRecover(pvBlockReason, s)) {
                 log('WRN', 'block_pv_ended', { leftMs: blockNextLeftMs(), stage: STATE.stage.name });
                 return;
               }
             }
           }
-          if (shouldBlockNextType(lower) && lower !== 'ended' && shouldBlockNextNow(s)) {
+          if (shouldBlockNextType(lower) && lower !== 'ended' && shouldBlockNextNow(s, lower, payload)) {
+            var pvReason = falseNextFarFromEnd(s, lower, payload) ? 'false_next_far_from_end' : ('pv:' + lower);
             armBlockNext(STATE.cfg.blockNextMs, 'pv:' + lower);
-            handleFalseEndAndRecover('pv:' + lower, s);
+            handleFalseEndAndRecover(pvReason, s);
             return;
           }
         } catch (_) { }
@@ -2235,9 +2535,82 @@
     return true;
   }
 
+  function patchPlaylistMethods() {
+    if (STATE.patched.playlist) return true;
+    if (!window.Lampa || !Lampa.PlayerPlaylist) return false;
+
+    var pp = Lampa.PlayerPlaylist;
+    var wrapped = false;
+    var methods = ['next', 'select'];
+
+    for (var i = 0; i < methods.length; i++) {
+      (function (name) {
+        var fn = pp && pp[name];
+        if (typeof fn !== 'function') return;
+        if (fn.__blDeltaGuardWrappedV1) { wrapped = true; return; }
+
+        pp[name] = function () {
+          var rawType = 'playlist.' + String(name || '');
+          var payload = (arguments && arguments.length) ? arguments[0] : undefined;
+          if (shouldInterceptNow()) {
+            try {
+              var s = collectSnapshot();
+              if (shouldBlockNextNow(s, rawType, payload)) {
+                var plReason = falseNextFarFromEnd(s, rawType, payload) ? 'false_next_far_from_end' : rawType;
+                armBlockNext(STATE.cfg.blockNextMs, rawType);
+                handleFalseEndAndRecover(plReason, s);
+                log('WRN', 'block_playlist', { method: name, stage: STATE.stage.name, leftMs: blockNextLeftMs() });
+                return;
+              }
+            } catch (_) { }
+          }
+          return fn.apply(this, arguments);
+        };
+        pp[name].__blDeltaGuardWrappedV1 = true;
+        wrapped = true;
+      })(methods[i]);
+    }
+
+    STATE.patched.playlist = wrapped;
+    return wrapped;
+  }
+
+  function patchPlayerNext() {
+    if (STATE.patched.playerNext) return true;
+    if (!window.Lampa || !Lampa.Player || typeof Lampa.Player.next !== 'function') return false;
+
+    var fn = Lampa.Player.next;
+    if (fn.__blDeltaGuardWrappedV1) {
+      STATE.patched.playerNext = true;
+      return true;
+    }
+
+    Lampa.Player.next = function () {
+      var payload = (arguments && arguments.length) ? arguments[0] : undefined;
+      if (shouldInterceptNow()) {
+        try {
+          var s = collectSnapshot();
+          if (shouldBlockNextNow(s, 'player.next', payload)) {
+            var pnReason = falseNextFarFromEnd(s, 'player.next', payload) ? 'false_next_far_from_end' : 'player.next';
+            armBlockNext(STATE.cfg.blockNextMs, 'player.next');
+            handleFalseEndAndRecover(pnReason, s);
+            log('WRN', 'block_player_next', { stage: STATE.stage.name, leftMs: blockNextLeftMs() });
+            return;
+          }
+        } catch (_) { }
+      }
+      return fn.apply(this, arguments);
+    };
+    Lampa.Player.next.__blDeltaGuardWrappedV1 = true;
+    STATE.patched.playerNext = true;
+    return true;
+  }
+
   function patchAll() {
     patchPlayerSend();
     patchPlayerVideoSend();
+    patchPlaylistMethods();
+    patchPlayerNext();
   }
 
   function installStorageWatcher() {
@@ -2268,7 +2641,7 @@
         try {
           if (!document) return;
           if (document.hidden) {
-            leaveSession('document_hidden', { bestEffortStop: true, exitMs: 3200 });
+            leaveSession('document_hidden', { bestEffortStop: true, hardStop: true, exitMs: 3200 });
           } else {
             var v = getVideo();
             if (isVideoUsable(v)) enterSession('document_visible');
@@ -2277,7 +2650,7 @@
       };
 
       var onPageHide = function () {
-        try { leaveSession('pagehide', { bestEffortStop: true, destroyOnExit: true, exitMs: 3600 }); } catch (_) { }
+        try { leaveSession('pagehide', { bestEffortStop: true, hardStop: true, destroyOnExit: true, exitMs: 3600 }); } catch (_) { }
       };
 
       try { if (document && document.addEventListener) document.addEventListener('visibilitychange', onVisibility, true); } catch (_) { }
@@ -2350,6 +2723,8 @@
         exitLeftMs: sessionExitLeftMs(),
         hiddenAgeMs: toInt(s.hiddenAgeMs, 0),
         hiddenLeftMs: toInt(s.hiddenLeftMs, 0),
+        startupLeftMs: toInt(s.startupLeftMs, 0),
+        playbackProven: s.playbackProven ? 1 : 0,
         lastSessionReason: String(STATE.life.lastSessionReason || ''),
         videoUsable: !!s.videoUsable
       },
@@ -2370,6 +2745,7 @@
       user: {
         userPausedLatched: toInt(STATE.user.userPausedLatched, 0),
         pauseOwner: String(STATE.user.pauseOwner || 'none'),
+        userActionLeftMs: Math.max(0, toInt(STATE.user.userActionUntilTs, 0) - nowMs()),
         seekWindowLeftMs: Math.max(0, toInt(STATE.user.userSeekUntilTs, 0) - nowMs()),
         seekCommitLeftMs: Math.max(0, toInt(STATE.user.userSeekCommitUntilTs, 0) - nowMs()),
         lastUserSeekCt: toNum(STATE.user.lastUserSeekCt, NaN),
@@ -2377,7 +2753,8 @@
       },
       guard: {
         blockNextLeftMs: blockNextLeftMs(),
-        blockReason: String(STATE.guard.blockReason || '')
+        blockReason: String(STATE.guard.blockReason || ''),
+        falseEndSuspect: toInt(STATE.guard.falseEndSuspectActive, 0)
       },
       tick: {
         ct: toNum(s.ct, NaN),
@@ -2394,7 +2771,7 @@
 
   API.resetState = function () {
     resetRuntimeState('api_reset');
-    if (STATE.enabled && STATE.life.sessionActive) setStage(ST.TRACKING, 'api_reset');
+    if (STATE.enabled && STATE.life.sessionActive) setStage(ST.LOADING, 'api_reset');
     else setStage(ST.IDLE, 'api_reset_idle');
     return API.getStateSnapshot();
   };

@@ -248,7 +248,7 @@
   }
 
   var TOP = BL.MenuTopology = {
-    root: { id: 'root', children: ['plugins', 'network', 'logs', 'utils', 'danger', 'ui', 'status'] },
+    root: { id: 'root', children: ['plugins', 'network', 'logs', 'utils', 'danger', 'player', 'ui', 'status'] },
 
     plugins: { id: 'plugins', parent: 'root', titleKey: 'menu.root.plugins.title', descKey: 'menu.root.plugins.desc', children: ['managed', 'extras'] },
     managed: { id: 'managed', parent: 'plugins', title: 'Managed', desc: 'Плагины из bl.autoplugin.json → plugins[].', screen: 'managed' },
@@ -277,8 +277,9 @@
     filesystem_scan: { id: 'filesystem_scan', parent: 'utils', title: 'Scanner', descKey: 'menu.root.filescan.desc', screen: 'action', action: function () { try { if (window.BL && BL.FileScanner && BL.FileScanner.open) BL.FileScanner.open(); } catch (_) { } } },
     localstorage: { id: 'localstorage', parent: 'utils', title: 'LocalStorage', desc: 'LocalStorage Manager (keys + values).', screen: 'action', action: function () { try { if (window.BL && BL.LocalStorageManager && BL.LocalStorageManager.open) BL.LocalStorageManager.open(); } catch (_) { } } },
     danger: { id: 'danger', parent: 'root', titleKey: 'menu.root.danger.title', descKey: 'menu.root.danger.desc', screen: 'danger' },
-    ui: { id: 'ui', parent: 'root', titleKey: 'menu.root.ui.title', descKey: 'menu.root.ui.desc', screen: 'ui', children: ['ui_deltaguard'] },
-    ui_deltaguard: { id: 'ui_deltaguard', parent: 'ui', title: 'DeltaGuard', desc: 'Единый оркестратор защиты плеера.', screen: 'ui_deltaguard' },
+    player: { id: 'player', parent: 'root', title: 'Player', desc: 'Защита воспроизведения и DeltaGuard.', children: ['ui_deltaguard'] },
+    ui: { id: 'ui', parent: 'root', titleKey: 'menu.root.ui.title', descKey: 'menu.root.ui.desc', screen: 'ui' },
+    ui_deltaguard: { id: 'ui_deltaguard', parent: 'player', title: 'DeltaGuard', desc: 'Единый оркестратор защиты плеера.', screen: 'ui_deltaguard' },
     status: { id: 'status', parent: 'root', titleKey: 'menu.root.status.title', param: { name: 'bl_pi_root_status', type: 'static', values: '', default: '' }, screen: 'status', rootRender: rootStatusRender }
   };
 
@@ -1020,6 +1021,10 @@
       dg_stall_soft_ms: 900,
       dg_stall_hard_ms: 2000,
       dg_recover_cooldown_ms: 2500,
+      dg_start_grace_ms: 18000,
+      dg_next_min_remain_sec: 12.0,
+      dg_ct_floor_lag_sec: 30.0,
+      dg_user_action_cooldown_ms: 1500,
       dg_verify_ms: 1400,
       dg_hard_reset_enabled: 1,
       dg_hard_reset_after_n: 2
@@ -1224,6 +1229,26 @@
       });
 
       P(ctx, {
+        id: 'dg_start_grace_ms',
+        type: 'select',
+        values: { '5000': '5000', '8000': '8000', '10000': '10000', '12000': '12000', '15000': '15000', '18000': '18000', '20000': '20000', '25000': '25000', '30000': '30000' },
+        default: String(d.dg_start_grace_ms || 18000),
+        name: 'Start grace (ms)',
+        desc: 'Grace-период старта: в LOADING без агрессивного recovery.',
+        onChange: refreshDeltaGuardSettings
+      });
+
+      P(ctx, {
+        id: 'dg_user_action_cooldown_ms',
+        type: 'select',
+        values: { '200': '200', '400': '400', '600': '600', '800': '800', '1000': '1000', '1200': '1200', '1500': '1500', '1800': '1800', '2000': '2000', '2500': '2500', '3000': '3000' },
+        default: String(d.dg_user_action_cooldown_ms || 1500),
+        name: 'User action cooldown (ms)',
+        desc: 'Пауза DG после user pause/play/seek/back, чтобы не воевать с пользователем.',
+        onChange: refreshDeltaGuardSettings
+      });
+
+      P(ctx, {
         id: 'dg_verify_ms',
         type: 'select',
         values: { '700': '700', '900': '900', '1100': '1100', '1400': '1400', '1700': '1700', '2000': '2000', '2500': '2500', '3000': '3000' },
@@ -1256,10 +1281,30 @@
       P(ctx, {
         id: 'dg_false_end_jump_sec',
         type: 'select',
-        values: { '3': '3', '5': '5', '7': '7', '10': '10', '12': '12', '15': '15', '20': '20', '30': '30' },
+        values: { '3': '3', '5': '5', '7': '7', '10': '10', '12': '12', '15': '15', '20': '20', '30': '30', '40': '40', '50': '50', '60': '60' },
         default: String(d.dg_false_end_jump_sec || 10.0),
         name: 'False-end jump (sec)',
         desc: 'Минимальный jump near-end для fake-end.',
+        onChange: refreshDeltaGuardSettings
+      });
+
+      P(ctx, {
+        id: 'dg_next_min_remain_sec',
+        type: 'select',
+        values: { '3': '3', '5': '5', '7': '7', '10': '10', '12': '12', '15': '15', '20': '20', '30': '30', '40': '40', '60': '60' },
+        default: String(d.dg_next_min_remain_sec || 12.0),
+        name: 'Next min remain (sec)',
+        desc: 'Блокировать next/ended, если до конца больше этого порога и это не user intent.',
+        onChange: refreshDeltaGuardSettings
+      });
+
+      P(ctx, {
+        id: 'dg_ct_floor_lag_sec',
+        type: 'select',
+        values: { '5': '5', '10': '10', '15': '15', '20': '20', '25': '25', '30': '30', '40': '40', '50': '50', '60': '60' },
+        default: String(d.dg_ct_floor_lag_sec || 30.0),
+        name: 'CT floor lag (sec)',
+        desc: 'Отступ floor от lastGoodCt при нормальном прогрессе.',
         onChange: refreshDeltaGuardSettings
       });
 
