@@ -2268,6 +2268,7 @@
     var suppressLeft = Math.max(0, toInt(STATE.recovery.suppressUntilTs, 0) - nowT);
     var userActLeft = Math.max(0, toInt(STATE.user.userActionUntilTs, 0) - nowT);
     var startupLeft = Math.max(0, toInt(snapshot.startupLeftMs, 0));
+    var tvIsoEnabled = parseBool(sGet(LS_PREFIX + 'tv_isolate_video_hider_added', '0'), false) ? 1 : 0;
     var exitLeft = sessionExitLeftMs();
     var hiddenAge = toInt(snapshot.hiddenAgeMs, 0);
     var hiddenLeft = toInt(snapshot.hiddenLeftMs, 0);
@@ -2284,6 +2285,7 @@
       + ' ; startupLeftMs=' + String(clampInt(startupLeft, 0, 999999))
       + ' ; playbackProven=' + (snapshot.playbackProven ? '1' : '0')
       + ' ; userActionLeftMs=' + String(clampInt(userActLeft, 0, 999999))
+      + ' ; tvIso=' + String(tvIsoEnabled)
       + ' ; falseEndSuspect=' + String(toInt(STATE.guard.falseEndSuspectActive, 0))
       + ' ; content=' + String(STATE.media.contentKeyShort || '-')
       + ' ; lastGood=' + (isFinite(toNum(STATE.media.lastGoodCt, NaN)) ? toNum(STATE.media.lastGoodCt, 0).toFixed(2) : '-')

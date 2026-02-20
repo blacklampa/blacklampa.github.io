@@ -843,6 +843,7 @@
 	        'bl.ui.localstorage.js',
 	        'bl.backup.js',
 	        'bl.ext.filters.js',
+	        'bl.tv.isolator.js',
 	        'bl.player.deltaguard.js',
 	        'bl.mod.player/ui/button.js',
 	        'bl.mod.player/index.js',

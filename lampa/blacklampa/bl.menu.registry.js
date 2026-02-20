@@ -1045,9 +1045,59 @@
     try { if (window.BL && BL.DeltaGuard && typeof BL.DeltaGuard.refresh === 'function') BL.DeltaGuard.refresh(); } catch (_) { }
   }
 
+  function tvIsoKey() {
+    return String(pref() || 'blacklampa_') + 'tv_isolate_video_hider_added';
+  }
+
+  function tvIsoEnabledDefault() {
+    try { return parseBool(sGet(tvIsoKey(), '0'), false) ? 1 : 0; } catch (_) { return 0; }
+  }
+
+  function refreshTVIsolator() {
+    try { if (window.BL && BL.TVIsolator && typeof BL.TVIsolator.refresh === 'function') BL.TVIsolator.refresh(); } catch (_) { }
+  }
+
   function buildUiDeltaGuardScreen(ctx) {
     try {
       var d = dgDefaults();
+
+      P(ctx, {
+        id: 'tv_isolate_video_hider_added',
+        type: 'toggle',
+        values: { 0: 'OFF', 1: 'ON' },
+        default: tvIsoEnabledDefault(),
+        name: 'TV Isolation: disable browser video hooks',
+        desc: 'Adds class .hider-added to <video> so TV user scripts stop controlling it.',
+        onChange: function () {
+          refreshTVIsolator();
+          try { if (window.BL && BL.TVIsolator && typeof BL.TVIsolator.apply === 'function') BL.TVIsolator.apply(); } catch (_) { }
+        }
+      });
+
+      P(ctx, {
+        id: 'tv_isolate_apply_now',
+        type: 'button',
+        name: 'TV Isolation: Apply now',
+        desc: 'Применить TV isolation к текущему DOM немедленно.',
+        onChange: function () {
+          refreshTVIsolator();
+          try { if (window.BL && BL.TVIsolator && typeof BL.TVIsolator.apply === 'function') BL.TVIsolator.apply(); } catch (_) { }
+          return false;
+        }
+      });
+
+      P(ctx, {
+        id: 'tv_isolate_remove_now',
+        type: 'button',
+        name: 'TV Isolation: Remove class from all videos now',
+        desc: 'Ручной откат: убрать .hider-added со всех <video>.',
+        onChange: function () {
+          try {
+            if (window.BL && BL.TVIsolator && typeof BL.TVIsolator.removeNow === 'function') BL.TVIsolator.removeNow();
+          } catch (_) { }
+          return false;
+        }
+      });
 
       P(ctx, {
         id: 'dg_apply',
